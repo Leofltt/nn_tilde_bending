@@ -82,7 +82,6 @@ add_subdirectory(json)
 
 if (UNIX)
   if (APPLE)
-    add_compile_options(-std=c++20)
     set(CMAKE_CXX_FLAGS "-faligned-allocation")
     if (CMAKE_OSX_ARCHITECTURES STREQUAL "")
         set(CMAKE_OSX_ARCHITECTURES ${CMAKE_HOST_SYSTEM_PROCESSOR})
@@ -104,6 +103,7 @@ execute_process(
 
 option(BUILD_MAXMSP "Build MaxMSP targets" ON)
 option(BUILD_PUREDATA "Build PureData targets" ON)
+option(BUILD_JUCE_PLUGIN "Build JUCE VST3/AU audio plugin" ON)
 
 if (NOT DEFINED NO_PUREDATA)
   set(NO_PUREDATA 0)
@@ -142,4 +142,21 @@ endif()
 if (BUILD_PUREDATA AND NO_PUREDATA EQUAL 0)
     add_custom_target(puredata)
     add_dependencies(puredata nn)
+endif()
+
+if (BUILD_JUCE_PLUGIN)
+    include(FetchContent)
+    FetchContent_Declare(
+        JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG        8.0.13
+    )
+    set(JUCE_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+    set(JUCE_BUILD_EXTRAS OFF CACHE INTERNAL "")
+    FetchContent_MakeAvailable(JUCE)
+
+    add_subdirectory(frontend/juce)
+
+    add_custom_target(plugin)
+    add_dependencies(plugin nn_bending_plugin)
 endif()

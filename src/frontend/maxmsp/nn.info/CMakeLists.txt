@@ -75,11 +75,14 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${CURL_LIBRARY})
 
 include(${C74_MIN_API_DIR}/script/min-posttarget.cmake)
 
+# min-posttarget.cmake resets CXX_STANDARD to 17; override back to 20
+# (nn.info.cpp uses C++20 features like std::unordered_map::contains)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
+
 if (MSVC)
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
-	target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 endif()
 
 

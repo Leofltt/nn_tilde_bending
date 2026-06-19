@@ -277,6 +277,7 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
     libs_hash_linked = {}
 
     arch = get_architectures(exec_path)
+    scheduled_libs = {get_library_name(str(exec_path))}
     # analyse dependencies
     while len(libs_to_analyse) != 0:
         if verbose: print('anlysing librairies %s'%libs_to_analyse)
@@ -302,9 +303,11 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
                 lib_path = most_relevant_lib(p, libs_deps[p], dep_paths, arch)
                 print('found lib : %s'%lib_path)
                 libs_paths[p] = Path(lib_path)
-            if get_library_name(p) not in libs_analysed:
+            lib_name_key = get_library_name(p)
+            if lib_name_key not in scheduled_libs:
                 print('adding %s for parsing'%p)
                 libs_to_analyse.append(libs_paths[p])
+                scheduled_libs.add(lib_name_key)
 
     actions = []
     exec_dir = exec_path.parent
@@ -383,10 +386,14 @@ def perform_action(action, main_dir):
                                     text=True, 
                                     capture_outpu=False)
         elif action[0] == "clean_rpath":
-            rpaths = extract_rpaths(str(main_dir / action[1]), replace_dynamic_paths=False)
-            for r in rpaths: 
+            rpaths = extract_rpaths(action[1], replace_dynamic_paths=False)
+            if rpaths:
+                cmd = ['install_name_tool']
+                for r in rpaths:
+                    cmd.extend(['-delete_rpath', str(r)])
+                cmd.append(action[1])
                 try:
-                    subprocess.run(['install_name_tool', '-delete_rpath', str(r), str(action[1])])
+                    subprocess.run(cmd, check=True, text=True, capture_output=True)
                 except subprocess.SubprocessError as e: 
                     print("problem with clean_rpath : %s"%e)
                     pass
@@ -412,6 +419,47 @@ def print_action(idx, action):
     else:
         print(idx, action)
 
+def perform_grouped_actions(actions, main_dir):
+    copies = []
+    install_name_tool_opts = {}
+    
+    for a in actions:
+        if a[0] == 'copy':
+            copies.append(a)
+        elif a[0] == '-change':
+            target = a[3]
+            install_name_tool_opts.setdefault(target, []).extend(['-change', a[1], a[2]])
+        elif a[0] == '-id':
+            target = str(main_dir / os.path.split(a[1])[-1])
+            install_name_tool_opts.setdefault(target, []).extend(['-id', a[1]])
+        elif a[0] == '-delete_rpath':
+            target = str(main_dir / os.path.split(a[2])[-1])
+            install_name_tool_opts.setdefault(target, []).extend(['-delete_rpath', a[1]])
+        elif a[0] == '-add_rpath':
+            target = str(main_dir / os.path.split(a[2])[-1])
+            install_name_tool_opts.setdefault(target, []).extend(['-add_rpath', a[1]])
+
+    operations = []
+    for c in copies:
+        operations.append(('copy', c))
+    for target, opts in install_name_tool_opts.items():
+        if opts:
+            operations.append(('install_name_tool', target, opts))
+            
+    for op in tqdm.tqdm(operations):
+        if op[0] == 'copy':
+            perform_action(op[1], main_dir)
+        elif op[0] == 'install_name_tool':
+            target, opts = op[1], op[2]
+            cmd = ['install_name_tool'] + opts + [target]
+            try:
+                result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Error executing install_name_tool on {target}: {e}")
+                if e.stderr:
+                    print(e.stderr)
+                raise e
+
 
 if __name__ == "__main__":
     exec_path = Path(args.path)
@@ -429,8 +477,7 @@ if __name__ == "__main__":
         if answ.lower() == "n": raise SystemExit("raised by user") 
 
     os.makedirs(str(main_dir.resolve()), exist_ok=True)
-    for a in tqdm.tqdm(actions): 
-        perform_action(a, main_dir = main_dir)
+    perform_grouped_actions(actions, main_dir)
 
     if not args.noclean_rpath:
         for m in [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]:
@@ -439,11 +486,12 @@ if __name__ == "__main__":
 
 
     if args.sign_id == "": args.sign_id = "-"
-    for m in [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]:
+    sign_targets = [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]
+    print(f'Codesigning {len(sign_targets)} files...')
+    for m in sign_targets:
         try:
-            subprocess.run(['chmod', '+x', m])
-            subprocess.run(['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id, m])
-            subprocess.run(["xattr", "-r", "-d", "com.apple.quarantine", m])
+            subprocess.run(['chmod', '+x', m], capture_output=True)
+            subprocess.run(['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id, m], capture_output=True)
+            subprocess.run(["xattr", "-r", "-d", "com.apple.quarantine", m], capture_output=True)
         except subprocess.CalledProcessError as e: 
             print(f'Could not chmod / codesign file {m} ; codesign needed')
-                
