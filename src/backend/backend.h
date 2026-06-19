@@ -95,6 +95,10 @@ public:
     return std::make_pair(empty_args(), empty_kwargs());
   } 
 
+  std::vector<std::string> get_available_layers();
+  std::vector<float> get_layer_weights(std::string layer_name);
+  void set_layer_weights(std::string layer_name, std::vector<float> weights);
+
   ModelInfo get_model_info();
   const std::unordered_map<int, std::string> id_to_string_hash = {
     {0, "bool"}, 

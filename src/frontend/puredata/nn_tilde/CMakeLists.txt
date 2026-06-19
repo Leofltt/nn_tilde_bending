@@ -57,7 +57,7 @@ if (APPLE)
     add_custom_command(
         TARGET nn
         POST_BUILD 
-        COMMAND ${CMAKE_SOURCE_DIR}/../env/bin/python ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "${CMAKE_CURRENT_BINARY_DIR}/*.pd_darwin" -l "${CMAKE_CURRENT_BINARY_DIR}/" "${CMAKE_BINARY_DIR}/_deps"  "${CMAKE_SOURCE_DIR}/../env" 
+        COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "${CMAKE_CURRENT_BINARY_DIR}/*.pd_darwin" -l "${CMAKE_CURRENT_BINARY_DIR}/" "${CMAKE_BINARY_DIR}/_deps"  "${CMAKE_SOURCE_DIR}/../env" 
         COMMENT "Fixing libraries and codesigning"
     )
 
@@ -246,20 +246,24 @@ if (APPLE)
         )
 endif()
 
-set(CONDA_ENV_PATH "${CMAKE_SOURCE_DIR}/../env")
-set(CURL_INCLUDE_DIR "${CONDA_ENV_PATH}/include")
-
-if (UNIX)
-    if (APPLE)
-        set(CURL_LIBRARY "${CONDA_ENV_PATH}/lib/libcurl.dylib")
-    else()
-        set(CURL_LIBRARY "${CONDA_ENV_PATH}/lib/libcurl.so")
-        add_custom_command(
-            TARGET nn
-            POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy ${CURL_LIBRARY} "${CMAKE_BINARY_DIR}/frontend/puredata/nn_tilde/"
-        )
+if (NOT CURL_LIBRARY)
+    set(CONDA_ENV_PATH "${CMAKE_SOURCE_DIR}/../env")
+    set(CURL_INCLUDE_DIR "${CONDA_ENV_PATH}/include")
+    if (UNIX)
+        if (APPLE)
+            set(CURL_LIBRARY "${CONDA_ENV_PATH}/lib/libcurl.dylib")
+        else()
+            set(CURL_LIBRARY "${CONDA_ENV_PATH}/lib/libcurl.so")
+        endif()
     endif()
+endif()
+
+if (UNIX AND NOT APPLE)
+    add_custom_command(
+        TARGET nn
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy ${CURL_LIBRARY} "${CMAKE_BINARY_DIR}/frontend/puredata/nn_tilde/"
+    )
 endif()
 
 include_directories(${CURL_INCLUDE_DIR})

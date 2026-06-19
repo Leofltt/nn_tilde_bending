@@ -612,3 +612,47 @@ ModelInfo Backend::get_model_info() {
     throw "error fetching model information for model " + m_path + ". Caught error : " + e.what();
   }
 }
+
+std::vector<std::string> Backend::get_available_layers() {
+  std::vector<std::string> layers;
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+  for (const auto &layer : m_model.named_parameters())
+    layers.push_back(layer.name);
+  model_lock.unlock();
+  return layers;
+}
+
+
+std::vector<float> Backend::get_layer_weights(std::string layer_name) {
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+  torch::Tensor m_tensor;
+  for (const auto &layer : m_model.named_parameters())
+    if (layer.name == layer_name)
+      m_tensor = layer.value.contiguous().to(CPU);
+  model_lock.unlock();
+
+  auto m_weights = std::vector(m_tensor.data_ptr<float>(), m_tensor.data_ptr<float>()+m_tensor.numel());
+  return m_weights;
+}
+
+void Backend::set_layer_weights(std::string layer_name,
+                                std::vector<float> weights) {
+  std::cout << "set_layer_weights: entering the function" << std::endl;
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+
+  for (const auto &layer : m_model.named_parameters())
+    if (layer.name == layer_name) {
+      std::cout << "first layer weight before copy " << layer.value[0] << std::endl;
+      {
+        torch::NoGradGuard no_grad;
+        layer.value.copy_(torch::from_blob(weights.data(), layer.value.sizes()));
+      }
+    }
+
+  std::cout << "set_layer_weights: weights copied" << std::endl;
+
+  for (const auto &layer : m_model.named_parameters())
+    if (layer.name == layer_name)
+      std::cout << "first layer weight after copy " << layer.value[0] << std::endl;
+  model_lock.unlock();
+}

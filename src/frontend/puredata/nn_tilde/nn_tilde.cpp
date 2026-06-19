@@ -862,6 +862,92 @@ void nn_tilde_remove(t_nn_tilde *x, t_symbol *s)
   }
 }
 
+void nn_tilde_get(t_nn_tilde *x, t_symbol *s)
+{
+  if (!x->m_model->is_loaded())
+  {
+    pd_error(x, "nn~: no model loaded");
+    return;
+  }
+  try
+  {
+    std::string attribute_value = x->m_model->get_attribute_as_string(s->s_name);
+    t_atom out_atom;
+    SETSYMBOL(&out_atom, gensym(attribute_value.c_str()));
+    outlet_anything(x->m_info_outlet, gensym("attribute"), 1, &out_atom);
+  }
+  catch (const std::exception &e)
+  {
+    pd_error(x, "nn~: %s", e.what());
+  }
+}
+
+void nn_tilde_layers(t_nn_tilde *x)
+{
+  if (!x->m_model->is_loaded())
+  {
+    pd_error(x, "nn~: no model loaded");
+    return;
+  }
+  std::vector<std::string> layers = x->m_model->get_available_layers();
+  t_atom *out_atoms = new t_atom[layers.size()];
+  for (size_t i = 0; i < layers.size(); i++)
+  {
+    SETSYMBOL(&out_atoms[i], gensym(layers[i].c_str()));
+  }
+  outlet_anything(x->m_info_outlet, gensym("layers"), layers.size(), out_atoms);
+  delete[] out_atoms;
+}
+
+void nn_tilde_get_weights(t_nn_tilde *x, t_symbol *s)
+{
+  if (!x->m_model->is_loaded())
+  {
+    pd_error(x, "nn~: no model loaded");
+    return;
+  }
+  std::string layer_name = s->s_name;
+  std::vector<float> layer_weights = x->m_model->get_layer_weights(layer_name);
+  t_atom *out_atoms = new t_atom[layer_weights.size()];
+  for (size_t i = 0; i < layer_weights.size(); i++)
+  {
+    SETFLOAT(&out_atoms[i], layer_weights[i]);
+  }
+  outlet_anything(x->m_info_outlet, gensym("layer"), layer_weights.size(), out_atoms);
+  delete[] out_atoms;
+}
+
+void nn_tilde_set_weights(t_nn_tilde *x, t_symbol *s, int argc, t_atom *argv)
+{
+  if (!x->m_model->is_loaded())
+  {
+    pd_error(x, "nn~: no model loaded");
+    return;
+  }
+  if (argc < 1 || argv[0].a_type != A_SYMBOL)
+  {
+    pd_error(x, "nn~: set_weights first argument must be a layer name");
+    return;
+  }
+  std::string layer_name = argv[0].a_w.w_symbol->s_name;
+  std::vector<float> layer_weights;
+  for (int i = 1; i < argc; i++)
+  {
+    if (argv[i].a_type == A_FLOAT)
+    {
+      layer_weights.push_back(argv[i].a_w.w_float);
+    }
+  }
+  try
+  {
+    x->m_model->set_layer_weights(layer_name, layer_weights);
+  }
+  catch (const std::exception &e)
+  {
+    pd_error(x, "nn~: %s", e.what());
+  }
+}
+
 void startup_message()
 {
   std::string startmessage = "nn~ - ";
@@ -928,6 +1014,10 @@ EXPORT void nn_tilde_setup(void)
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_load, gensym("load"), A_SYMBOL, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_reload, gensym("reload"), A_NULL);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_set, gensym("set"), A_GIMME, 0);
+  class_addmethod(nn_tilde_class, (t_method)nn_tilde_get, gensym("get"), A_SYMBOL, 0);
+  class_addmethod(nn_tilde_class, (t_method)nn_tilde_layers, gensym("layers"), A_NULL);
+  class_addmethod(nn_tilde_class, (t_method)nn_tilde_get_weights, gensym("get_weights"), A_SYMBOL, 0);
+  class_addmethod(nn_tilde_class, (t_method)nn_tilde_set_weights, gensym("set_weights"), A_GIMME, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_bufsize, gensym("bufsize"), A_FLOAT, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_gpu, gensym("gpu"), A_FLOAT, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_method, gensym("method"), A_SYMBOL, 0);

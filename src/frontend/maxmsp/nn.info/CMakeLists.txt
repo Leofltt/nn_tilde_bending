@@ -11,7 +11,7 @@ set(C74_MIN_API_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../min-api)
 include(${C74_MIN_API_DIR}/script/min-pretarget.cmake)
 
 if (APPLE)
-	set(CMAKE_OSX_DEPLOYMENT_TARGET "10.12")
+	set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
 endif()
 
 
@@ -42,7 +42,7 @@ add_library(
 )
 
 include_directories( 
-	"${C74_INCLUDES}", 
+	"${C74_INCLUDES}"
 	"${CMAKE_CURRENT_SOURCE_DIR}/../shared"
 	"${CMAKE_CURRENT_SOURCE_DIR}/../../shared"
 )
@@ -55,16 +55,18 @@ endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE backend)
 
-if (UNIX)
-	set(CONDA_ENV_PATH "${CMAKE_SOURCE_DIR}/../env")
-	set(CURL_INCLUDE_DIR "${CONDA_ENV_PATH}/include")
-	set(CURL_LIBRARY "${CONDA_ENV_PATH}/lib/libcurl.dylib")
-	include_directories(${CURL_INCLUDE_DIR})
-elseif(MSVC)
-	set(VCPKG_PATH "${CMAKE_SOURCE_DIR}/../vcpkg")
-	set(CURL_INCLUDE_DIR "${VCPKG_PATH}/packages/curl_x64-windows/include")
-	set(CURL_LIBRARY "${VCPKG_PATH}/packages/curl_x64-windows/lib/libcurl.lib")
+if (NOT CURL_LIBRARY)
+	if (UNIX)
+		set(CONDA_ENV_PATH "${CMAKE_SOURCE_DIR}/../env")
+		set(CURL_INCLUDE_DIR "${CONDA_ENV_PATH}/include")
+		set(CURL_LIBRARY "${CONDA_ENV_PATH}/lib/libcurl.dylib")
+	elseif(MSVC)
+		set(VCPKG_PATH "${CMAKE_SOURCE_DIR}/../vcpkg")
+		set(CURL_INCLUDE_DIR "${VCPKG_PATH}/packages/curl_x64-windows/include")
+		set(CURL_LIBRARY "${VCPKG_PATH}/packages/curl_x64-windows/lib/libcurl.lib")
+	endif()
 endif()
+include_directories(${CURL_INCLUDE_DIR})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CURL_LIBRARY})
@@ -93,13 +95,25 @@ endif()
 
 if (APPLE) # COPY DYLIBS IN THE LOADER FOLDER
 
-	add_custom_command(
-		TARGET ${PROJECT_NAME}
-		POST_BUILD 
-		COMMAND echo "signing with ${SIGN_ID}"
-		COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-		COMMAND ${CMAKE_SOURCE_DIR}/../env/bin/python ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
-		COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
-	)
-	
+	find_program(PYTHON_EXECUTABLE NAMES python3 python)
+
+	if (EXISTS "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem")
+		add_custom_command(
+			TARGET ${PROJECT_NAME}
+			POST_BUILD 
+			COMMAND echo "signing with ${SIGN_ID}"
+			COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
+			COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
+		)
+	else()
+		add_custom_command(
+			TARGET ${PROJECT_NAME}
+			POST_BUILD 
+			COMMAND echo "signing with ${SIGN_ID}"
+			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
+			COMMENT "Fixing libraries, permissions, codesigning, quarantine"
+		)
+	endif()
+
 endif()

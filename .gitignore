@@ -8,3 +8,7 @@ src/tests
 src/docs
 dist/
 *.egg-info*
+.antigravitycli/
+src/package-info.json
+src/pd_include/
+src/support/

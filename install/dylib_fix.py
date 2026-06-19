@@ -1,6 +1,14 @@
 import argparse
 import fnmatch
-import tqdm
+try:
+    import tqdm
+except ImportError:
+    class DummyTqdm:
+        @staticmethod
+        def tqdm(iterable, **kwargs):
+            return iterable
+    tqdm = DummyTqdm
+
 import re
 import subprocess
 import stat
@@ -275,7 +283,9 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
         parsed_deps = []
 
         # fetch dependencies
-        for current_lib in libs_to_analyse:
+        current_libs = list(libs_to_analyse)
+        libs_to_analyse = []
+        for current_lib in current_libs:
             if verbose: print('fetching dependencies from %s'%(current_lib))
             lib_deps = get_dependencies(current_lib, dir_filter=DEFAULT_EXCLUDE_PATHS_SOLVE, lib_filter=DEFAULT_EXCLUDE_LIBS)
             for dep_name, dep_params in lib_deps.items():
@@ -283,8 +293,7 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
                 libs_deps[dep_name] = libs_deps.get(dep_name, []) + [dep_params]
                 libs_hash[get_library_name(dep_params['path'])] = libs_hash.get(get_library_name(dep_params['path']), []) + [dep_params['origin']]
                 libs_hash_linked[get_library_name(dep_params['path'])] = libs_hash_linked.get(get_library_name(dep_params['path']), []) + [dep_params['linked']]
-            del libs_to_analyse[libs_to_analyse.index(current_lib)]
-            libs_analysed.append(get_library_name(current_lib))
+            libs_analysed.append(get_library_name(str(current_lib)))
          
         # parse dependencies
         for p in parsed_deps:
@@ -293,7 +302,7 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
                 lib_path = most_relevant_lib(p, libs_deps[p], dep_paths, arch)
                 print('found lib : %s'%lib_path)
                 libs_paths[p] = Path(lib_path)
-            if p not in libs_analysed:
+            if get_library_name(p) not in libs_analysed:
                 print('adding %s for parsing'%p)
                 libs_to_analyse.append(libs_paths[p])
 
