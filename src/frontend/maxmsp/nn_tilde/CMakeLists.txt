@@ -76,6 +76,4 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 )
 endif()
 
-if (MSVC)
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
-endif()
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)

@@ -44,7 +44,6 @@ add_library(
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE backend)
 
-set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 17)
 
 
 if (APPLE) # SEARCH FOR TORCH DYLIB IN THE LOADER FOLDER
@@ -74,6 +73,4 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
 endif()
 endif()
 
-if (MSVC)
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
-endif()
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
