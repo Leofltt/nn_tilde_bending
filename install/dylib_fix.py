@@ -487,11 +487,16 @@ if __name__ == "__main__":
 
     if args.sign_id == "": args.sign_id = "-"
     sign_targets = [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]
-    print(f'Codesigning {len(sign_targets)} files...')
-    for m in sign_targets:
+    print(f'Codesigning {len(sign_targets)} files in parallel...')
+    
+    def sign_single_target(m):
         try:
             subprocess.run(['chmod', '+x', m], capture_output=True)
             subprocess.run(['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id, m], capture_output=True)
             subprocess.run(["xattr", "-r", "-d", "com.apple.quarantine", m], capture_output=True)
-        except subprocess.CalledProcessError as e: 
-            print(f'Could not chmod / codesign file {m} ; codesign needed')
+        except Exception as e: 
+            print(f'Could not chmod / codesign file {m} ; codesign needed: {e}')
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        list(tqdm.tqdm(executor.map(sign_single_target, sign_targets), total=len(sign_targets)))

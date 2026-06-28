@@ -8,6 +8,17 @@ configure_file(
   COPYONLY
 )
 
+# Load environment variables from .env if it exists
+if(EXISTS "${CMAKE_SOURCE_DIR}/../.env")
+  file(STRINGS "${CMAKE_SOURCE_DIR}/../.env" ENVS REGEX "^[^#]")
+  foreach(ENV_VAR ${ENVS})
+    if(ENV_VAR MATCHES "^([^=]+)=\"?([^\"]*)\"?$")
+      set(ENV{${CMAKE_MATCH_1}} "${CMAKE_MATCH_2}")
+      set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}" CACHE STRING "Loaded from .env" FORCE)
+    endif()
+  endforeach()
+endif()
+
 if (NOT DEFINED SIGN_ID)
   if (DEFINED $ENV{SIGN_ID})
     set(SIGN_ID $ENV{SIGN_ID})
@@ -70,6 +81,19 @@ endif()
 
 if (APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+  execute_process(
+    COMMAND brew --prefix
+    OUTPUT_VARIABLE HOMEBREW_PREFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if (NOT HOMEBREW_PREFIX)
+    if (EXISTS "/opt/homebrew")
+      set(HOMEBREW_PREFIX "/opt/homebrew")
+    else()
+      set(HOMEBREW_PREFIX "/usr/local")
+    endif()
+  endif()
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -159,4 +183,7 @@ if (BUILD_JUCE_PLUGIN)
 
     add_custom_target(plugin)
     add_dependencies(plugin nn_bending_plugin)
+
+    add_custom_target(standalone)
+    add_dependencies(standalone nn_bending_standalone)
 endif()

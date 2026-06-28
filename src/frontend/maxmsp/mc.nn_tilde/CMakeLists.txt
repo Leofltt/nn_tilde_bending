@@ -97,6 +97,7 @@ endif()
 			COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
 			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
 			COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
+			VERBATIM
 		)
 	else()
 		add_custom_command(
@@ -104,6 +105,7 @@ endif()
 			POST_BUILD 
 			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
 			COMMENT "Fixing libraries, permissions, codesigning, quarantine"
+			VERBATIM
 		)
 	endif()
 
