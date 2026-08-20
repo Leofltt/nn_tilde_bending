@@ -50,17 +50,22 @@ function(configure_nn_bending_target target_name)
         juce::juce_core
     )
 
-    # Configure macOS link flags for dynamic library bundling
+    # Configure macOS link flags for dynamic library linking
     if (APPLE)
         set_target_properties(${target_name} PROPERTIES
-            BUILD_WITH_INSTALL_RPATH FALSE
-            LINK_FLAGS "-Wl,-rpath,@loader_path/"
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../Frameworks"
         )
 
-        # Post-build library bundling, path fixing, and codesigning for JUCE targets
+        # Post-build library handling and local plugin installation
         get_target_property(active_targets ${target_name} JUCE_ACTIVE_PLUGIN_TARGETS)
         if (active_targets)
             foreach(sub_target IN LISTS active_targets)
+                set_target_properties(${sub_target} PROPERTIES
+                    BUILD_WITH_INSTALL_RPATH TRUE
+                    INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../Frameworks"
+                )
+
                 # Determine destination path for local installation
                 set(COPY_DEST "")
                 if (sub_target MATCHES ".*_AU$")
@@ -70,29 +75,49 @@ function(configure_nn_bending_target target_name)
                 endif()
 
                 if (NOT "${COPY_DEST}" STREQUAL "")
-                    add_custom_command(
-                        TARGET ${sub_target} POST_BUILD
-                        COMMAND ${PYTHON_EXECUTABLE} "${CMAKE_SOURCE_DIR}/../install/dylib_fix.py"
-                            -p "$<TARGET_FILE:${sub_target}>"
-                            -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
-                            --sign_id "${SIGN_ID}"
-                            --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/entitlements.plist"
-                        COMMAND ${CMAKE_COMMAND} -E rm -rf "${COPY_DEST}"
-                        COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_FILE_DIR:${sub_target}>/../.." "${COPY_DEST}"
-                        COMMENT "Bundling libraries, codesigning, and installing ${sub_target} to local plugin folder"
-                        VERBATIM
-                    )
+                    if (BUNDLE_DEPENDENCIES)
+                        add_custom_command(
+                            TARGET ${sub_target} POST_BUILD
+                            COMMAND ${PYTHON_EXECUTABLE} "${CMAKE_SOURCE_DIR}/../install/dylib_fix.py"
+                                -p "$<TARGET_FILE:${sub_target}>"
+                                -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
+                                --sign_id "${SIGN_ID}"
+                                --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/entitlements.plist"
+                            COMMAND ${CMAKE_COMMAND} -E rm -rf "${COPY_DEST}"
+                            COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_FILE_DIR:${sub_target}>/../.." "${COPY_DEST}"
+                            COMMENT "Bundling libraries, codesigning, and installing ${sub_target} to local plugin folder"
+                            VERBATIM
+                        )
+                    else()
+                        add_custom_command(
+                            TARGET ${sub_target} POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E rm -rf "${COPY_DEST}"
+                            COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_FILE_DIR:${sub_target}>/../.." "${COPY_DEST}"
+                            COMMAND codesign --force --deep --sign "${SIGN_ID}" "${COPY_DEST}"
+                            COMMENT "Installing and codesigning ${sub_target} in local plugin folder"
+                            VERBATIM
+                        )
+                    endif()
                 else()
-                    add_custom_command(
-                        TARGET ${sub_target} POST_BUILD
-                        COMMAND ${PYTHON_EXECUTABLE} "${CMAKE_SOURCE_DIR}/../install/dylib_fix.py"
-                            -p "$<TARGET_FILE:${sub_target}>"
-                            -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
-                            --sign_id "${SIGN_ID}"
-                            --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/entitlements.plist"
-                        COMMENT "Bundling libraries and codesigning ${sub_target}"
-                        VERBATIM
-                    )
+                    if (BUNDLE_DEPENDENCIES)
+                        add_custom_command(
+                            TARGET ${sub_target} POST_BUILD
+                            COMMAND ${PYTHON_EXECUTABLE} "${CMAKE_SOURCE_DIR}/../install/dylib_fix.py"
+                                -p "$<TARGET_FILE:${sub_target}>"
+                                -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
+                                --sign_id "${SIGN_ID}"
+                                --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/entitlements.plist"
+                            COMMENT "Bundling libraries and codesigning ${sub_target}"
+                            VERBATIM
+                        )
+                    else()
+                        add_custom_command(
+                            TARGET ${sub_target} POST_BUILD
+                            COMMAND codesign --force --deep --sign "${SIGN_ID}" "$<TARGET_FILE_DIR:${sub_target}>/../.."
+                            COMMENT "Codesigning ${sub_target}"
+                            VERBATIM
+                        )
+                    endif()
                 endif()
             endforeach()
         endif()

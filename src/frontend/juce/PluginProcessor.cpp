@@ -9,6 +9,13 @@ ModelThread::ModelThread(NNBendingAudioProcessor& processor)
 
 ModelThread::~ModelThread()
 {
+    stop();
+}
+
+void ModelThread::stop()
+{
+    signalThreadShouldExit();
+    m_event.signal();
     stopThread(2000);
 }
 
@@ -16,7 +23,7 @@ void ModelThread::run()
 {
     while (!threadShouldExit())
     {
-        m_event.wait(-1);
+        m_event.wait(50);
         
         if (threadShouldExit())
             break;
@@ -53,22 +60,20 @@ NNBendingAudioProcessor::NNBendingAudioProcessor()
 
 NNBendingAudioProcessor::~NNBendingAudioProcessor()
 {
-    m_model_thread.stopThread(2000);
+    m_model_thread.stop();
 }
 
 //==============================================================================
 void NNBendingAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    juce::ignoreUnused(samplesPerBlock);
     m_backend.set_sample_rate(sampleRate);
     initBuffers();
-    
-    if (!m_model_thread.isThreadRunning())
-        m_model_thread.startThread(juce::Thread::Priority::high);
 }
 
 void NNBendingAudioProcessor::releaseResources()
 {
-    m_model_thread.stopThread(2000);
+    m_model_thread.stop();
 }
 
 bool NNBendingAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -102,7 +107,7 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    if (!m_modelLoaded.load() || m_model_in <= 0 || m_model_out <= 0)
+    if (!m_modelLoaded.load() || m_model_out <= 0)
     {
         for (auto i = 0; i < buffer.getNumChannels(); ++i)
             buffer.clear(i, 0, buffer.getNumSamples());
@@ -111,45 +116,56 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
     auto numSamples = buffer.getNumSamples();
     
-    // 1. Push incoming samples to input circular buffers
-    int n_ins = std::min((int)totalNumInputChannels, m_model_in);
-    for (int c = 0; c < n_ins; ++c)
+    // 1. If inference output is ready from background thread, transfer to output ring buffers
+    if (m_output_ready.load())
     {
-        m_in_buffers[c].put(buffer.getReadPointer(c), numSamples);
-    }
-    
-    // 2. Check if we have enough samples to perform inference
-    if (m_in_buffers[0].getAvailable() >= m_bufferSize)
-    {
-        // Extract block for model input
-        for (int c = 0; c < m_model_in; ++c)
+        std::unique_lock<std::mutex> lock(m_staging_mutex, std::try_to_lock);
+        if (lock.owns_lock())
         {
-            m_in_model_data[c].resize(m_bufferSize);
-            m_in_buffers[c].get(m_in_model_data[c].data(), m_bufferSize);
-        }
-        
-        // If thread is not currently processing, swap data and trigger
-        if (!m_model_thread.isProcessing())
-        {
-            std::unique_lock<std::mutex> lock(m_data_mutex);
-            
-            // Swap input buffer with thread input buffer
-            m_in_thread_data.swap(m_in_model_data);
-            
-            // If output from previous run is ready, retrieve it
             if (m_output_ready.load())
             {
-                m_out_model_data.swap(m_out_thread_data);
-                m_output_ready.store(false);
-                
-                int n_outs = std::min((int)totalNumOutputChannels, m_model_out);
+                int n_outs = std::min((int)m_out_buffers.size(), (int)m_staging_out.size());
                 for (int c = 0; c < n_outs; ++c)
                 {
-                    m_out_buffers[c].put(m_out_model_data[c].data(), m_bufferSize);
+                    m_out_buffers[c].put(m_staging_out[c].data(), m_bufferSize);
                 }
+                m_output_ready.store(false);
             }
-            
-            lock.unlock();
+        }
+    }
+    
+    // 2. Feed incoming audio into input circular buffers (if model takes audio input)
+    if (m_model_in > 0)
+    {
+        for (int c = 0; c < m_model_in; ++c)
+        {
+            if (c < totalNumInputChannels)
+                m_in_buffers[c].put(buffer.getReadPointer(c), numSamples);
+            else if (totalNumInputChannels > 0)
+                m_in_buffers[c].put(buffer.getReadPointer(0), numSamples);
+            else
+                m_in_buffers[c].put(nullptr, numSamples);
+        }
+        
+        // Check if we have enough samples to trigger inference and thread is idle
+        if (!m_model_thread.isProcessing() && m_in_buffers[0].getAvailable() >= m_bufferSize)
+        {
+            std::unique_lock<std::mutex> lock(m_staging_mutex, std::try_to_lock);
+            if (lock.owns_lock())
+            {
+                for (int c = 0; c < m_model_in; ++c)
+                {
+                    m_in_buffers[c].get(m_staging_in[c].data(), m_bufferSize);
+                }
+                m_model_thread.triggerCompute();
+            }
+        }
+    }
+    else
+    {
+        // Generative model (0 audio inputs): trigger inference whenever output buffer needs filling
+        if (!m_model_thread.isProcessing() && m_out_buffers[0].getAvailable() < m_bufferSize * 2)
+        {
             m_model_thread.triggerCompute();
         }
     }
@@ -158,14 +174,18 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     int n_outs = std::min((int)totalNumOutputChannels, m_model_out);
     for (int c = 0; c < n_outs; ++c)
     {
-        if (m_out_buffers[c].getAvailable() >= numSamples)
-        {
-            m_out_buffers[c].get(buffer.getWritePointer(c), numSamples);
-        }
-        else
-        {
-            buffer.clear(c, 0, numSamples);
-        }
+        m_out_buffers[c].get(buffer.getWritePointer(c), numSamples);
+    }
+    
+    // If model is mono (1 out) and host is stereo (2 out), duplicate Left to Right channel
+    if (m_model_out == 1 && totalNumOutputChannels >= 2)
+    {
+        buffer.copyFrom(1, 0, buffer, 0, 0, numSamples);
+    }
+    // Clear any extra output channels beyond model outputs
+    for (int c = std::max(n_outs, (m_model_out == 1 ? 2 : 1)); c < totalNumOutputChannels; ++c)
+    {
+        buffer.clear(c, 0, numSamples);
     }
 }
 
@@ -173,6 +193,7 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 bool NNBendingAudioProcessor::loadModel(const juce::File& file)
 {
     m_modelLoaded.store(false);
+    m_model_thread.stop();
     
     std::string path = file.getFullPathName().toStdString();
     
@@ -198,7 +219,7 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
             m_currentMethod = defaultMethod;
             
             auto params = m_backend.get_method_params(defaultMethod);
-            if (params.size() >= 3)
+            if (params.size() >= 4)
             {
                 m_model_in = params[0];
                 m_model_out = params[2];
@@ -219,7 +240,7 @@ void NNBendingAudioProcessor::setCurrentMethod(const juce::String& method)
     {
         m_currentMethod = method;
         auto params = m_backend.get_method_params(method.toStdString());
-        if (params.size() >= 3)
+        if (params.size() >= 4)
         {
             m_model_in = params[0];
             m_model_out = params[2];
@@ -239,49 +260,57 @@ void NNBendingAudioProcessor::setBufferSize(int size)
 
 void NNBendingAudioProcessor::initBuffers()
 {
-    std::unique_lock<std::mutex> lock(m_data_mutex);
+    m_model_thread.stop();
     
-    m_in_buffers.resize(std::max(1, m_model_in));
-    m_out_buffers.resize(std::max(1, m_model_out));
+    std::lock_guard<std::mutex> lock(m_staging_mutex);
     
-    m_in_model_data.resize(std::max(1, m_model_in));
-    m_out_model_data.resize(std::max(1, m_model_out));
+    int n_in = std::max(1, m_model_in);
+    int n_out = std::max(1, m_model_out);
     
-    m_in_thread_data.resize(std::max(1, m_model_in));
-    m_out_thread_data.resize(std::max(1, m_model_out));
+    m_in_buffers.resize(n_in);
+    m_out_buffers.resize(n_out);
     
-    for (int i = 0; i < m_model_in; ++i)
+    m_staging_in.resize(n_in);
+    m_staging_out.resize(n_out);
+    
+    for (int i = 0; i < n_in; ++i)
     {
         m_in_buffers[i].init(m_bufferSize);
-        m_in_model_data[i].assign(m_bufferSize, 0.0f);
-        m_in_thread_data[i].assign(m_bufferSize, 0.0f);
+        m_staging_in[i].assign(m_bufferSize, 0.0f);
     }
     
-    for (int i = 0; i < m_model_out; ++i)
+    for (int i = 0; i < n_out; ++i)
     {
         m_out_buffers[i].init(m_bufferSize);
-        m_out_model_data[i].assign(m_bufferSize, 0.0f);
-        m_out_thread_data[i].assign(m_bufferSize, 0.0f);
+        m_staging_out[i].assign(m_bufferSize, 0.0f);
     }
     
     m_output_ready.store(false);
+    
+    if (m_modelLoaded.load())
+    {
+        m_model_thread.startThread(juce::Thread::Priority::high);
+    }
 }
 
 void NNBendingAudioProcessor::runInference()
 {
-    if (!m_modelLoaded.load() || m_model_in <= 0 || m_model_out <= 0)
+    if (!m_modelLoaded.load() || m_model_out <= 0)
         return;
         
     std::vector<float*> in_ptrs;
     std::vector<float*> out_ptrs;
     
-    for (int c = 0; c < m_model_in; ++c)
-        in_ptrs.push_back(m_in_thread_data[c].data());
-        
-    for (int c = 0; c < m_model_out; ++c)
-        out_ptrs.push_back(m_out_thread_data[c].data());
-        
-    m_backend.perform(in_ptrs, out_ptrs, m_currentMethod.toStdString(), 1, m_model_out, m_bufferSize);
+    {
+        std::lock_guard<std::mutex> lock(m_staging_mutex);
+        for (int c = 0; c < m_model_in; ++c)
+            in_ptrs.push_back(m_staging_in[c].data());
+            
+        for (int c = 0; c < m_model_out; ++c)
+            out_ptrs.push_back(m_staging_out[c].data());
+            
+        m_backend.perform(in_ptrs, out_ptrs, m_currentMethod.toStdString(), 1, m_model_out, m_bufferSize);
+    }
     
     m_output_ready.store(true);
 }
@@ -330,3 +359,4 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new NNBendingAudioProcessor();
 }
+

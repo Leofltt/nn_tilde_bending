@@ -4,6 +4,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <algorithm>
 
 class CircularBuffer {
 public:
@@ -11,20 +12,22 @@ public:
     
     CircularBuffer(CircularBuffer&& other) noexcept
     {
-        buffer = std::move(other.buffer);
-        writeIndex = other.writeIndex;
-        readIndex = other.readIndex;
-        numSamplesAvailable.store(other.numSamplesAvailable.load());
+        m_buffer = std::move(other.m_buffer);
+        m_capacity = other.m_capacity;
+        m_writeIndex = other.m_writeIndex;
+        m_readIndex = other.m_readIndex;
+        m_available.store(other.m_available.load());
     }
     
     CircularBuffer& operator=(CircularBuffer&& other) noexcept
     {
         if (this != &other)
         {
-            buffer = std::move(other.buffer);
-            writeIndex = other.writeIndex;
-            readIndex = other.readIndex;
-            numSamplesAvailable.store(other.numSamplesAvailable.load());
+            m_buffer = std::move(other.m_buffer);
+            m_capacity = other.m_capacity;
+            m_writeIndex = other.m_writeIndex;
+            m_readIndex = other.m_readIndex;
+            m_available.store(other.m_available.load());
         }
         return *this;
     }
@@ -33,47 +36,52 @@ public:
     CircularBuffer& operator=(const CircularBuffer&) = delete;
 
     void init(int size) {
-        buffer.assign(size * 4, 0.0f);
-        writeIndex = 0;
-        readIndex = 0;
-        numSamplesAvailable.store(0);
+        m_capacity = std::max(size * 4, 8192);
+        m_buffer.assign(m_capacity, 0.0f);
+        m_writeIndex = 0;
+        m_readIndex = 0;
+        m_available.store(0);
     }
     
     void put(const float* data, int numSamples) {
-        if (buffer.empty()) return;
+        if (m_capacity <= 0 || numSamples <= 0) return;
         for (int i = 0; i < numSamples; ++i) {
-            buffer[writeIndex] = data[i];
-            writeIndex = (writeIndex + 1) % buffer.size();
+            m_buffer[m_writeIndex] = data ? data[i] : 0.0f;
+            m_writeIndex = (m_writeIndex + 1) % m_capacity;
         }
-        numSamplesAvailable += numSamples;
+        m_available.fetch_add(numSamples);
     }
     
     void get(float* dest, int numSamples) {
-        if (buffer.empty()) {
-            std::fill(dest, dest + numSamples, 0.0f);
-            return;
+        if (m_capacity <= 0 || numSamples <= 0) return;
+        int avail = m_available.load();
+        int toRead = std::min(numSamples, avail);
+        for (int i = 0; i < toRead; ++i) {
+            dest[i] = m_buffer[m_readIndex];
+            m_readIndex = (m_readIndex + 1) % m_capacity;
         }
-        for (int i = 0; i < numSamples; ++i) {
-            dest[i] = buffer[readIndex];
-            readIndex = (readIndex + 1) % buffer.size();
+        if (toRead < numSamples) {
+            std::fill(dest + toRead, dest + numSamples, 0.0f);
         }
-        numSamplesAvailable -= numSamples;
+        m_available.fetch_sub(toRead);
     }
     
-    int getAvailable() const { return numSamplesAvailable.load(); }
+    int getAvailable() const { return m_available.load(); }
     
     void clear() {
-        std::fill(buffer.begin(), buffer.end(), 0.0f);
-        writeIndex = 0;
-        readIndex = 0;
-        numSamplesAvailable.store(0);
+        if (m_capacity > 0)
+            std::fill(m_buffer.begin(), m_buffer.end(), 0.0f);
+        m_writeIndex = 0;
+        m_readIndex = 0;
+        m_available.store(0);
     }
     
 private:
-    std::vector<float> buffer;
-    int writeIndex = 0;
-    int readIndex = 0;
-    std::atomic<int> numSamplesAvailable { 0 };
+    std::vector<float> m_buffer;
+    int m_capacity { 0 };
+    int m_writeIndex { 0 };
+    int m_readIndex { 0 };
+    std::atomic<int> m_available { 0 };
 };
 
 class NNBendingAudioProcessor;
@@ -86,6 +94,7 @@ public:
     
     void run() override;
     void triggerCompute();
+    void stop();
     bool isProcessing() const { return m_processing.load(); }
     
 private:
@@ -150,13 +159,11 @@ private:
     // Buffers and synchronization
     std::vector<CircularBuffer> m_in_buffers;
     std::vector<CircularBuffer> m_out_buffers;
-    std::vector<std::vector<float>> m_in_model_data;
-    std::vector<std::vector<float>> m_out_model_data;
     
-    std::vector<std::vector<float>> m_in_thread_data;
-    std::vector<std::vector<float>> m_out_thread_data;
+    std::vector<std::vector<float>> m_staging_in;
+    std::vector<std::vector<float>> m_staging_out;
     
-    std::mutex m_data_mutex;
+    std::mutex m_staging_mutex;
     std::atomic<bool> m_output_ready { false };
 
     ModelThread m_model_thread;
@@ -165,3 +172,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NNBendingAudioProcessor)
 };
+

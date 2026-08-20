@@ -138,21 +138,36 @@ def get_architectures(file_path):
 
 
 
-def get_find_results(directory, pattern):
-    try:
-        # Run the find command
-        command = ['find', directory, '-name', pattern]
-        print(" ".join(command))
-        result = subprocess.run(command, 
-                                check=True, 
-                                text=True, 
-                                capture_output=True)
-        file_list = result.stdout.strip().split('\n')
-        file_list = [f for f in file_list if f]
-        return file_list
+FIND_RESULTS_CACHE = {}
 
-    except subprocess.CalledProcessError as e:
+def get_find_results(directory, pattern):
+    if not os.path.exists(directory):
         return []
+    
+    cache_key = (str(directory), pattern)
+    if cache_key in FIND_RESULTS_CACHE:
+        return FIND_RESULTS_CACHE[cache_key]
+
+    search_dirs = [directory]
+    lib_subdir = os.path.join(directory, 'lib')
+    if os.path.isdir(lib_subdir):
+        search_dirs.insert(0, lib_subdir)
+
+    file_list = []
+    for d in search_dirs:
+        try:
+            # Limit depth to avoid scanning entire Homebrew or filesystem tree
+            command = ['find', d, '-maxdepth', '3', '-name', pattern]
+            result = subprocess.run(command, check=True, text=True, capture_output=True)
+            results = [f for f in result.stdout.strip().split('\n') if f]
+            if results:
+                file_list.extend(results)
+                break
+        except subprocess.CalledProcessError:
+            pass
+
+    FIND_RESULTS_CACHE[cache_key] = file_list
+    return file_list
 
 
 def find_candidates_for(lib_name, lib_dir, lib_arch, allow_different_arch: bool = True):
@@ -160,23 +175,19 @@ def find_candidates_for(lib_name, lib_dir, lib_arch, allow_different_arch: bool 
     lib_name_parts = lib_name.split('.')
     candidates = []
     for l in lib_dir: 
-        print('parsing %s'%lib_name_parts)
         for i in reversed(range(1, len(lib_name_parts)+1)):
             results = get_find_results(l, ".".join(lib_name_parts[:i]) + "*" + lib_ext)
             if len(results) > 0:
+                candidates.extend(results)
                 break
-        candidates.extend(results)
-    print("candidates before filtering : ", candidates)
     if len(candidates) == 0: 
         return [] 
     candidates_filt_arch = list(filter(lambda x: get_architectures(x) == lib_arch, candidates))
     if len(candidates_filt_arch) == 0:
-        print('[Warning] Candidates found for %s, but with wrong architecture'%lib_name)
         if not allow_different_arch:
             return [] 
     else:
         candidates = candidates_filt_arch
-    print(candidates)
 
     for i, c in enumerate(candidates):
         while os.path.islink(c):
@@ -249,7 +260,8 @@ def most_relevant_lib(lib_name, path_dicts, dep_paths=[], arch="arm64"):
         candidates = find_candidates_for(f"{lib_name}.dylib", dep_paths, arch)
         candidate = find_most_relevant_dylib_candidate(f"{lib_name}.dylib", candidates)
         if candidate is None: 
-            raise RuntimeError('no valid library found for %s in %s (candidates : %s)'%(lib_name, dep_paths, candidates))
+            print(f'[Warning] No valid library found for {lib_name} in {dep_paths} (candidates: {candidates}); skipping.')
+            return None
         return candidate
     # find in priority the librairies given in arguments
     for libdir in map(Path, dep_paths):
@@ -302,8 +314,12 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
             if verbose: print('fetching paths for %s'%p)
             if p not in libs_paths:
                 lib_path = most_relevant_lib(p, libs_deps[p], dep_paths, arch)
+                if lib_path is None:
+                    continue
                 print('found lib : %s'%lib_path)
                 libs_paths[p] = Path(lib_path)
+            if p not in libs_paths or libs_paths[p] is None:
+                continue
             lib_name_key = get_library_name(p)
             if lib_name_key not in scheduled_libs:
                 print('adding %s for parsing'%p)
@@ -314,7 +330,7 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
     exec_dir = exec_path.parent
     os.makedirs(str(main_dir.resolve()), exist_ok=True)
     for k, v in libs_paths.items():
-        if not (main_dir / v.name).resolve().exists():
+        if v is not None and not (main_dir / v.name).resolve().exists():
             actions.append(['copy', str(v), str(main_dir)])
     for k, v in libs_hash.items():
         for i, v_tmp in enumerate(v):
@@ -327,12 +343,15 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
                     actions.append(['-id', f"@loader_path/{v_tmp.name}", str(main_dir / v_tmp.name)])
             else:
                 current_dep = str(libs_hash_linked[k][i]) 
-                # new_dep = f"@loader_path/{libs_paths[get_library_name(current_dep)].name}"
+                dep_key = get_library_name(current_dep)
+                if dep_key not in libs_paths or libs_paths[dep_key] is None:
+                    continue
+                # new_dep = f"@loader_path/{libs_paths[dep_key].name}"
                 if v_tmp.stem == exec_path.stem:
-                    new_dep = f"@loader_path/{lib_from_exc_path(exec_path, main_dir / libs_paths[get_library_name(current_dep)].name)}"
+                    new_dep = f"@loader_path/{lib_from_exc_path(exec_path, main_dir / libs_paths[dep_key].name)}"
                     actions.append(['-change', current_dep, new_dep, str(exec_dir / v_tmp.name)])
                 else:
-                    new_dep = f"@loader_path/{libs_paths[get_library_name(current_dep)].name}"
+                    new_dep = f"@loader_path/{libs_paths[dep_key].name}"
                     actions.append(['-change', current_dep, new_dep, str(main_dir / v_tmp.name)])
     return actions
 

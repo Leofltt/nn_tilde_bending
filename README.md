@@ -24,6 +24,7 @@ The build system is located in the `src/` directory. Configure with `cmake ../sr
 - `-DBUILD_JUCE_PLUGIN=ON|OFF` (default: `ON`): Enable/disable JUCE VST3/AU plugins and standalone targets.
 - `-DBUILD_MAXMSP=ON|OFF` (default: `ON`): Enable/disable Max/MSP externals.
 - `-DBUILD_PUREDATA=ON|OFF` (default: `ON`): Enable/disable PureData externals.
+- `-DBUNDLE_DEPENDENCIES=ON|OFF` (default: `OFF`): When `ON`, copies and bundles ~1.5 GB of shared libraries into `support/` for standalone package distribution. Leave `OFF` for fast, native `@rpath` development builds.
 - `-DSIGN_ID="..."` (default: `-`): Codesigning identity for macOS binaries, frameworks, and bundles.
 - `-DCMAKE_POLICY_VERSION_MINIMUM=3.15`: Ensures compatibility with modern CMake policies.
 

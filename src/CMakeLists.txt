@@ -43,7 +43,18 @@ include(${CMAKE_SOURCE_DIR}/cmake/add_torch.cmake)
 list(PREPEND CMAKE_PREFIX_PATH "${torch_dir}/libtorch")
 find_package(Torch REQUIRED PATHS ${torch_dir}/libtorch/lib)
 
+if (APPLE)
+  # Automatically strip quarantine and ad-hoc sign torch dylibs to prevent Gatekeeper popups
+  if (EXISTS "${TORCH_INSTALL_PREFIX}/lib")
+    execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${TORCH_INSTALL_PREFIX}/lib'/*.dylib 2>/dev/null; find '${TORCH_INSTALL_PREFIX}/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+  if (EXISTS "${torch_dir}/libtorch/lib")
+    execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${torch_dir}/libtorch/lib'/*.dylib 2>/dev/null; find '${torch_dir}/libtorch/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+endif()
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
 
 set(CONDA_ENV_PATH "${CMAKE_SOURCE_DIR}/../env")
 if (MSVC)
@@ -128,6 +139,7 @@ execute_process(
 option(BUILD_MAXMSP "Build MaxMSP targets" ON)
 option(BUILD_PUREDATA "Build PureData targets" ON)
 option(BUILD_JUCE_PLUGIN "Build JUCE VST3/AU audio plugin" ON)
+option(BUNDLE_DEPENDENCIES "Bundle and relocate shared dependencies for standalone package distribution" OFF)
 
 if (NOT DEFINED NO_PUREDATA)
   set(NO_PUREDATA 0)
