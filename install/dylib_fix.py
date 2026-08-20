@@ -22,6 +22,7 @@ parser.add_argument('-l', '--lib_paths', nargs="*")
 parser.add_argument('-o', '--out_dir', type=Path, default=None, help="optional directory for copying dylibs")
 parser.add_argument('--safe', action="store_true", help="safe mode")
 parser.add_argument('--sign_id', type=str, default="-", help="codesign sign")
+parser.add_argument('--entitlements', type=str, default=None, help="path to entitlements plist file")
 parser.add_argument('--noclean_rpath', action="store_true", help="does not clean rpath")
 parser.add_argument('--verbose', action="store_true", help="verbose output")
 args = parser.parse_args()
@@ -492,7 +493,11 @@ if __name__ == "__main__":
     def sign_single_target(m):
         try:
             subprocess.run(['chmod', '+x', m], capture_output=True)
-            subprocess.run(['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id, m], capture_output=True)
+            cmd = ['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id]
+            if args.entitlements and os.path.exists(args.entitlements):
+                cmd.extend(['--entitlements', args.entitlements])
+            cmd.append(m)
+            subprocess.run(cmd, capture_output=True)
             subprocess.run(["xattr", "-r", "-d", "com.apple.quarantine", m], capture_output=True)
         except Exception as e: 
             print(f'Could not chmod / codesign file {m} ; codesign needed: {e}')
@@ -500,3 +505,16 @@ if __name__ == "__main__":
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         list(tqdm.tqdm(executor.map(sign_single_target, sign_targets), total=len(sign_targets)))
+
+    # If the target is inside a bundle (e.g. VST3, AU, App), sign the entire bundle directory to seal it
+    if "/Contents/MacOS/" in str(exec_path.resolve()):
+        bundle_dir = exec_path.resolve().parents[2]
+        print(f"Signing the bundle directory {bundle_dir}...")
+        try:
+            cmd = ['codesign', '--force', '--options=runtime', '--sign', args.sign_id]
+            if args.entitlements and os.path.exists(args.entitlements):
+                cmd.extend(['--entitlements', args.entitlements])
+            cmd.append(str(bundle_dir))
+            subprocess.run(cmd, capture_output=True)
+        except Exception as e:
+            print(f"Could not sign bundle directory {bundle_dir}: {e}")

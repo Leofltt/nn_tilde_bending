@@ -82,7 +82,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (infoBendingLabel);
 
     // Make window resizable or set fixed size
-    setSize (500, 480);
+    setSize (500, 500);
     
     // Initial UI load
     updateModelInfo();
@@ -108,8 +108,8 @@ void NNBendingAudioProcessorEditor::paint (juce::Graphics& g)
 
     // Visual dividers
     g.setColour (juce::Colours::violet.withAlpha (0.4f));
-    g.drawHorizontalLine (50, 20.0f, (float)getWidth() - 20.0f);
-    g.drawHorizontalLine (150, 20.0f, (float)getWidth() - 20.0f);
+    g.drawHorizontalLine (55, 20.0f, (float)getWidth() - 20.0f);
+    g.drawHorizontalLine (140, 20.0f, (float)getWidth() - 20.0f);
 }
 
 void NNBendingAudioProcessorEditor::resized()
@@ -117,42 +117,42 @@ void NNBendingAudioProcessorEditor::resized()
     auto area = getLocalBounds().reduced (20);
     
     titleLabel.setBounds (area.removeFromTop (30));
-    area.removeFromTop (10);
+    area.removeFromTop (10); // Spacer
 
     // Top Model Load row
     auto loadArea = area.removeFromTop (35);
-    loadButton.setBounds (loadArea.removeFromLeft (area.getWidth() - 100));
-    area.removeFromTop (5);
+    loadButton.setBounds (loadArea);
+    area.removeFromTop (5); // Spacer
     statusLabel.setBounds (area.removeFromTop (20));
-    area.removeFromTop (10);
+    area.removeFromTop (20); // Spacer (so it clears the line at Y=140)
 
     // Dropdown selectors row (Method & Buffer)
-    auto selectRow = area.removeFromTop (45);
+    auto selectRow = area.removeFromTop (30);
     
-    auto methodArea = selectRow.removeFromLeft (selectRow.getWidth() / 2).reduced(5, 0);
-    methodLabel.setBounds (methodArea.removeFromLeft (60).withHeight (25));
-    methodCombo.setBounds (methodArea.withHeight (25));
+    auto methodArea = selectRow.removeFromLeft (selectRow.getWidth() / 2).reduced (5, 0);
+    methodLabel.setBounds (methodArea.removeFromLeft (60));
+    methodCombo.setBounds (methodArea);
     
-    auto bufferArea = selectRow.reduced(5, 0);
-    bufferLabel.setBounds (bufferArea.removeFromLeft (80).withHeight (25));
-    bufferCombo.setBounds (bufferArea.withHeight (25));
+    auto bufferArea = selectRow.reduced (5, 0);
+    bufferLabel.setBounds (bufferArea.removeFromLeft (80));
+    bufferCombo.setBounds (bufferArea);
 
-    area.removeFromTop (15);
+    area.removeFromTop (15); // Spacer
 
     // Bending group layout
-    bendingGroup.setBounds (area.removeFromTop (230));
-    auto groupArea = bendingGroup.getLocalBounds().reduced (15);
+    bendingGroup.setBounds (area.removeFromTop (260));
+    auto groupArea = bendingGroup.getBounds().reduced (15);
     groupArea.removeFromTop (15); // Title offset
 
     // Layer Selector Row
-    auto layerRow = groupArea.removeFromTop (35);
-    layerLabel.setBounds (layerRow.removeFromLeft (90).withHeight (25));
-    layerCombo.setBounds (layerRow.withHeight (25));
+    auto layerRow = groupArea.removeFromTop (30);
+    layerLabel.setBounds (layerRow.removeFromLeft (90));
+    layerCombo.setBounds (layerRow);
     
-    groupArea.removeFromTop (10);
+    groupArea.removeFromTop (15); // Spacer
 
     // Sliders row
-    auto slidersRow = groupArea.removeFromTop (100);
+    auto slidersRow = groupArea.removeFromTop (120);
     auto scaleArea = slidersRow.removeFromLeft (slidersRow.getWidth() / 2).reduced (10, 0);
     scaleLabel.setBounds (scaleArea.removeFromTop (20));
     scaleSlider.setBounds (scaleArea);
@@ -161,12 +161,12 @@ void NNBendingAudioProcessorEditor::resized()
     offsetLabel.setBounds (offsetArea.removeFromTop (20));
     offsetSlider.setBounds (offsetArea);
 
-    groupArea.removeFromTop (10);
+    groupArea.removeFromTop (15); // Spacer
 
     // Info and Reset row
     auto resetRow = groupArea.removeFromTop (35);
-    resetButton.setBounds (resetRow.removeFromRight (150).withHeight (30));
-    infoBendingLabel.setBounds (resetRow.withHeight (30));
+    resetButton.setBounds (resetRow.removeFromRight (150));
+    infoBendingLabel.setBounds (resetRow);
 }
 
 //==============================================================================
