@@ -246,15 +246,15 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         statusLabel.setText ("Loaded: " + file.getFileName(), juce::dontSendNotification);
         statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
 
-        // Update Method combo box
+        // Update Mode combo box
         methodCombo.clear (juce::dontSendNotification);
-        auto methods = audioProcessor.getBackend().get_available_methods();
+        auto modes = audioProcessor.getAvailableModes();
         int id = 1;
-        for (const auto& m : methods)
+        for (const auto& m : modes)
         {
             methodCombo.addItem (m, id++);
         }
-        methodCombo.setText (audioProcessor.getCurrentMethod(), juce::dontSendNotification);
+        methodCombo.setText (audioProcessor.getCurrentMode(), juce::dontSendNotification);
 
         // Update Layer combo box
         layerCombo.clear (juce::dontSendNotification);

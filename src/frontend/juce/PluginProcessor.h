@@ -139,8 +139,14 @@ public:
     juce::String getModelPath() const { return m_modelPath; }
     juce::String getCurrentMethod() const { return m_currentMethod; }
     void setCurrentMethod(const juce::String& method);
+    juce::String getCurrentMode() const { return m_currentMethod; }
+    void setCurrentMode(const juce::String& mode) { setCurrentMethod(mode); }
+    std::vector<juce::String> getAvailableModes() const;
     int getBufferSize() const { return m_bufferSize; }
     void setBufferSize(int size);
+
+    // Latent bending hook (applied during autoencode mode)
+    void setLatentHook(Backend::LatentHook hook) { m_latentHook = hook; }
 
     // Thread communication
     void runInference();
@@ -149,6 +155,7 @@ private:
     friend class ModelThread;
 
     Backend m_backend;
+    Backend::LatentHook m_latentHook { nullptr };
     std::atomic<bool> m_modelLoaded { false };
     juce::String m_modelPath;
     juce::String m_currentMethod;

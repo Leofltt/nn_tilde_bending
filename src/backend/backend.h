@@ -5,8 +5,7 @@
 #include "../shared/static_buffer.h"
 #include <torch/torch.h>
 #include <vector>
-
-
+#include <functional>
 
 struct MethodProperties {
   std::string name = ""; 
@@ -54,13 +53,21 @@ public:
   using ArgsType = std::vector<c10::IValue>;
   using KwargsType = std::unordered_map<std::string, c10::IValue>;
   using BufferMap = std::map<std::string, StaticBuffer<float>>;
+  using LatentHook = std::function<at::Tensor(at::Tensor)>;
 
   Backend();
   void perform(std::vector<float *> &in_buffer,
                       std::vector<float *> &out_buffer, 
                       std::string method, 
                       int n_batches, int n_out_channels, int n_vec);
+  void perform_autoencode(std::vector<float *> &in_buffer,
+                          std::vector<float *> &out_buffer,
+                          int n_batches, int n_out_channels, int n_vec,
+                          LatentHook latent_hook = nullptr);
   bool has_method(std::string method_name);
+  bool has_autoencode();
+  std::vector<std::string> get_plugin_modes();
+  std::vector<int> get_mode_params(std::string mode);
   bool has_settable_attribute(std::string attribute);
   std::vector<std::string> get_available_methods(LockedModel *model = nullptr);
   std::vector<std::string> get_available_attributes();

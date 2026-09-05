@@ -107,6 +107,139 @@ void Backend::perform(std::vector<float *> &in_buffer,
   }
 }
 
+void Backend::perform_autoencode(std::vector<float *> &in_buffer,
+                                 std::vector<float *> &out_buffer,
+                                 int n_batches, int n_out_channels, int n_vec,
+                                 LatentHook latent_hook) {
+  c10::InferenceMode guard;
+
+  if (!m_loaded)
+    return;
+
+  auto encode_params = get_method_params("encode");
+  auto decode_params = get_method_params("decode");
+  if (encode_params.empty() || decode_params.empty())
+    return;
+
+  auto in_dim = encode_params[0];
+  auto in_ratio = encode_params[1];
+  auto out_dim = decode_params[2];
+  auto out_ratio = decode_params[3];
+
+  // COPY INPUT BUFFER INTO A TENSOR FOR ENCODE
+  std::vector<at::Tensor> tensor_in;
+  for (int i = 0; i < in_dim * n_batches; i++) {
+    if (i < (int)in_buffer.size()) {
+      tensor_in.push_back(torch::from_blob(in_buffer[i], {1, 1, n_vec}).clone());
+    } else {
+      tensor_in.push_back(torch::zeros({1, 1, n_vec}));
+    }
+  }
+
+  auto cat_tensor_in = torch::cat(tensor_in, 1);
+  cat_tensor_in = cat_tensor_in.reshape({in_dim, n_batches, -1, in_ratio});
+  cat_tensor_in = cat_tensor_in.select(-1, -1);
+  cat_tensor_in = cat_tensor_in.permute({1, 0, 2});
+
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+  cat_tensor_in = cat_tensor_in.to(m_device);
+  std::vector<torch::jit::IValue> encode_inputs = {cat_tensor_in};
+  auto kwargs = empty_kwargs();
+
+  at::Tensor latent_tensor;
+  try {
+    latent_tensor = m_model.get_method("encode")(encode_inputs, kwargs).toTensor();
+  } catch (const std::exception &e) {
+    std::cerr << "Autoencode encode error: " << e.what() << '\n';
+    return;
+  }
+
+  // LATENT BENDING / MODULATION HOOK
+  if (latent_hook) {
+    try {
+      latent_tensor = latent_hook(latent_tensor);
+    } catch (const std::exception &e) {
+      std::cerr << "Autoencode latent hook error: " << e.what() << '\n';
+    }
+  }
+
+  // DECODE LATENTS TO AUDIO
+  std::vector<torch::jit::IValue> decode_inputs = {latent_tensor};
+  at::Tensor tensor_out;
+  try {
+    tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
+    tensor_out = tensor_out.repeat_interleave(out_ratio).reshape(
+        {n_batches, out_dim, -1});
+  } catch (const std::exception &e) {
+    std::cerr << "Autoencode decode error: " << e.what() << '\n';
+    return;
+  }
+  model_lock.unlock();
+
+  int out_n_vec(tensor_out.size(2));
+  if (out_n_vec != n_vec) {
+    std::cout << "autoencode output size is not consistent, expected " << n_vec
+              << " samples, got " << out_n_vec << "!\n";
+    return;
+  }
+
+  tensor_out = tensor_out.to(CPU);
+
+  for (int i = 0; i < n_out_channels; i++) {
+    for (int j = 0; j < n_batches; j++) {
+      if (i < tensor_out.size(1)) {
+        auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
+        memcpy(out_buffer[j * n_out_channels + i], out_ptr, n_vec * sizeof(float));
+      } else {
+        memset(out_buffer[j * n_out_channels + i], 0, n_vec * sizeof(float));
+      }
+    }
+  }
+}
+
+bool Backend::has_autoencode() {
+  return has_method("encode") && has_method("decode");
+}
+
+std::vector<std::string> Backend::get_plugin_modes() {
+  std::vector<std::string> modes;
+  if (!is_loaded())
+    return modes;
+
+  if (has_autoencode()) {
+    modes.push_back("autoencode");
+  }
+  if (has_method("forward")) {
+    modes.push_back("forward");
+  }
+  if (has_method("prior")) {
+    modes.push_back("prior");
+  } else if (has_method("generate")) {
+    modes.push_back("generate");
+  }
+
+  // If none of the known modes match, fallback to available methods
+  if (modes.empty()) {
+    for (const auto &m : m_available_methods) {
+      modes.push_back(m);
+    }
+  }
+
+  return modes;
+}
+
+std::vector<int> Backend::get_mode_params(std::string mode) {
+  if (mode == "autoencode" && has_autoencode()) {
+    auto ep = get_method_params("encode");
+    auto dp = get_method_params("decode");
+    if (ep.size() >= 4 && dp.size() >= 4) {
+      // Return: [in_channels, in_ratio, out_channels, out_ratio]
+      return { ep[0], ep[1], dp[2], dp[3] };
+    }
+  }
+  return get_method_params(mode);
+}
+
 int Backend::load(std::string path, double sampleRate, const std::string* target_method) {
   try {
     auto model = torch::jit::load(path);

@@ -34,7 +34,7 @@ private:
     juce::TextButton loadButton { "Load Local Model (.ts)" };
     juce::Label statusLabel;
     
-    juce::Label methodLabel { {}, "Method:" };
+    juce::Label methodLabel { {}, "Mode:" };
     juce::ComboBox methodCombo;
     
     juce::Label bufferLabel { {}, "Buffer Size:" };

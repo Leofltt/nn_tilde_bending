@@ -190,6 +190,18 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 }
 
 //==============================================================================
+std::vector<juce::String> NNBendingAudioProcessor::getAvailableModes() const
+{
+    std::vector<juce::String> modes;
+    if (!m_modelLoaded.load())
+        return modes;
+
+    auto backendModes = const_cast<Backend&>(m_backend).get_plugin_modes();
+    for (const auto& m : backendModes)
+        modes.push_back(juce::String(m));
+    return modes;
+}
+
 bool NNBendingAudioProcessor::loadModel(const juce::File& file)
 {
     m_modelLoaded.store(false);
@@ -202,23 +214,22 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
     {
         m_modelPath = file.getFullPathName();
         
-        // Find default method
-        auto methods = m_backend.get_available_methods();
-        if (!methods.empty())
+        // Find default mode: prefer "autoencode", then "forward", else first available
+        auto modes = m_backend.get_plugin_modes();
+        if (!modes.empty())
         {
-            // Prefer "forward" if available, else take the first one
-            std::string defaultMethod = methods[0];
-            for (const auto& m : methods)
+            std::string defaultMode = modes[0];
+            if (m_backend.has_autoencode())
             {
-                if (m == "forward")
-                {
-                    defaultMethod = m;
-                    break;
-                }
+                defaultMode = "autoencode";
             }
-            m_currentMethod = defaultMethod;
+            else if (m_backend.has_method("forward"))
+            {
+                defaultMode = "forward";
+            }
+            m_currentMethod = defaultMode;
             
-            auto params = m_backend.get_method_params(defaultMethod);
+            auto params = m_backend.get_mode_params(defaultMode);
             if (params.size() >= 4)
             {
                 m_model_in = params[0];
@@ -236,10 +247,15 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
 
 void NNBendingAudioProcessor::setCurrentMethod(const juce::String& method)
 {
-    if (m_backend.has_method(method.toStdString()))
+    std::string methodStr = method.toStdString();
+    auto modes = m_backend.get_plugin_modes();
+    bool isValidMode = (std::find(modes.begin(), modes.end(), methodStr) != modes.end())
+                    || m_backend.has_method(methodStr);
+
+    if (isValidMode)
     {
         m_currentMethod = method;
-        auto params = m_backend.get_method_params(method.toStdString());
+        auto params = m_backend.get_mode_params(methodStr);
         if (params.size() >= 4)
         {
             m_model_in = params[0];
@@ -309,7 +325,15 @@ void NNBendingAudioProcessor::runInference()
         for (int c = 0; c < m_model_out; ++c)
             out_ptrs.push_back(m_staging_out[c].data());
             
-        m_backend.perform(in_ptrs, out_ptrs, m_currentMethod.toStdString(), 1, m_model_out, m_bufferSize);
+        std::string modeStr = m_currentMethod.toStdString();
+        if (modeStr == "autoencode")
+        {
+            m_backend.perform_autoencode(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, m_latentHook);
+        }
+        else
+        {
+            m_backend.perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
+        }
     }
     
     m_output_ready.store(true);
