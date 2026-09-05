@@ -1,8 +1,41 @@
-![banner](https://github.com/acids-ircam/nn_tilde/raw/master/assets/banner.png)
+# Build
 
-# Demonstration video
+```bash
+mkdir build && cd build
+cmake ../src -DCMAKE_PREFIX_PATH=../libtorch -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.15
+```
 
-[![RAVE x nn~](http://img.youtube.com/vi/dMZs04TzxUI/mqdefault.jpg)](https://www.youtube.com/watch?v=dMZs04TzxUI)
+### Build Targets
+
+You can build specific targets using `make <target>` or `cmake --build . --target <target>`:
+
+| Target | Description | Output / Installation |
+|---|---|---|
+| `plugin` | JUCE VST3 & AudioUnit (AU) plugins (`nn_bending_plugin`) | Bundles dylibs, signs with `SIGN_ID` & entitlements, and copies to `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/Components` (macOS). |
+| `standalone` | JUCE Standalone desktop application (`nn_bending_standalone`) | Standalone executable with embedded UI and libtorch backend. |
+| `maxmsp` | Max/MSP externals (`nn_tilde`, `mc.nn_tilde`, `mcs.nn_tilde`, `nn.info`) | Bundles externals into `src/` (macOS / Windows). |
+| `puredata` | PureData external (`nn`) | Built to `build/frontend/puredata/Release`. |
+| `all` (default) | Builds all enabled frontend targets | Builds everything configured. |
+
+### CMake Configuration Options
+
+The build system is located in the `src/` directory. Configure with `cmake ../src [OPTIONS]`:
+
+- `-DBUILD_JUCE_PLUGIN=ON|OFF` (default: `ON`): Enable/disable JUCE VST3/AU plugins and standalone targets.
+- `-DBUILD_MAXMSP=ON|OFF` (default: `ON`): Enable/disable Max/MSP externals.
+- `-DBUILD_PUREDATA=ON|OFF` (default: `ON`): Enable/disable PureData externals.
+- `-DBUNDLE_DEPENDENCIES=ON|OFF` (default: `OFF`): When `ON`, copies and bundles ~1.5 GB of shared libraries into `support/` for standalone package distribution. Leave `OFF` for fast, native `@rpath` development builds.
+- `-DSIGN_ID="..."` (default: `-`): Codesigning identity for macOS binaries, frameworks, and bundles.
+- `-DCMAKE_POLICY_VERSION_MINIMUM=3.15`: Ensures compatibility with modern CMake policies.
+
+#### Environment Variables & `.env`
+
+You can create a `.env` file at the root of the repository to set build variables automatically (e.g., `SIGN_ID`):
+
+```bash
+SIGN_ID="Developer ID Application: Your Name (TEAM_ID)"
+```
+
 
 # Installation
 
@@ -12,7 +45,7 @@ Grab the [latest release of nn~](https://github.com/acids-ircam/nn_tilde/release
 
 Uncompress the `.tar.gz` file in the Package folder of your Max installation, i.e. in `Documents/Max [your version]/Packages/`. You can then instantiate  an `nn~` object!  Alt-click the `nn~` object to open the help patch, or access the nn~ Overview patch in the Extras menu.
 
-##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so,  please launch in the terminal : 
+##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so,  please launch in the terminal
 
 ```bash
 cd "~/Max X/Packages/nn_tilde
@@ -101,7 +134,7 @@ Using Max/MSP and PureData graphical objects, this can lead to an intuitive way 
 
 ## Buffer configuration
 
-Internally, `nn~` has a circular buffer mechanism that helps maintain a reasonable computational load, if the given buffer size is greater tha 0. You can modify its size through the use of an additional integer after the method declaration, as shown below. 
+Internally, `nn~` has a circular buffer mechanism that helps maintain a reasonable computational load, if the given buffer size is greater tha 0. You can modify its size through the use of an additional integer after the method declaration, as shown below.
 
 **Important**For Windows users, the circular buffer is automatically disabled because of a memory leak [that occurs when a TorchScript model is used in a separate thread](https://github.com/pytorch/pytorch/issues/24237). Unfortunately, this implies a much lower efficiency in terms of CPU.  
 
@@ -156,7 +189,7 @@ Dynamically reloads the model. Can be useful if you want to periodically update 
 
 ### dump
 
-Prints methods / attributes of the loaded model. 
+Prints methods / attributes of the loaded model.
 
 ### print_available_models
 
@@ -164,7 +197,7 @@ Prints models downloadable through API.
 
 ### download
 
-Download a model from the API. 
+Download a model from the API.
 
 ### delete
 
@@ -181,10 +214,10 @@ Change dynamically the used method.
 # Scripting any PyTorch model in nn~
 
 In the [`scripting`](https://github.com/acids-ircam/nn_tilde/tree/master/scripting) subfolder, you can find a series of examples that demonstrate how to write simple scripts to incorporate any type of deep models from PyTorch into MaxMSP (and potentially running on GPU). The examples show different use cases that also help to understand the input/output shapes relationships.
+
 - `effects.py` : apply simple effects to the input (identical input and output shapes)
 - `features.py` : compute spectral descriptors from the PyTorch audio library (each input audio buffer produces a single float as output)
 - `unmix.py` : apply the unmix deep source separation model (input is split into 4 different audio streams containing « drums », « vocals », « bass » and « others »)
-
 
 # Build Instructions
 
@@ -202,31 +235,37 @@ bash ./miniconda.sh -b -u -p ./env
 source ./env/bin/activate
 pip install -r requirements.txt
 conda install -c conda-forge curl
-mkdir build
-cd build
+mkdir build && cd build
 mkdir puredata_include
 curl -L https://raw.githubusercontent.com/pure-data/pure-data/master/src/m_pd.h -o puredata_include/m_pd.h
 export CC=$(brew --prefix llvm)/bin/clang
 export CXX=$(brew --prefix llvm)/bin/clang++
-cd build
-cmake ../src -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_PREFIX_PATH=../env/lib/python3.12/site-packages/torch -DCMAKE_BUILD_TYPE=Release -DPUREDATA_INCLUDE_DIR=../puredata_include -DCMAKE_OSX_ARCHITECTURES=arm64
+cmake ../src -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_PREFIX_PATH=../env/lib/python3.12/site-packages/torch -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../puredata_include -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake --build . --config Release
 ```
-please replace `arm64` in the last line by `x86_64` if you want compile for 64 bits. You can remove `-DPUREDATA_INCLUDE_DIR=../puredata_include` to compile only for Max. The Max package is produced in `src/`,  and Pd external in `build/frontend/puredata/Release`.
 
+To build a specific frontend/target only:
+```bash
+cmake --build . --config Release --target plugin      # Builds VST3 & AU plugins
+cmake --build . --config Release --target standalone  # Builds standalone app
+cmake --build . --config Release --target maxmsp      # Builds Max/MSP externals
+cmake --build . --config Release --target puredata    # Builds PureData external
+```
+
+Please replace `arm64` in the cmake command by `x86_64` if compiling for Intel 64 bits. You can disable targets using `-DBUILD_JUCE_PLUGIN=OFF`, `-DBUILD_MAXMSP=OFF`, or `-DBUILD_PUREDATA=OFF`.
 
 ## Windows
 
 - Download Libtorch (CPU) and dependencies [here](https://pytorch.org/get-started/locally/) and unzip to a known directory.
-- Install [Visual Studio Redistribuable](https://learn.microsoft.com/fr-fr/cpp/windows/latest-supported-vc-redist?view=msvc-170) 
+- Install [Visual Studio Redistributable](https://learn.microsoft.com/fr-fr/cpp/windows/latest-supported-vc-redist?view=msvc-170)
 - Run the following commands (here for Git Bash):
+
 ```bash
 git clone https://github.com/acids-ircam/nn_tilde --recurse-submodules
 cd nn_tilde
 curl -L https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-2.6.0%2Bcpu.zip > "libtorch.zip"
 unzip libtorch.zip
-mkdir pd
-cd pd
+mkdir pd && cd pd
 curl -L https://msp.ucsd.edu/Software/pd-0.55-2.msw.zip -o pd.zip
 unzip pd.zip
 mv pd*/src .
@@ -238,17 +277,23 @@ cd vcpkg
 ./vcpkg.exe integrate install
 ./vcpkg.exe install curl
 cd ..
-mkdir build
-cd build
+mkdir build && cd build
 mkdir puredata_include
 curl -L https://raw.githubusercontent.com/pure-data/pure-data/master/src/m_pd.h -o puredata_include/m_pd.h
-export CC=$(brew --prefix llvm)/bin/clang
-export CXX=$(brew --prefix llvm)/bin/clang++
-cd build
-cmake ../src -G "Visual Studio 17 2022" -DTorch_DIR=../libtorch/share/cmake/Torch -DPUREDATA_INCLUDE_DIR=../pd/src -DPUREDATA_BIN_DIR=../pd/bin -A x64
+cmake ../src -G "Visual Studio 17 2022" -DTorch_DIR=../libtorch/share/cmake/Torch -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../pd/src -DPUREDATA_BIN_DIR=../pd/bin -A x64
 cmake --build . --config Release
 ```
-You can remove `-DPUREDATA_INCLUDE_DIR=../puredata_include` to compile only for Max. The Max package is produced in `src/`,  and Pd external in `build/frontend/puredata/Release`.
+
+To build a specific frontend/target:
+```bash
+cmake --build . --config Release --target plugin      # Builds VST3 plugin
+cmake --build . --config Release --target standalone  # Builds standalone app
+cmake --build . --config Release --target maxmsp      # Builds Max/MSP externals
+cmake --build . --config Release --target puredata    # Builds PureData external
+```
+
+You can disable targets using `-DBUILD_JUCE_PLUGIN=OFF`, `-DBUILD_MAXMSP=OFF`, or `-DBUILD_PUREDATA=OFF`.
+
 
 ## Raspberry Pi
 
@@ -261,13 +306,3 @@ Install nn~ for PureData using
 ```bash
 curl -s https://raw.githubusercontent.com/acids-ircam/nn_tilde/master/install/raspberrypi.sh | bash
 ```
-
-# Funding
-
-This work is led at IRCAM, and has been funded by the following projects
-
-* [ANR MakiMono](https://acids.ircam.fr/course/makimono/)
-* [ACTOR](https://www.actorproject.org/)
-* [DAFNE+](https://dafneplus.eu/) N° 101061548
-
-<img src="https://ec.europa.eu/regional_policy/images/information-sources/logo-download-center/eu_co_funded_en.jpg" width=200px/>

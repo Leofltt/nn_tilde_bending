@@ -8,6 +8,17 @@ configure_file(
   COPYONLY
 )
 
+# Load environment variables from .env if it exists
+if(EXISTS "${CMAKE_SOURCE_DIR}/../.env")
+  file(STRINGS "${CMAKE_SOURCE_DIR}/../.env" ENVS REGEX "^[^#]")
+  foreach(ENV_VAR ${ENVS})
+    if(ENV_VAR MATCHES "^([^=]+)=\"?([^\"]*)\"?$")
+      set(ENV{${CMAKE_MATCH_1}} "${CMAKE_MATCH_2}")
+      set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}" CACHE STRING "Loaded from .env" FORCE)
+    endif()
+  endforeach()
+endif()
+
 if (NOT DEFINED SIGN_ID)
   if (DEFINED $ENV{SIGN_ID})
     set(SIGN_ID $ENV{SIGN_ID})
@@ -32,7 +43,18 @@ include(${CMAKE_SOURCE_DIR}/cmake/add_torch.cmake)
 list(PREPEND CMAKE_PREFIX_PATH "${torch_dir}/libtorch")
 find_package(Torch REQUIRED PATHS ${torch_dir}/libtorch/lib)
 
+if (APPLE)
+  # Automatically strip quarantine and ad-hoc sign torch dylibs to prevent Gatekeeper popups
+  if (EXISTS "${TORCH_INSTALL_PREFIX}/lib")
+    execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${TORCH_INSTALL_PREFIX}/lib'/*.dylib 2>/dev/null; find '${TORCH_INSTALL_PREFIX}/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+  if (EXISTS "${torch_dir}/libtorch/lib")
+    execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${torch_dir}/libtorch/lib'/*.dylib 2>/dev/null; find '${torch_dir}/libtorch/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+endif()
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
 
 set(CONDA_ENV_PATH "${CMAKE_SOURCE_DIR}/../env")
 if (MSVC)
@@ -70,6 +92,19 @@ endif()
 
 if (APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+  execute_process(
+    COMMAND brew --prefix
+    OUTPUT_VARIABLE HOMEBREW_PREFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if (NOT HOMEBREW_PREFIX)
+    if (EXISTS "/opt/homebrew")
+      set(HOMEBREW_PREFIX "/opt/homebrew")
+    else()
+      set(HOMEBREW_PREFIX "/usr/local")
+    endif()
+  endif()
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -82,7 +117,6 @@ add_subdirectory(json)
 
 if (UNIX)
   if (APPLE)
-    add_compile_options(-std=c++20)
     set(CMAKE_CXX_FLAGS "-faligned-allocation")
     if (CMAKE_OSX_ARCHITECTURES STREQUAL "")
         set(CMAKE_OSX_ARCHITECTURES ${CMAKE_HOST_SYSTEM_PROCESSOR})
@@ -104,6 +138,8 @@ execute_process(
 
 option(BUILD_MAXMSP "Build MaxMSP targets" ON)
 option(BUILD_PUREDATA "Build PureData targets" ON)
+option(BUILD_JUCE_PLUGIN "Build JUCE VST3/AU audio plugin" ON)
+option(BUNDLE_DEPENDENCIES "Bundle and relocate shared dependencies for standalone package distribution" OFF)
 
 if (NOT DEFINED NO_PUREDATA)
   set(NO_PUREDATA 0)
@@ -142,4 +178,24 @@ endif()
 if (BUILD_PUREDATA AND NO_PUREDATA EQUAL 0)
     add_custom_target(puredata)
     add_dependencies(puredata nn)
+endif()
+
+if (BUILD_JUCE_PLUGIN)
+    include(FetchContent)
+    FetchContent_Declare(
+        JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG        8.0.13
+    )
+    set(JUCE_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+    set(JUCE_BUILD_EXTRAS OFF CACHE INTERNAL "")
+    FetchContent_MakeAvailable(JUCE)
+
+    add_subdirectory(frontend/juce)
+
+    add_custom_target(plugin)
+    add_dependencies(plugin nn_bending_plugin)
+
+    add_custom_target(standalone)
+    add_dependencies(standalone nn_bending_standalone)
 endif()

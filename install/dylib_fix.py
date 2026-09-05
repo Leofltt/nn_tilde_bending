@@ -22,6 +22,7 @@ parser.add_argument('-l', '--lib_paths', nargs="*")
 parser.add_argument('-o', '--out_dir', type=Path, default=None, help="optional directory for copying dylibs")
 parser.add_argument('--safe', action="store_true", help="safe mode")
 parser.add_argument('--sign_id', type=str, default="-", help="codesign sign")
+parser.add_argument('--entitlements', type=str, default=None, help="path to entitlements plist file")
 parser.add_argument('--noclean_rpath', action="store_true", help="does not clean rpath")
 parser.add_argument('--verbose', action="store_true", help="verbose output")
 args = parser.parse_args()
@@ -137,21 +138,36 @@ def get_architectures(file_path):
 
 
 
-def get_find_results(directory, pattern):
-    try:
-        # Run the find command
-        command = ['find', directory, '-name', pattern]
-        print(" ".join(command))
-        result = subprocess.run(command, 
-                                check=True, 
-                                text=True, 
-                                capture_output=True)
-        file_list = result.stdout.strip().split('\n')
-        file_list = [f for f in file_list if f]
-        return file_list
+FIND_RESULTS_CACHE = {}
 
-    except subprocess.CalledProcessError as e:
+def get_find_results(directory, pattern):
+    if not os.path.exists(directory):
         return []
+    
+    cache_key = (str(directory), pattern)
+    if cache_key in FIND_RESULTS_CACHE:
+        return FIND_RESULTS_CACHE[cache_key]
+
+    search_dirs = [directory]
+    lib_subdir = os.path.join(directory, 'lib')
+    if os.path.isdir(lib_subdir):
+        search_dirs.insert(0, lib_subdir)
+
+    file_list = []
+    for d in search_dirs:
+        try:
+            # Limit depth to avoid scanning entire Homebrew or filesystem tree
+            command = ['find', d, '-maxdepth', '3', '-name', pattern]
+            result = subprocess.run(command, check=True, text=True, capture_output=True)
+            results = [f for f in result.stdout.strip().split('\n') if f]
+            if results:
+                file_list.extend(results)
+                break
+        except subprocess.CalledProcessError:
+            pass
+
+    FIND_RESULTS_CACHE[cache_key] = file_list
+    return file_list
 
 
 def find_candidates_for(lib_name, lib_dir, lib_arch, allow_different_arch: bool = True):
@@ -159,23 +175,19 @@ def find_candidates_for(lib_name, lib_dir, lib_arch, allow_different_arch: bool 
     lib_name_parts = lib_name.split('.')
     candidates = []
     for l in lib_dir: 
-        print('parsing %s'%lib_name_parts)
         for i in reversed(range(1, len(lib_name_parts)+1)):
             results = get_find_results(l, ".".join(lib_name_parts[:i]) + "*" + lib_ext)
             if len(results) > 0:
+                candidates.extend(results)
                 break
-        candidates.extend(results)
-    print("candidates before filtering : ", candidates)
     if len(candidates) == 0: 
         return [] 
     candidates_filt_arch = list(filter(lambda x: get_architectures(x) == lib_arch, candidates))
     if len(candidates_filt_arch) == 0:
-        print('[Warning] Candidates found for %s, but with wrong architecture'%lib_name)
         if not allow_different_arch:
             return [] 
     else:
         candidates = candidates_filt_arch
-    print(candidates)
 
     for i, c in enumerate(candidates):
         while os.path.islink(c):
@@ -248,7 +260,8 @@ def most_relevant_lib(lib_name, path_dicts, dep_paths=[], arch="arm64"):
         candidates = find_candidates_for(f"{lib_name}.dylib", dep_paths, arch)
         candidate = find_most_relevant_dylib_candidate(f"{lib_name}.dylib", candidates)
         if candidate is None: 
-            raise RuntimeError('no valid library found for %s in %s (candidates : %s)'%(lib_name, dep_paths, candidates))
+            print(f'[Warning] No valid library found for {lib_name} in {dep_paths} (candidates: {candidates}); skipping.')
+            return None
         return candidate
     # find in priority the librairies given in arguments
     for libdir in map(Path, dep_paths):
@@ -277,6 +290,7 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
     libs_hash_linked = {}
 
     arch = get_architectures(exec_path)
+    scheduled_libs = {get_library_name(str(exec_path))}
     # analyse dependencies
     while len(libs_to_analyse) != 0:
         if verbose: print('anlysing librairies %s'%libs_to_analyse)
@@ -300,17 +314,23 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
             if verbose: print('fetching paths for %s'%p)
             if p not in libs_paths:
                 lib_path = most_relevant_lib(p, libs_deps[p], dep_paths, arch)
+                if lib_path is None:
+                    continue
                 print('found lib : %s'%lib_path)
                 libs_paths[p] = Path(lib_path)
-            if get_library_name(p) not in libs_analysed:
+            if p not in libs_paths or libs_paths[p] is None:
+                continue
+            lib_name_key = get_library_name(p)
+            if lib_name_key not in scheduled_libs:
                 print('adding %s for parsing'%p)
                 libs_to_analyse.append(libs_paths[p])
+                scheduled_libs.add(lib_name_key)
 
     actions = []
     exec_dir = exec_path.parent
     os.makedirs(str(main_dir.resolve()), exist_ok=True)
     for k, v in libs_paths.items():
-        if not (main_dir / v.name).resolve().exists():
+        if v is not None and not (main_dir / v.name).resolve().exists():
             actions.append(['copy', str(v), str(main_dir)])
     for k, v in libs_hash.items():
         for i, v_tmp in enumerate(v):
@@ -323,12 +343,15 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
                     actions.append(['-id', f"@loader_path/{v_tmp.name}", str(main_dir / v_tmp.name)])
             else:
                 current_dep = str(libs_hash_linked[k][i]) 
-                # new_dep = f"@loader_path/{libs_paths[get_library_name(current_dep)].name}"
+                dep_key = get_library_name(current_dep)
+                if dep_key not in libs_paths or libs_paths[dep_key] is None:
+                    continue
+                # new_dep = f"@loader_path/{libs_paths[dep_key].name}"
                 if v_tmp.stem == exec_path.stem:
-                    new_dep = f"@loader_path/{lib_from_exc_path(exec_path, main_dir / libs_paths[get_library_name(current_dep)].name)}"
+                    new_dep = f"@loader_path/{lib_from_exc_path(exec_path, main_dir / libs_paths[dep_key].name)}"
                     actions.append(['-change', current_dep, new_dep, str(exec_dir / v_tmp.name)])
                 else:
-                    new_dep = f"@loader_path/{libs_paths[get_library_name(current_dep)].name}"
+                    new_dep = f"@loader_path/{libs_paths[dep_key].name}"
                     actions.append(['-change', current_dep, new_dep, str(main_dir / v_tmp.name)])
     return actions
 
@@ -383,10 +406,14 @@ def perform_action(action, main_dir):
                                     text=True, 
                                     capture_outpu=False)
         elif action[0] == "clean_rpath":
-            rpaths = extract_rpaths(str(main_dir / action[1]), replace_dynamic_paths=False)
-            for r in rpaths: 
+            rpaths = extract_rpaths(action[1], replace_dynamic_paths=False)
+            if rpaths:
+                cmd = ['install_name_tool']
+                for r in rpaths:
+                    cmd.extend(['-delete_rpath', str(r)])
+                cmd.append(action[1])
                 try:
-                    subprocess.run(['install_name_tool', '-delete_rpath', str(r), str(action[1])])
+                    subprocess.run(cmd, check=True, text=True, capture_output=True)
                 except subprocess.SubprocessError as e: 
                     print("problem with clean_rpath : %s"%e)
                     pass
@@ -412,6 +439,47 @@ def print_action(idx, action):
     else:
         print(idx, action)
 
+def perform_grouped_actions(actions, main_dir):
+    copies = []
+    install_name_tool_opts = {}
+    
+    for a in actions:
+        if a[0] == 'copy':
+            copies.append(a)
+        elif a[0] == '-change':
+            target = a[3]
+            install_name_tool_opts.setdefault(target, []).extend(['-change', a[1], a[2]])
+        elif a[0] == '-id':
+            target = str(main_dir / os.path.split(a[1])[-1])
+            install_name_tool_opts.setdefault(target, []).extend(['-id', a[1]])
+        elif a[0] == '-delete_rpath':
+            target = str(main_dir / os.path.split(a[2])[-1])
+            install_name_tool_opts.setdefault(target, []).extend(['-delete_rpath', a[1]])
+        elif a[0] == '-add_rpath':
+            target = str(main_dir / os.path.split(a[2])[-1])
+            install_name_tool_opts.setdefault(target, []).extend(['-add_rpath', a[1]])
+
+    operations = []
+    for c in copies:
+        operations.append(('copy', c))
+    for target, opts in install_name_tool_opts.items():
+        if opts:
+            operations.append(('install_name_tool', target, opts))
+            
+    for op in tqdm.tqdm(operations):
+        if op[0] == 'copy':
+            perform_action(op[1], main_dir)
+        elif op[0] == 'install_name_tool':
+            target, opts = op[1], op[2]
+            cmd = ['install_name_tool'] + opts + [target]
+            try:
+                result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Error executing install_name_tool on {target}: {e}")
+                if e.stderr:
+                    print(e.stderr)
+                raise e
+
 
 if __name__ == "__main__":
     exec_path = Path(args.path)
@@ -429,8 +497,7 @@ if __name__ == "__main__":
         if answ.lower() == "n": raise SystemExit("raised by user") 
 
     os.makedirs(str(main_dir.resolve()), exist_ok=True)
-    for a in tqdm.tqdm(actions): 
-        perform_action(a, main_dir = main_dir)
+    perform_grouped_actions(actions, main_dir)
 
     if not args.noclean_rpath:
         for m in [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]:
@@ -439,11 +506,34 @@ if __name__ == "__main__":
 
 
     if args.sign_id == "": args.sign_id = "-"
-    for m in [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]:
+    sign_targets = [os.path.join(main_dir, m) for m in os.listdir(main_dir)] + [args.path]
+    print(f'Codesigning {len(sign_targets)} files in parallel...')
+    
+    def sign_single_target(m):
         try:
-            subprocess.run(['chmod', '+x', m])
-            subprocess.run(['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id, m])
-            subprocess.run(["xattr", "-r", "-d", "com.apple.quarantine", m])
-        except subprocess.CalledProcessError as e: 
-            print(f'Could not chmod / codesign file {m} ; codesign needed')
-                
+            subprocess.run(['chmod', '+x', m], capture_output=True)
+            cmd = ['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id]
+            if args.entitlements and os.path.exists(args.entitlements):
+                cmd.extend(['--entitlements', args.entitlements])
+            cmd.append(m)
+            subprocess.run(cmd, capture_output=True)
+            subprocess.run(["xattr", "-r", "-d", "com.apple.quarantine", m], capture_output=True)
+        except Exception as e: 
+            print(f'Could not chmod / codesign file {m} ; codesign needed: {e}')
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        list(tqdm.tqdm(executor.map(sign_single_target, sign_targets), total=len(sign_targets)))
+
+    # If the target is inside a bundle (e.g. VST3, AU, App), sign the entire bundle directory to seal it
+    if "/Contents/MacOS/" in str(exec_path.resolve()):
+        bundle_dir = exec_path.resolve().parents[2]
+        print(f"Signing the bundle directory {bundle_dir}...")
+        try:
+            cmd = ['codesign', '--force', '--options=runtime', '--sign', args.sign_id]
+            if args.entitlements and os.path.exists(args.entitlements):
+                cmd.extend(['--entitlements', args.entitlements])
+            cmd.append(str(bundle_dir))
+            subprocess.run(cmd, capture_output=True)
+        except Exception as e:
+            print(f"Could not sign bundle directory {bundle_dir}: {e}")

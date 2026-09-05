@@ -40,26 +40,31 @@ if (APPLE)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -undefined dynamic_lookup")
 
-    add_custom_command(
-        TARGET nn
-        POST_BUILD
-        COMMAND cp "${TORCH_INSTALL_PREFIX}/lib/*.dylib" "${CMAKE_CURRENT_BINARY_DIR}/"
-        COMMENT "Copy Torch Libraries"
-    )
-
     set_target_properties(nn PROPERTIES
         PREFIX ""
         SUFFIX "~.pd_darwin"
-        BUILD_WITH_INSTALL_RPATH FALSE
-        LINK_FLAGS "-Wl,-rpath,@loader_path/"
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/;${CONDA_ENV_PATH}/lib"
     )
 
-    add_custom_command(
-        TARGET nn
-        POST_BUILD 
-        COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "${CMAKE_CURRENT_BINARY_DIR}/*.pd_darwin" -l "${CMAKE_CURRENT_BINARY_DIR}/" "${CMAKE_BINARY_DIR}/_deps"  "${CMAKE_SOURCE_DIR}/../env" 
-        COMMENT "Fixing libraries and codesigning"
-    )
+    if (BUNDLE_DEPENDENCIES)
+        add_custom_command(
+            TARGET nn
+            POST_BUILD
+            COMMAND cp "${TORCH_INSTALL_PREFIX}/lib/*.dylib" "${CMAKE_CURRENT_BINARY_DIR}/"
+            COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "${CMAKE_CURRENT_BINARY_DIR}/*.pd_darwin" -l "${CMAKE_CURRENT_BINARY_DIR}/" "${CMAKE_BINARY_DIR}/_deps"  "${CMAKE_SOURCE_DIR}/../env" 
+            COMMENT "Fixing libraries and codesigning"
+        )
+    else()
+        add_custom_command(
+            TARGET nn
+            POST_BUILD
+            COMMAND xattr -cr "$<TARGET_FILE:nn>"
+            COMMAND codesign --force --sign "${SIGN_ID}" "$<TARGET_FILE:nn>"
+            COMMENT "De-quarantining and codesigning PureData external"
+            VERBATIM
+        )
+    endif()
 
 endif()
 

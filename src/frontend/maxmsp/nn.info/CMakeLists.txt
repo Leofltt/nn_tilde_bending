@@ -75,45 +75,50 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${CURL_LIBRARY})
 
 include(${C74_MIN_API_DIR}/script/min-posttarget.cmake)
 
+# min-posttarget.cmake resets CXX_STANDARD to 17; override back to 20
+# (nn.info.cpp uses C++20 features like std::unordered_map::contains)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
+
 if (MSVC)
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
-	set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
-	target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 endif()
 
 
-if (APPLE) # SEARCH FOR TORCH DYLIB IN THE LOADER FOLDER
-set_target_properties(${PROJECT_NAME} PROPERTIES
-	BUILD_WITH_INSTALL_RPATH FALSE
-	LINK_FLAGS "-Wl,-rpath,@loader_path/"
-)
-endif()
+if (APPLE)
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		BUILD_WITH_INSTALL_RPATH TRUE
+		INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/../../support;@loader_path/../../../support;${CONDA_ENV_PATH}/lib"
+	)
 
-
-
-
-if (APPLE) # COPY DYLIBS IN THE LOADER FOLDER
-
-	find_program(PYTHON_EXECUTABLE NAMES python3 python)
-
-	if (EXISTS "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem")
-		add_custom_command(
-			TARGET ${PROJECT_NAME}
-			POST_BUILD 
-			COMMAND echo "signing with ${SIGN_ID}"
-			COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
-			COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
-		)
+	if (BUNDLE_DEPENDENCIES)
+		if (EXISTS "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem")
+			add_custom_command(
+				TARGET ${PROJECT_NAME}
+				POST_BUILD 
+				COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+				COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
+				COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
+				VERBATIM
+			)
+		else()
+			add_custom_command(
+				TARGET ${PROJECT_NAME}
+				POST_BUILD 
+				COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
+				COMMENT "Fixing libraries, permissions, codesigning, quarantine"
+				VERBATIM
+			)
+		endif()
 	else()
 		add_custom_command(
 			TARGET ${PROJECT_NAME}
 			POST_BUILD 
-			COMMAND echo "signing with ${SIGN_ID}"
-			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
-			COMMENT "Fixing libraries, permissions, codesigning, quarantine"
+			COMMAND codesign --force --deep --sign "${SIGN_ID}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../.."
+			COMMENT "Codesigning ${PROJECT_NAME}"
+			VERBATIM
 		)
 	endif()
-
 endif()
+

@@ -82,28 +82,40 @@ target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CURL_LIBRARY})
 
 
-if (APPLE) # SEARCH FOR TORCH DYLIB IN THE LOADER FOLDER
-set_target_properties(${PROJECT_NAME} PROPERTIES
-	BUILD_WITH_INSTALL_RPATH FALSE
-	LINK_FLAGS "-Wl,-rpath,@loader_path/"
-)
-endif()
+if (APPLE)
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		BUILD_WITH_INSTALL_RPATH TRUE
+		INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/../../support;@loader_path/../../../support;${CONDA_ENV_PATH}/lib"
+	)
 
-
-	if (EXISTS "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem")
-		add_custom_command(
-			TARGET ${PROJECT_NAME}
-			POST_BUILD 
-			COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
-			COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
-		)
+	if (BUNDLE_DEPENDENCIES)
+		if (EXISTS "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem")
+			add_custom_command(
+				TARGET ${PROJECT_NAME}
+				POST_BUILD 
+				COMMAND ${CMAKE_COMMAND} -E copy  "${CMAKE_SOURCE_DIR}/../env/ssl/cert.pem" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+				COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
+				COMMENT "Fixing libraries, certificates, permissions, codesigning, quarantine"
+				VERBATIM
+			)
+		else()
+			add_custom_command(
+				TARGET ${PROJECT_NAME}
+				POST_BUILD 
+				COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
+				COMMENT "Fixing libraries, permissions, codesigning, quarantine"
+				VERBATIM
+			)
+		endif()
 	else()
 		add_custom_command(
 			TARGET ${PROJECT_NAME}
 			POST_BUILD 
-			COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "$<TARGET_FILE:${PROJECT_NAME}>" -o "${CMAKE_SOURCE_DIR}/support" -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}" --sign_id "${SIGN_ID}"
-			COMMENT "Fixing libraries, permissions, codesigning, quarantine"
+			COMMAND codesign --force --deep --sign "${SIGN_ID}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../.."
+			COMMENT "Codesigning ${PROJECT_NAME}"
+			VERBATIM
 		)
 	endif()
+endif()
+
 
