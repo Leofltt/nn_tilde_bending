@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "WeightBendingComponent.h"
 #include <vector>
 
 class NNBendingAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -23,44 +24,58 @@ public:
 private:
     void timerCallback() override;
     void updateModelInfo();
-    void selectLayer(const juce::String& layerName);
-    void applyWeightBending();
-    void resetWeightBending();
+    void selectLayer (const juce::String& layerName);
+    void applyKnobBending();
+    void resetLayerWeights();
+    void resetAllLayerWeights();
+    void saveModelToFile();
 
     NNBendingAudioProcessor& audioProcessor;
 
-    // GUI Components
+    // Header Components
     juce::Label titleLabel;
-    juce::TextButton loadButton { "Load Local Model (.ts)" };
+    juce::TextButton loadButton { "Load Model (.ts)" };
     juce::Label statusLabel;
     
     juce::Label methodLabel { {}, "Mode:" };
     juce::ComboBox methodCombo;
     
-    juce::Label bufferLabel { {}, "Buffer Size:" };
+    juce::Label bufferLabel { {}, "Buffer:" };
     juce::ComboBox bufferCombo;
 
+    juce::TextButton saveModelButton { "Save Model (.ts)" };
+
     // Bending Section
-    juce::GroupComponent bendingGroup { "Bending", "Weight Parameter Bending" };
-    juce::Label layerLabel { {}, "Select Layer:" };
+    juce::GroupComponent bendingGroup { "Bending", "Interactive Weight Bending" };
+    
+    juce::Label layerLabel { {}, "Layer:" };
     juce::ComboBox layerCombo;
     
-    juce::Label scaleLabel { {}, "Weight Scale (x)" };
+    juce::TextButton resetLayerButton { "Reset Layer" };
+    juce::TextButton resetAllButton { "Reset All Layers" };
+
+    // Interactive canvas
+    WeightBendingComponent weightCanvas;
+
+    // Side Controls
+    juce::Label scaleLabel { {}, "Scale" };
     juce::Slider scaleSlider;
     
-    juce::Label offsetLabel { {}, "Weight Offset (+)" };
+    juce::Label offsetLabel { {}, "Offset" };
     juce::Slider offsetSlider;
     
-    juce::TextButton resetButton { "Reset Layer Weights" };
     juce::Label infoBendingLabel;
 
     // File Chooser
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    // Cached weights for the currently selected bending layer
+    // Active layer cache
     juce::String currentBendingLayer;
     std::vector<float> originalWeights;
-    bool isBendingActive { false };
+    std::vector<float> currentWeights;
+    std::vector<float> baseDrawnWeights;
+    double lastKnobScale { 1.0 };
+    double lastKnobOffset { 0.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NNBendingAudioProcessorEditor)
 };

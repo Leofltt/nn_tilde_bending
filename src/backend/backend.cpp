@@ -347,6 +347,15 @@ int Backend::load(std::string path, double sampleRate, const std::string* target
     m_path = path;
     set_sample_rate(sampleRate);
     m_loaded = 1;
+
+    // Cache original weights for bending / reset
+    m_original_weights.clear();
+    for (const auto &layer : m_model.named_parameters()) {
+      auto t = layer.value.contiguous().to(CPU);
+      m_original_weights[layer.name] = std::vector<float>(
+          t.data_ptr<float>(), t.data_ptr<float>() + t.numel());
+    }
+
     return 0;
   } catch (const std::exception &e) {
     throw "problem loading model " + path + ". Exception : " + e.what();
@@ -869,4 +878,36 @@ void Backend::set_layer_weights(std::string layer_name,
     if (layer.name == layer_name)
       std::cout << "first layer weight after copy " << layer.value[0] << std::endl;
   model_lock.unlock();
+}
+
+std::vector<float> Backend::get_original_layer_weights(std::string layer_name) {
+  auto it = m_original_weights.find(layer_name);
+  if (it != m_original_weights.end()) {
+    return it->second;
+  }
+  return get_layer_weights(layer_name);
+}
+
+void Backend::reset_layer_weights(std::string layer_name) {
+  auto it = m_original_weights.find(layer_name);
+  if (it != m_original_weights.end()) {
+    set_layer_weights(layer_name, it->second);
+  }
+}
+
+void Backend::reset_all_layer_weights() {
+  for (const auto &pair : m_original_weights) {
+    set_layer_weights(pair.first, pair.second);
+  }
+}
+
+int Backend::save_model(std::string path) {
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+  try {
+    m_model.save(path);
+    return 0;
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to save model: " << e.what() << '\n';
+    return -1;
+  }
 }

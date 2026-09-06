@@ -7,30 +7,32 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
 {
     // Configure Title
     titleLabel.setText ("nn~ parameter bending", juce::dontSendNotification);
-    titleLabel.setFont (juce::FontOptions (20.0f, juce::Font::bold));
-    titleLabel.setJustificationType (juce::Justification::centred);
+    titleLabel.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+    titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setColour (juce::Label::textColourId, juce::Colours::lightcyan);
     addAndMakeVisible (titleLabel);
 
     // Configure Load Button
-    loadButton.setButtonText ("Load local PyTorch Model (.ts)...");
+    loadButton.setButtonText ("Load Model (.ts)");
     loadButton.addListener (this);
-    loadButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a154b")); // Deep dark purple
+    loadButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff581c87"));
     loadButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     addAndMakeVisible (loadButton);
 
     // Configure Status Label
     statusLabel.setText ("No model loaded.", juce::dontSendNotification);
-    statusLabel.setJustificationType (juce::Justification::centred);
+    statusLabel.setJustificationType (juce::Justification::centredLeft);
     statusLabel.setColour (juce::Label::textColourId, juce::Colours::darkgrey);
     addAndMakeVisible (statusLabel);
 
-    // Method Selector
+    // Mode Selector
+    methodLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (methodLabel);
     methodCombo.addListener (this);
     addAndMakeVisible (methodCombo);
 
     // Buffer Selector
+    bufferLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (bufferLabel);
     bufferCombo.addItem ("512", 512);
     bufferCombo.addItem ("1024", 1024);
@@ -41,53 +43,95 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     bufferCombo.addListener (this);
     addAndMakeVisible (bufferCombo);
 
-    // Bending Section Components
+    // Save Model Button
+    saveModelButton.addListener (this);
+    saveModelButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1e3a5f"));
+    saveModelButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    addAndMakeVisible (saveModelButton);
+
+    // Bending Group
     addAndMakeVisible (bendingGroup);
-    
+
+    layerLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (layerLabel);
     layerCombo.addListener (this);
     addAndMakeVisible (layerCombo);
 
-    // Scale Slider (0.0 to 10.0, default 1.0)
+    resetLayerButton.addListener (this);
+    resetLayerButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff801e2a"));
+    resetLayerButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    addAndMakeVisible (resetLayerButton);
+
+    resetAllButton.addListener (this);
+    resetAllButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff5a1018"));
+    resetAllButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    addAndMakeVisible (resetAllButton);
+
+    // Weight Canvas & Drawing Hook
+    addAndMakeVisible (weightCanvas);
+    weightCanvas.onWeightsModified = [this] (const std::vector<float>& modifiedWeights)
+    {
+        if (currentBendingLayer.isNotEmpty() && !modifiedWeights.empty())
+        {
+            currentWeights = modifiedWeights;
+            baseDrawnWeights = modifiedWeights;
+
+            // Reset knobs to baseline (1.0 scale, 0.0 offset) without triggering listener
+            scaleSlider.removeListener (this);
+            offsetSlider.removeListener (this);
+            scaleSlider.setValue (1.0);
+            offsetSlider.setValue (0.0);
+            lastKnobScale = 1.0;
+            lastKnobOffset = 0.0;
+            scaleSlider.addListener (this);
+            offsetSlider.addListener (this);
+
+            audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
+        }
+    };
+
+    // Compact Side Knobs (Scale & Offset)
+    scaleLabel.setText ("Scale", juce::dontSendNotification);
+    scaleLabel.setJustificationType (juce::Justification::centred);
+    scaleLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (scaleLabel);
-    scaleSlider.setRange (0.0, 10.0, 0.01);
+
+    scaleSlider.setRange (0.0, 5.0, 0.01);
     scaleSlider.setValue (1.0);
     scaleSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    scaleSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 20);
+    scaleSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
     scaleSlider.setColour (juce::Slider::thumbColourId, juce::Colours::violet);
     scaleSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
     scaleSlider.addListener (this);
     addAndMakeVisible (scaleSlider);
 
-    // Offset Slider (-1.0 to 1.0, default 0.0)
+    offsetLabel.setText ("Offset", juce::dontSendNotification);
+    offsetLabel.setJustificationType (juce::Justification::centred);
+    offsetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (offsetLabel);
-    offsetSlider.setRange (-1.0, 1.0, 0.001);
+
+    offsetSlider.setRange (-2.0, 2.0, 0.001);
     offsetSlider.setValue (0.0);
     offsetSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 20);
+    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
     offsetSlider.setColour (juce::Slider::thumbColourId, juce::Colours::turquoise);
     offsetSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
     offsetSlider.addListener (this);
     addAndMakeVisible (offsetSlider);
 
-    // Reset Button
-    resetButton.addListener (this);
-    resetButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkred);
-    addAndMakeVisible (resetButton);
-
     // Info Label
     infoBendingLabel.setText ("Select a layer to bend weights.", juce::dontSendNotification);
-    infoBendingLabel.setJustificationType (juce::Justification::centred);
-    infoBendingLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    infoBendingLabel.setJustificationType (juce::Justification::centredLeft);
+    infoBendingLabel.setColour (juce::Label::textColourId, juce::Colours::silver);
     addAndMakeVisible (infoBendingLabel);
 
-    // Make window resizable or set fixed size
-    setSize (500, 500);
-    
-    // Initial UI load
+    // Expanded window size (860 x 580)
+    setSize (860, 580);
+    setResizable (true, true);
+    setResizeLimits (760, 480, 1400, 900);
+
+    // Initial load
     updateModelInfo();
-    
-    // Start periodic UI timer
     startTimer (300);
 }
 
@@ -99,74 +143,83 @@ NNBendingAudioProcessorEditor::~NNBendingAudioProcessorEditor()
 //==============================================================================
 void NNBendingAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // Premium dark gradient background
-    juce::Colour color1 = juce::Colour::fromString ("#ff121216");
-    juce::Colour color2 = juce::Colour::fromString ("#ff1e1c24");
+    // Sleek dark gradient background
+    juce::Colour color1 = juce::Colour::fromString ("#ff0f0e13");
+    juce::Colour color2 = juce::Colour::fromString ("#ff1a1724");
     juce::ColourGradient gradient (color1, 0, 0, color2, 0, (float)getHeight(), false);
     g.setGradientFill (gradient);
     g.fillAll();
 
-    // Visual dividers
-    g.setColour (juce::Colours::violet.withAlpha (0.4f));
-    g.drawHorizontalLine (55, 20.0f, (float)getWidth() - 20.0f);
-    g.drawHorizontalLine (140, 20.0f, (float)getWidth() - 20.0f);
+    // Subtle divider under header
+    g.setColour (juce::Colour::fromString ("#ff382f4c"));
+    g.drawHorizontalLine (80, 15.0f, (float)getWidth() - 15.0f);
 }
 
 void NNBendingAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced (20);
+    auto area = getLocalBounds().reduced (15);
+
+    // Top Header: Row 1 (Title + Status)
+    auto titleRow = area.removeFromTop (26);
+    titleLabel.setBounds (titleRow.removeFromLeft (260));
+    statusLabel.setBounds (titleRow);
+
+    area.removeFromTop (6); // Spacer
+
+    // Header Controls: Row 2 (Load, Mode, Buffer, Save)
+    auto headerRow = area.removeFromTop (32);
+    loadButton.setBounds (headerRow.removeFromLeft (130));
+    headerRow.removeFromLeft (12); // Gap
+
+    methodLabel.setBounds (headerRow.removeFromLeft (45));
+    methodCombo.setBounds (headerRow.removeFromLeft (100));
+    headerRow.removeFromLeft (12); // Gap
+
+    bufferLabel.setBounds (headerRow.removeFromLeft (50));
+    bufferCombo.setBounds (headerRow.removeFromLeft (80));
+    headerRow.removeFromLeft (12); // Gap
+
+    saveModelButton.setBounds (headerRow.removeFromRight (140));
+
+    area.removeFromTop (20); // Spacer clearing the divider line
+
+    // Bending Group Section
+    bendingGroup.setBounds (area);
+    auto groupArea = bendingGroup.getBounds().reduced (14);
+    groupArea.removeFromTop (12); // Group title offset
+
+    // Layer Selection & Action Row
+    auto layerRow = groupArea.removeFromTop (32);
+    layerLabel.setBounds (layerRow.removeFromLeft (45));
     
-    titleLabel.setBounds (area.removeFromTop (30));
-    area.removeFromTop (10); // Spacer
-
-    // Top Model Load row
-    auto loadArea = area.removeFromTop (35);
-    loadButton.setBounds (loadArea);
-    area.removeFromTop (5); // Spacer
-    statusLabel.setBounds (area.removeFromTop (20));
-    area.removeFromTop (20); // Spacer (so it clears the line at Y=140)
-
-    // Dropdown selectors row (Method & Buffer)
-    auto selectRow = area.removeFromTop (30);
+    resetAllButton.setBounds (layerRow.removeFromRight (130));
+    layerRow.removeFromRight (8); // Gap
+    resetLayerButton.setBounds (layerRow.removeFromRight (110));
+    layerRow.removeFromRight (12); // Gap
     
-    auto methodArea = selectRow.removeFromLeft (selectRow.getWidth() / 2).reduced (5, 0);
-    methodLabel.setBounds (methodArea.removeFromLeft (60));
-    methodCombo.setBounds (methodArea);
-    
-    auto bufferArea = selectRow.reduced (5, 0);
-    bufferLabel.setBounds (bufferArea.removeFromLeft (80));
-    bufferCombo.setBounds (bufferArea);
+    layerCombo.setBounds (layerRow); // Takes remaining center width
 
-    area.removeFromTop (15); // Spacer
+    groupArea.removeFromTop (10); // Spacer
 
-    // Bending group layout
-    bendingGroup.setBounds (area.removeFromTop (260));
-    auto groupArea = bendingGroup.getBounds().reduced (15);
-    groupArea.removeFromTop (15); // Title offset
+    // Bottom info readout row
+    auto bottomRow = groupArea.removeFromBottom (20);
+    infoBendingLabel.setBounds (bottomRow);
 
-    // Layer Selector Row
-    auto layerRow = groupArea.removeFromTop (30);
-    layerLabel.setBounds (layerRow.removeFromLeft (90));
-    layerCombo.setBounds (layerRow);
-    
-    groupArea.removeFromTop (15); // Spacer
+    groupArea.removeFromBottom (6); // Spacer
 
-    // Sliders row
-    auto slidersRow = groupArea.removeFromTop (120);
-    auto scaleArea = slidersRow.removeFromLeft (slidersRow.getWidth() / 2).reduced (10, 0);
-    scaleLabel.setBounds (scaleArea.removeFromTop (20));
-    scaleSlider.setBounds (scaleArea);
+    // Main Bending Area: Center Canvas + Right Controls
+    auto controlsWidth = 100;
+    auto sideControls = groupArea.removeFromRight (controlsWidth);
+    groupArea.removeFromRight (12); // Gap between canvas and side knobs
 
-    auto offsetArea = slidersRow.reduced (10, 0);
-    offsetLabel.setBounds (offsetArea.removeFromTop (20));
-    offsetSlider.setBounds (offsetArea);
+    weightCanvas.setBounds (groupArea);
 
-    groupArea.removeFromTop (15); // Spacer
-
-    // Info and Reset row
-    auto resetRow = groupArea.removeFromTop (35);
-    resetButton.setBounds (resetRow.removeFromRight (150));
-    infoBendingLabel.setBounds (resetRow);
+    // Layout side controls
+    scaleLabel.setBounds (sideControls.removeFromTop (18));
+    scaleSlider.setBounds (sideControls.removeFromTop (80));
+    sideControls.removeFromTop (15); // Spacer
+    offsetLabel.setBounds (sideControls.removeFromTop (18));
+    offsetSlider.setBounds (sideControls.removeFromTop (80));
 }
 
 //==============================================================================
@@ -189,8 +242,8 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
 
 void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 {
-    juce::ignoreUnused(slider);
-    applyWeightBending();
+    juce::ignoreUnused (slider);
+    applyKnobBending();
 }
 
 void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
@@ -204,12 +257,12 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
         );
         
         auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-        
         fileChooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
         {
             auto file = fc.getResult();
             if (file.existsAsFile())
             {
+                currentBendingLayer = "";
                 if (audioProcessor.loadModel (file))
                 {
                     updateModelInfo();
@@ -222,16 +275,23 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
             }
         });
     }
-    else if (button == &resetButton)
+    else if (button == &resetLayerButton)
     {
-        resetWeightBending();
+        resetLayerWeights();
+    }
+    else if (button == &resetAllButton)
+    {
+        resetAllLayerWeights();
+    }
+    else if (button == &saveModelButton)
+    {
+        saveModelToFile();
     }
 }
 
 //==============================================================================
 void NNBendingAudioProcessorEditor::timerCallback()
 {
-    // Periodically sync status in case load happened externally
     if (audioProcessor.isModelLoaded() && statusLabel.getText() == "No model loaded.")
     {
         updateModelInfo();
@@ -265,14 +325,33 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
             layerCombo.addItem (l, id++);
         }
         
-        if (currentBendingLayer.isNotEmpty() && layers.size() > 0)
+        bool layerFound = false;
+        for (const auto& l : layers)
+        {
+            if (l == currentBendingLayer.toStdString())
+            {
+                layerFound = true;
+                break;
+            }
+        }
+
+        if (layerFound && currentBendingLayer.isNotEmpty())
         {
             layerCombo.setText (currentBendingLayer, juce::dontSendNotification);
+            selectLayer (currentBendingLayer);
         }
-        else if (layers.size() > 0)
+        else if (!layers.empty())
         {
             layerCombo.setText (layers[0], juce::dontSendNotification);
             selectLayer (layers[0]);
+        }
+        else
+        {
+            originalWeights.clear();
+            currentWeights.clear();
+            currentBendingLayer = "";
+            weightCanvas.setWeights ({}, {});
+            infoBendingLabel.setText ("Model has no trainable parameters.", juce::dontSendNotification);
         }
     }
     else
@@ -283,7 +362,9 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         layerCombo.clear (juce::dontSendNotification);
         infoBendingLabel.setText ("Load a model to view weights.", juce::dontSendNotification);
         originalWeights.clear();
+        currentWeights.clear();
         currentBendingLayer = "";
+        weightCanvas.setWeights ({}, {});
     }
 }
 
@@ -292,43 +373,120 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     if (layerName.isEmpty()) return;
     
     currentBendingLayer = layerName;
-    originalWeights = audioProcessor.getBackend().get_layer_weights (layerName.toStdString());
+    originalWeights = audioProcessor.getBackend().get_original_layer_weights (layerName.toStdString());
+    currentWeights = audioProcessor.getBackend().get_layer_weights (layerName.toStdString());
+    baseDrawnWeights = currentWeights;
     
-    // Disable listener to set default values without triggering a loop recalculation
+    // Reset knob listeners to prevent feedback loop
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
     
     scaleSlider.setValue (1.0);
     offsetSlider.setValue (0.0);
+    lastKnobScale = 1.0;
+    lastKnobOffset = 0.0;
     
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
 
-    infoBendingLabel.setText (juce::String (originalWeights.size()) + " parameters", juce::dontSendNotification);
+    weightCanvas.setWeights (originalWeights, currentWeights);
+    infoBendingLabel.setText ("Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " parameters", juce::dontSendNotification);
 }
 
-void NNBendingAudioProcessorEditor::applyWeightBending()
+void NNBendingAudioProcessorEditor::applyKnobBending()
 {
-    if (currentBendingLayer.isEmpty() || originalWeights.empty()) return;
+    if (currentBendingLayer.isEmpty() || currentWeights.empty()) return;
+    if (baseDrawnWeights.empty())
+        baseDrawnWeights = currentWeights;
     
     float scale = (float)scaleSlider.getValue();
     float offset = (float)offsetSlider.getValue();
     
-    std::vector<float> bendedWeights (originalWeights.size());
-    for (size_t i = 0; i < originalWeights.size(); ++i)
+    currentWeights.resize (baseDrawnWeights.size());
+    for (size_t i = 0; i < baseDrawnWeights.size(); ++i)
     {
-        bendedWeights[i] = originalWeights[i] * scale + offset;
+        currentWeights[i] = baseDrawnWeights[i] * scale + offset;
     }
     
-    audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), bendedWeights);
+    audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
+    weightCanvas.updateCurrentWeights (currentWeights);
 }
 
-void NNBendingAudioProcessorEditor::resetWeightBending()
+void NNBendingAudioProcessorEditor::resetLayerWeights()
 {
-    if (currentBendingLayer.isEmpty() || originalWeights.empty()) return;
+    if (currentBendingLayer.isEmpty()) return;
     
+    audioProcessor.getBackend().reset_layer_weights (currentBendingLayer.toStdString());
+    
+    scaleSlider.removeListener (this);
+    offsetSlider.removeListener (this);
     scaleSlider.setValue (1.0);
     offsetSlider.setValue (0.0);
+    lastKnobScale = 1.0;
+    lastKnobOffset = 0.0;
+    scaleSlider.addListener (this);
+    offsetSlider.addListener (this);
+
+    originalWeights = audioProcessor.getBackend().get_original_layer_weights (currentBendingLayer.toStdString());
+    currentWeights = originalWeights;
+    baseDrawnWeights = originalWeights;
+    weightCanvas.setWeights (originalWeights, currentWeights);
+}
+
+void NNBendingAudioProcessorEditor::resetAllLayerWeights()
+{
+    audioProcessor.getBackend().reset_all_layer_weights();
     
-    audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), originalWeights);
+    scaleSlider.removeListener (this);
+    offsetSlider.removeListener (this);
+    scaleSlider.setValue (1.0);
+    offsetSlider.setValue (0.0);
+    lastKnobScale = 1.0;
+    lastKnobOffset = 0.0;
+    scaleSlider.addListener (this);
+    offsetSlider.addListener (this);
+
+    if (currentBendingLayer.isNotEmpty())
+    {
+        originalWeights = audioProcessor.getBackend().get_original_layer_weights (currentBendingLayer.toStdString());
+        currentWeights = originalWeights;
+        baseDrawnWeights = originalWeights;
+        weightCanvas.setWeights (originalWeights, currentWeights);
+    }
+}
+
+void NNBendingAudioProcessorEditor::saveModelToFile()
+{
+    if (!audioProcessor.isModelLoaded())
+    {
+        statusLabel.setText ("Cannot save: No model loaded.", juce::dontSendNotification);
+        statusLabel.setColour (juce::Label::textColourId, juce::Colours::orangered);
+        return;
+    }
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Save Bended TorchScript Model (.ts)...",
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("bended_model.ts"),
+        "*.ts"
+    );
+
+    auto flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting;
+    fileChooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    {
+        auto file = fc.getResult();
+        if (file.getFullPathName().isNotEmpty())
+        {
+            int err = audioProcessor.getBackend().save_model (file.getFullPathName().toStdString());
+            if (err == 0)
+            {
+                statusLabel.setText ("Saved bended model: " + file.getFileName(), juce::dontSendNotification);
+                statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
+            }
+            else
+            {
+                statusLabel.setText ("Error: Failed to save model.", juce::dontSendNotification);
+                statusLabel.setColour (juce::Label::textColourId, juce::Colours::orangered);
+            }
+        }
+    });
 }

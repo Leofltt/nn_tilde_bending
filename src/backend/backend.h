@@ -47,6 +47,7 @@ protected:
   std::vector<std::string> retrieve_buffer_attributes();
   std::unique_ptr<std::thread> set_attribute_thread; 
   double m_sr; 
+  std::unordered_map<std::string, std::vector<float>> m_original_weights;
 
 public:
   using DataType = float; 
@@ -106,7 +107,11 @@ public:
 
   std::vector<std::string> get_available_layers();
   std::vector<float> get_layer_weights(std::string layer_name);
+  std::vector<float> get_original_layer_weights(std::string layer_name);
   void set_layer_weights(std::string layer_name, std::vector<float> weights);
+  void reset_layer_weights(std::string layer_name);
+  void reset_all_layer_weights();
+  int save_model(std::string path);
 
   ModelInfo get_model_info();
   const std::unordered_map<int, std::string> id_to_string_hash = {
