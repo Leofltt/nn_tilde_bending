@@ -152,8 +152,91 @@ public:
     void runInference();
 
     // Dry / Wet control
-    float getDryWet() const { return m_dryWet.load(); }
-    void setDryWet(float value) { m_dryWet.store(juce::jlimit(0.0f, 1.0f, value)); }
+    float getDryWet() const { return m_dryWetParam ? m_dryWetParam->get() : m_dryWet.load(); }
+    void setDryWet(float value)
+    {
+        float v = juce::jlimit(0.0f, 1.0f, value);
+        m_dryWet.store(v);
+        if (m_dryWetParam)
+            *m_dryWetParam = v;
+    }
+
+    // Per-Layer Bending State
+    struct LayerBendingState
+    {
+        float scale { 1.0f };
+        float offset { 0.0f };
+        float jitter { 0.0f };
+        bool frozen { false };
+        std::vector<float> baseDrawnWeights;
+    };
+
+    LayerBendingState getLayerState(const std::string& layerName) const
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        auto it = m_layerStates.find(layerName);
+        if (it != m_layerStates.end())
+            return it->second;
+        return LayerBendingState();
+    }
+
+    void setLayerState(const std::string& layerName, const LayerBendingState& state)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName] = state;
+    }
+
+    void setLayerScale(const std::string& layerName, float scale)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].scale = scale;
+    }
+
+    void setLayerOffset(const std::string& layerName, float offset)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].offset = offset;
+    }
+
+    void setLayerJitter(const std::string& layerName, float jitter)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].jitter = std::max(0.0f, jitter);
+    }
+
+    void setLayerFrozen(const std::string& layerName, bool frozen)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].frozen = frozen;
+    }
+
+    void setLayerBaseWeights(const std::string& layerName, const std::vector<float>& weights)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].baseDrawnWeights = weights;
+    }
+
+    void clearLayerBending(const std::string& layerName)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates.erase(layerName);
+    }
+
+    void clearAllLayerBending()
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates.clear();
+    }
+
+    // Active UI layer target for DAW automation mapping
+    void setActiveLayerName(const juce::String& name) { m_activeLayerName = name; }
+    juce::String getActiveLayerName() const { return m_activeLayerName; }
+
+    // Automatable parameters accessors
+    juce::AudioParameterFloat* getDryWetParam() const { return m_dryWetParam; }
+    juce::AudioParameterFloat* getScaleParam() const { return m_scaleParam; }
+    juce::AudioParameterFloat* getOffsetParam() const { return m_offsetParam; }
+    juce::AudioParameterFloat* getJitterParam() const { return m_jitterParam; }
 
 private:
     friend class ModelThread;
@@ -168,6 +251,18 @@ private:
     int m_model_out { 0 };
 
     std::atomic<float> m_dryWet { 1.0f }; // 0.0 = Dry, 1.0 = Wet
+
+    // DAW Automatable parameters
+    juce::AudioParameterFloat* m_dryWetParam { nullptr };
+    juce::AudioParameterFloat* m_scaleParam { nullptr };
+    juce::AudioParameterFloat* m_offsetParam { nullptr };
+    juce::AudioParameterFloat* m_jitterParam { nullptr };
+
+    // Per-layer states & threading
+    juce::String m_activeLayerName;
+    std::unordered_map<std::string, LayerBendingState> m_layerStates;
+    mutable std::mutex m_layerStateMutex;
+    juce::Random m_jitterRng;
 
     // Buffers and synchronization
     std::vector<CircularBuffer> m_in_buffers;

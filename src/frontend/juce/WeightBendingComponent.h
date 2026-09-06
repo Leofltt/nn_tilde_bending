@@ -37,6 +37,7 @@ public:
 
     const std::vector<float>& getCurrentWeights() const { return m_currentWeights; }
     const std::vector<float>& getOriginalWeights() const { return m_originalWeights; }
+    bool isCurrentlyDrawing() const { return m_dragMode == DragMode::Drawing; }
 
     void resetView()
     {

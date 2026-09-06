@@ -57,6 +57,25 @@ NNBendingAudioProcessor::NNBendingAudioProcessor()
        m_model_thread(*this)
 #endif
 {
+    addParameter (m_dryWetParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("dry_wet", 1), "Dry / Wet",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 1.0f
+    ));
+
+    addParameter (m_scaleParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("scale", 1), "Layer Scale",
+        juce::NormalisableRange<float> (0.0f, 5.0f, 0.01f), 1.0f
+    ));
+
+    addParameter (m_offsetParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("offset", 1), "Layer Offset",
+        juce::NormalisableRange<float> (-2.0f, 2.0f, 0.001f), 0.0f
+    ));
+
+    addParameter (m_jitterParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("jitter", 1), "Layer Jitter",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.0f
+    ));
 }
 
 NNBendingAudioProcessor::~NNBendingAudioProcessor()
@@ -368,6 +387,47 @@ void NNBendingAudioProcessor::runInference()
 {
     if (!m_modelLoaded.load() || m_model_out <= 0)
         return;
+
+    // 1. Sync active DAW parameter values into the active layer state
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        std::string activeLayer = m_activeLayerName.toStdString();
+        if (!activeLayer.empty() && m_scaleParam && m_offsetParam && m_jitterParam)
+        {
+            auto& state = m_layerStates[activeLayer];
+            state.scale = m_scaleParam->get();
+            state.offset = m_offsetParam->get();
+            state.jitter = m_jitterParam->get();
+        }
+
+        // 2. For each configured layer, apply its own Scale, Offset, and Live Jitter
+        for (auto& pair : m_layerStates)
+        {
+            const std::string& layerName = pair.first;
+            LayerBendingState& state = pair.second;
+
+            // If baseDrawnWeights is empty, fetch original layer weights as baseline
+            if (state.baseDrawnWeights.empty())
+            {
+                state.baseDrawnWeights = m_backend.get_original_layer_weights(layerName);
+            }
+
+            if (state.baseDrawnWeights.empty())
+                continue;
+
+            // If jitter is active and not frozen, compute fresh stochastic weights per compute pass
+            if (state.jitter > 0.0001f && !state.frozen)
+            {
+                std::vector<float> jittered(state.baseDrawnWeights.size());
+                for (size_t i = 0; i < state.baseDrawnWeights.size(); ++i)
+                {
+                    float noise = (m_jitterRng.nextFloat() * 2.0f - 1.0f) * state.jitter;
+                    jittered[i] = (state.baseDrawnWeights[i] * state.scale + state.offset) + noise;
+                }
+                m_backend.set_layer_weights(layerName, jittered);
+            }
+        }
+    }
         
     std::vector<float*> in_ptrs;
     std::vector<float*> out_ptrs;
@@ -405,6 +465,22 @@ void NNBendingAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xmlState.setAttribute ("modelPath", m_modelPath);
     xmlState.setAttribute ("currentMethod", m_currentMethod);
     xmlState.setAttribute ("bufferSize", m_bufferSize);
+    xmlState.setAttribute ("activeLayer", m_activeLayerName);
+    xmlState.setAttribute ("dryWet", (double)getDryWet());
+
+    // Save per-layer bending states
+    std::lock_guard<std::mutex> lock(m_layerStateMutex);
+    auto* layersElement = xmlState.createNewChildElement ("Layers");
+    for (const auto& pair : m_layerStates)
+    {
+        auto* layerEl = layersElement->createNewChildElement ("Layer");
+        layerEl->setAttribute ("name", pair.first);
+        layerEl->setAttribute ("scale", (double)pair.second.scale);
+        layerEl->setAttribute ("offset", (double)pair.second.offset);
+        layerEl->setAttribute ("jitter", (double)pair.second.jitter);
+        layerEl->setAttribute ("frozen", pair.second.frozen);
+    }
+
     copyXmlToBinary (xmlState, destData);
 }
 
@@ -416,6 +492,9 @@ void NNBendingAudioProcessor::setStateInformation (const void* data, int sizeInB
         if (xmlState->hasTagName ("NNBendingSettings"))
         {
             m_bufferSize = xmlState->getIntAttribute ("bufferSize", 2048);
+            setDryWet ((float)xmlState->getDoubleAttribute ("dryWet", 1.0));
+            m_activeLayerName = xmlState->getStringAttribute ("activeLayer");
+
             juce::String path = xmlState->getStringAttribute ("modelPath");
             if (path.isNotEmpty())
             {
@@ -426,6 +505,25 @@ void NNBendingAudioProcessor::setStateInformation (const void* data, int sizeInB
             juce::String method = xmlState->getStringAttribute ("currentMethod");
             if (method.isNotEmpty())
                 setCurrentMethod(method);
+
+            // Restore per-layer bending states
+            auto* layersElement = xmlState->getChildByName ("Layers");
+            if (layersElement != nullptr)
+            {
+                std::lock_guard<std::mutex> lock(m_layerStateMutex);
+                for (auto* layerEl : layersElement->getChildIterator())
+                {
+                    std::string name = layerEl->getStringAttribute ("name").toStdString();
+                    if (!name.empty())
+                    {
+                        auto& state = m_layerStates[name];
+                        state.scale = (float)layerEl->getDoubleAttribute ("scale", 1.0);
+                        state.offset = (float)layerEl->getDoubleAttribute ("offset", 0.0);
+                        state.jitter = (float)layerEl->getDoubleAttribute ("jitter", 0.0);
+                        state.frozen = layerEl->getBoolAttribute ("frozen", false);
+                    }
+                }
+            }
         }
     }
 }

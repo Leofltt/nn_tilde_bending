@@ -6,7 +6,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
     // Configure Title
-    titleLabel.setText ("nn~ parameter bending", juce::dontSendNotification);
+    titleLabel.setText ("nn~ bending", juce::dontSendNotification);
     titleLabel.setFont (juce::FontOptions (18.0f, juce::Font::bold));
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setColour (juce::Label::textColourId, juce::Colours::lightcyan);
@@ -102,6 +102,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
                 baseDrawnWeights = modifiedWeights;
             }
 
+            audioProcessor.setLayerBaseWeights (currentBendingLayer.toStdString(), baseDrawnWeights);
             audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
         }
     };
@@ -135,16 +136,36 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     offsetSlider.addListener (this);
     addAndMakeVisible (offsetSlider);
 
+    jitterLabel.setText ("Jitter", juce::dontSendNotification);
+    jitterLabel.setJustificationType (juce::Justification::centred);
+    jitterLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (jitterLabel);
+
+    jitterSlider.setRange (0.0, 1.0, 0.001);
+    jitterSlider.setValue (0.0);
+    jitterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    jitterSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
+    jitterSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffff9933"));
+    jitterSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    jitterSlider.addListener (this);
+    addAndMakeVisible (jitterSlider);
+
+    freezeButton.setButtonText ("Freeze");
+    freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+    freezeButton.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffff9933"));
+    freezeButton.addListener (this);
+    addAndMakeVisible (freezeButton);
+
     // Info Label
     infoBendingLabel.setText ("Select a layer to bend weights.", juce::dontSendNotification);
     infoBendingLabel.setJustificationType (juce::Justification::centredLeft);
     infoBendingLabel.setColour (juce::Label::textColourId, juce::Colours::silver);
     addAndMakeVisible (infoBendingLabel);
 
-    // Expanded window size (860 x 580)
-    setSize (860, 580);
+    // Expanded window size (860 x 600)
+    setSize (860, 600);
     setResizable (true, true);
-    setResizeLimits (760, 480, 1400, 900);
+    setResizeLimits (760, 500, 1400, 900);
 
     // Initial load
     updateModelInfo();
@@ -234,11 +255,16 @@ void NNBendingAudioProcessorEditor::resized()
     weightCanvas.setBounds (groupArea);
 
     // Layout side controls
-    scaleLabel.setBounds (sideControls.removeFromTop (18));
-    scaleSlider.setBounds (sideControls.removeFromTop (80));
-    sideControls.removeFromTop (15); // Spacer
-    offsetLabel.setBounds (sideControls.removeFromTop (18));
-    offsetSlider.setBounds (sideControls.removeFromTop (80));
+    scaleLabel.setBounds (sideControls.removeFromTop (16));
+    scaleSlider.setBounds (sideControls.removeFromTop (74));
+    sideControls.removeFromTop (8); // Spacer
+    offsetLabel.setBounds (sideControls.removeFromTop (16));
+    offsetSlider.setBounds (sideControls.removeFromTop (74));
+    sideControls.removeFromTop (8); // Spacer
+    jitterLabel.setBounds (sideControls.removeFromTop (16));
+    jitterSlider.setBounds (sideControls.removeFromTop (74));
+    sideControls.removeFromTop (4); // Spacer
+    freezeButton.setBounds (sideControls.removeFromTop (22));
 }
 
 //==============================================================================
@@ -261,6 +287,14 @@ void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
     {
         audioProcessor.setDryWet ((float)dryWetSlider.getValue());
     }
+    else if (slider == &jitterSlider)
+    {
+        float val = (float)jitterSlider.getValue();
+        if (currentBendingLayer.isNotEmpty())
+            audioProcessor.setLayerJitter (currentBendingLayer.toStdString(), val);
+        if (auto* param = audioProcessor.getJitterParam())
+            *param = val;
+    }
     else
     {
         applyKnobBending();
@@ -269,7 +303,41 @@ void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 
 void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
 {
-    if (button == &loadButton)
+    if (button == &freezeButton)
+    {
+        bool frozen = freezeButton.getToggleState();
+        if (currentBendingLayer.isNotEmpty())
+            audioProcessor.setLayerFrozen (currentBendingLayer.toStdString(), frozen);
+
+        if (frozen)
+        {
+            freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffff9933"));
+            // When freezing, update currentWeights and baseDrawnWeights with the frozen snapshot
+            if (currentBendingLayer.isNotEmpty())
+            {
+                currentWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
+                float scale = (float)scaleSlider.getValue();
+                float offset = (float)offsetSlider.getValue();
+                baseDrawnWeights.resize (currentWeights.size());
+                if (std::abs (scale) > 0.00001f)
+                {
+                    for (size_t i = 0; i < currentWeights.size(); ++i)
+                        baseDrawnWeights[i] = (currentWeights[i] - offset) / scale;
+                }
+                else
+                {
+                    baseDrawnWeights = currentWeights;
+                }
+                audioProcessor.setLayerBaseWeights (currentBendingLayer.toStdString(), baseDrawnWeights);
+                weightCanvas.updateCurrentWeights (currentWeights);
+            }
+        }
+        else
+        {
+            freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+        }
+    }
+    else if (button == &loadButton)
     {
         fileChooser = std::make_unique<juce::FileChooser> (
             "Select a PyTorch TorchScript model (.ts)...",
@@ -316,6 +384,43 @@ void NNBendingAudioProcessorEditor::timerCallback()
     if (audioProcessor.isModelLoaded() && statusLabel.getText() == "No model loaded.")
     {
         updateModelInfo();
+    }
+
+    // If DAW host is automating parameters, reflect changes into UI knobs
+    if (auto* p = audioProcessor.getScaleParam())
+    {
+        if (std::abs (p->get() - (float)scaleSlider.getValue()) > 0.001f && !scaleSlider.isMouseButtonDown())
+            scaleSlider.setValue (p->get(), juce::sendNotificationSync);
+    }
+    if (auto* p = audioProcessor.getOffsetParam())
+    {
+        if (std::abs (p->get() - (float)offsetSlider.getValue()) > 0.0001f && !offsetSlider.isMouseButtonDown())
+            offsetSlider.setValue (p->get(), juce::sendNotificationSync);
+    }
+    if (auto* p = audioProcessor.getJitterParam())
+    {
+        if (std::abs (p->get() - (float)jitterSlider.getValue()) > 0.0001f && !jitterSlider.isMouseButtonDown())
+            jitterSlider.setValue (p->get(), juce::sendNotificationSync);
+    }
+    if (auto* p = audioProcessor.getDryWetParam())
+    {
+        if (std::abs (p->get() - (float)dryWetSlider.getValue()) > 0.001f && !dryWetSlider.isMouseButtonDown())
+            dryWetSlider.setValue (p->get(), juce::dontSendNotification);
+    }
+
+    // If live jitter is active and not frozen on this layer, visualize the jittering weights on the canvas
+    // (Only update when user is not actively drawing with the mouse)
+    if (audioProcessor.isModelLoaded() && currentBendingLayer.isNotEmpty() && !weightCanvas.isCurrentlyDrawing())
+    {
+        auto state = audioProcessor.getLayerState (currentBendingLayer.toStdString());
+        if (state.jitter > 0.0001f && !state.frozen)
+        {
+            auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
+            if (!liveWeights.empty())
+            {
+                weightCanvas.updateCurrentWeights (liveWeights);
+            }
+        }
     }
 }
 
@@ -398,21 +503,47 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     if (layerName.isEmpty()) return;
     
     currentBendingLayer = layerName;
+    audioProcessor.setActiveLayerName (currentBendingLayer);
+
     originalWeights = audioProcessor.getBackend().get_original_layer_weights (layerName.toStdString());
     currentWeights = audioProcessor.getBackend().get_layer_weights (layerName.toStdString());
-    baseDrawnWeights = currentWeights;
-    
-    // Reset knob listeners to prevent feedback loop
+
+    // Fetch this layer's stored state
+    auto state = audioProcessor.getLayerState (layerName.toStdString());
+    if (state.baseDrawnWeights.empty())
+    {
+        baseDrawnWeights = currentWeights;
+        state.baseDrawnWeights = currentWeights;
+        audioProcessor.setLayerBaseWeights (layerName.toStdString(), baseDrawnWeights);
+    }
+    else
+    {
+        baseDrawnWeights = state.baseDrawnWeights;
+    }
+
+    // Set knobs to this layer's saved values without triggering recursive listeners
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
+    jitterSlider.removeListener (this);
     
-    scaleSlider.setValue (1.0);
-    offsetSlider.setValue (0.0);
-    lastKnobScale = 1.0;
-    lastKnobOffset = 0.0;
+    scaleSlider.setValue (state.scale, juce::dontSendNotification);
+    offsetSlider.setValue (state.offset, juce::dontSendNotification);
+    jitterSlider.setValue (state.jitter, juce::dontSendNotification);
+    freezeButton.setToggleState (state.frozen, juce::dontSendNotification);
+    freezeButton.setColour (juce::ToggleButton::textColourId,
+                            state.frozen ? juce::Colour::fromString ("#ffff9933") : juce::Colours::lightgrey);
+
+    // Sync DAW host automatable parameters to active layer values
+    if (auto* p = audioProcessor.getScaleParam())  *p = state.scale;
+    if (auto* p = audioProcessor.getOffsetParam()) *p = state.offset;
+    if (auto* p = audioProcessor.getJitterParam()) *p = state.jitter;
+
+    lastKnobScale = state.scale;
+    lastKnobOffset = state.offset;
     
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
+    jitterSlider.addListener (this);
 
     weightCanvas.setWeights (originalWeights, currentWeights);
     infoBendingLabel.setText ("Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " parameters", juce::dontSendNotification);
@@ -426,6 +557,13 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
     
     float scale = (float)scaleSlider.getValue();
     float offset = (float)offsetSlider.getValue();
+
+    // Store per-layer scale and offset
+    audioProcessor.setLayerScale (currentBendingLayer.toStdString(), scale);
+    audioProcessor.setLayerOffset (currentBendingLayer.toStdString(), offset);
+
+    if (auto* p = audioProcessor.getScaleParam())  *p = scale;
+    if (auto* p = audioProcessor.getOffsetParam()) *p = offset;
     
     currentWeights.resize (baseDrawnWeights.size());
     for (size_t i = 0; i < baseDrawnWeights.size(); ++i)
@@ -442,34 +580,61 @@ void NNBendingAudioProcessorEditor::resetLayerWeights()
     if (currentBendingLayer.isEmpty()) return;
     
     audioProcessor.getBackend().reset_layer_weights (currentBendingLayer.toStdString());
+    audioProcessor.clearLayerBending (currentBendingLayer.toStdString());
     
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
-    scaleSlider.setValue (1.0);
-    offsetSlider.setValue (0.0);
+    jitterSlider.removeListener (this);
+
+    scaleSlider.setValue (1.0, juce::dontSendNotification);
+    offsetSlider.setValue (0.0, juce::dontSendNotification);
+    jitterSlider.setValue (0.0, juce::dontSendNotification);
+    freezeButton.setToggleState (false, juce::dontSendNotification);
+    freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+
+    if (auto* p = audioProcessor.getScaleParam())  *p = 1.0f;
+    if (auto* p = audioProcessor.getOffsetParam()) *p = 0.0f;
+    if (auto* p = audioProcessor.getJitterParam()) *p = 0.0f;
+
     lastKnobScale = 1.0;
     lastKnobOffset = 0.0;
+
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
+    jitterSlider.addListener (this);
 
     originalWeights = audioProcessor.getBackend().get_original_layer_weights (currentBendingLayer.toStdString());
     currentWeights = originalWeights;
     baseDrawnWeights = originalWeights;
+
     weightCanvas.setWeights (originalWeights, currentWeights);
 }
 
 void NNBendingAudioProcessorEditor::resetAllLayerWeights()
 {
     audioProcessor.getBackend().reset_all_layer_weights();
+    audioProcessor.clearAllLayerBending();
     
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
-    scaleSlider.setValue (1.0);
-    offsetSlider.setValue (0.0);
+    jitterSlider.removeListener (this);
+
+    scaleSlider.setValue (1.0, juce::dontSendNotification);
+    offsetSlider.setValue (0.0, juce::dontSendNotification);
+    jitterSlider.setValue (0.0, juce::dontSendNotification);
+    freezeButton.setToggleState (false, juce::dontSendNotification);
+    freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+
+    if (auto* p = audioProcessor.getScaleParam())  *p = 1.0f;
+    if (auto* p = audioProcessor.getOffsetParam()) *p = 0.0f;
+    if (auto* p = audioProcessor.getJitterParam()) *p = 0.0f;
+
     lastKnobScale = 1.0;
     lastKnobOffset = 0.0;
+
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
+    jitterSlider.addListener (this);
 
     if (currentBendingLayer.isNotEmpty())
     {

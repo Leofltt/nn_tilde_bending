@@ -67,6 +67,10 @@ private:
     
     juce::Label offsetLabel { {}, "Offset" };
     juce::Slider offsetSlider;
+
+    juce::Label jitterLabel { {}, "Jitter" };
+    juce::Slider jitterSlider;
+    juce::ToggleButton freezeButton { "Freeze" };
     
     juce::Label infoBendingLabel;
 
