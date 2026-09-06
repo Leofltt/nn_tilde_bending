@@ -237,6 +237,13 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
                 m_model_out = params[2];
             }
         }
+
+        // Auto-configure buffer size to model ratio
+        int higher_ratio = m_backend.get_higher_ratio();
+        int reqSize = 1;
+        while (reqSize < higher_ratio)
+            reqSize <<= 1;
+        m_bufferSize = std::max(2048, reqSize);
         
         m_modelLoaded.store(true);
         initBuffers();

@@ -41,7 +41,7 @@ private:
     juce::ComboBox methodCombo;
     
     juce::Label bufferLabel { {}, "Buffer:" };
-    juce::ComboBox bufferCombo;
+    juce::Label bufferStatusLabel;
 
     juce::TextButton saveModelButton { "Save Model (.ts)" };
 

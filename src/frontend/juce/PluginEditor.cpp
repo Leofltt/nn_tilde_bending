@@ -31,17 +31,15 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     methodCombo.addListener (this);
     addAndMakeVisible (methodCombo);
 
-    // Buffer Selector
+    // Buffer Readout Badge
     bufferLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (bufferLabel);
-    bufferCombo.addItem ("512", 512);
-    bufferCombo.addItem ("1024", 1024);
-    bufferCombo.addItem ("2048", 2048);
-    bufferCombo.addItem ("4096", 4096);
-    bufferCombo.addItem ("8192", 8192);
-    bufferCombo.setSelectedId (audioProcessor.getBufferSize(), juce::dontSendNotification);
-    bufferCombo.addListener (this);
-    addAndMakeVisible (bufferCombo);
+    bufferStatusLabel.setText (juce::String (audioProcessor.getBufferSize()), juce::dontSendNotification);
+    bufferStatusLabel.setJustificationType (juce::Justification::centred);
+    bufferStatusLabel.setColour (juce::Label::backgroundColourId, juce::Colour::fromString ("#ff1c1926"));
+    bufferStatusLabel.setColour (juce::Label::outlineColourId, juce::Colour::fromString ("#ff3d3554"));
+    bufferStatusLabel.setColour (juce::Label::textColourId, juce::Colours::cyan);
+    addAndMakeVisible (bufferStatusLabel);
 
     // Save Model Button
     saveModelButton.addListener (this);
@@ -176,7 +174,7 @@ void NNBendingAudioProcessorEditor::resized()
     headerRow.removeFromLeft (12); // Gap
 
     bufferLabel.setBounds (headerRow.removeFromLeft (50));
-    bufferCombo.setBounds (headerRow.removeFromLeft (80));
+    bufferStatusLabel.setBounds (headerRow.removeFromLeft (70));
     headerRow.removeFromLeft (12); // Gap
 
     saveModelButton.setBounds (headerRow.removeFromRight (140));
@@ -225,11 +223,7 @@ void NNBendingAudioProcessorEditor::resized()
 //==============================================================================
 void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxThatHasChanged)
 {
-    if (comboBoxThatHasChanged == &bufferCombo)
-    {
-        audioProcessor.setBufferSize (bufferCombo.getSelectedId());
-    }
-    else if (comboBoxThatHasChanged == &methodCombo)
+    if (comboBoxThatHasChanged == &methodCombo)
     {
         audioProcessor.setCurrentMethod (methodCombo.getText());
         updateModelInfo();
@@ -306,6 +300,9 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         statusLabel.setText ("Loaded: " + file.getFileName(), juce::dontSendNotification);
         statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
 
+        // Update Buffer readout badge
+        bufferStatusLabel.setText (juce::String (audioProcessor.getBufferSize()), juce::dontSendNotification);
+
         // Update Mode combo box
         methodCombo.clear (juce::dontSendNotification);
         auto modes = audioProcessor.getAvailableModes();
@@ -358,6 +355,7 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
     {
         statusLabel.setText ("No model loaded.", juce::dontSendNotification);
         statusLabel.setColour (juce::Label::textColourId, juce::Colours::darkgrey);
+        bufferStatusLabel.setText ("-", juce::dontSendNotification);
         methodCombo.clear (juce::dontSendNotification);
         layerCombo.clear (juce::dontSendNotification);
         infoBendingLabel.setText ("Load a model to view weights.", juce::dontSendNotification);
