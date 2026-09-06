@@ -23,7 +23,8 @@ void ModelThread::run()
 {
     while (!threadShouldExit())
     {
-        m_event.wait(50);
+        // Wait for trigger signal (timeout 20ms to allow responsive shutdown or idle checks)
+        m_event.wait(20);
         
         if (threadShouldExit())
             break;
@@ -164,7 +165,7 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     else
     {
         // Generative model (0 audio inputs): trigger inference whenever output buffer needs filling
-        if (!m_model_thread.isProcessing() && m_out_buffers[0].getAvailable() < m_bufferSize * 2)
+        if (!m_model_thread.isProcessing() && m_out_buffers[0].getAvailable() < m_bufferSize * 3)
         {
             m_model_thread.triggerCompute();
         }
@@ -214,18 +215,18 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
     {
         m_modelPath = file.getFullPathName();
         
-        // Find default mode: prefer "autoencode", then "forward", else first available
+        // Find default mode: prefer "forward", else "prior", else first available
         auto modes = m_backend.get_plugin_modes();
         if (!modes.empty())
         {
             std::string defaultMode = modes[0];
-            if (m_backend.has_autoencode())
+            for (const auto& m : modes)
             {
-                defaultMode = "autoencode";
-            }
-            else if (m_backend.has_method("forward"))
-            {
-                defaultMode = "forward";
+                if (m == "forward")
+                {
+                    defaultMode = "forward";
+                    break;
+                }
             }
             m_currentMethod = defaultMode;
             
@@ -326,9 +327,13 @@ void NNBendingAudioProcessor::runInference()
             out_ptrs.push_back(m_staging_out[c].data());
             
         std::string modeStr = m_currentMethod.toStdString();
-        if (modeStr == "autoencode")
+        if (modeStr == "forward")
         {
-            m_backend.perform_autoencode(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, m_latentHook);
+            m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, m_latentHook);
+        }
+        else if (modeStr == "prior" || modeStr == "generate")
+        {
+            m_backend.perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
         }
         else
         {

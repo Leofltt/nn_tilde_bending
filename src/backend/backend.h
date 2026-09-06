@@ -60,12 +60,14 @@ public:
                       std::vector<float *> &out_buffer, 
                       std::string method, 
                       int n_batches, int n_out_channels, int n_vec);
-  void perform_autoencode(std::vector<float *> &in_buffer,
-                          std::vector<float *> &out_buffer,
-                          int n_batches, int n_out_channels, int n_vec,
-                          LatentHook latent_hook = nullptr);
+  void perform_forward(std::vector<float *> &in_buffer,
+                       std::vector<float *> &out_buffer,
+                       int n_batches, int n_out_channels, int n_vec,
+                       LatentHook latent_hook = nullptr);
+  void perform_prior_decode(std::vector<float *> &out_buffer,
+                            int n_batches, int n_out_channels, int n_vec);
   bool has_method(std::string method_name);
-  bool has_autoencode();
+  bool has_prior_decode();
   std::vector<std::string> get_plugin_modes();
   std::vector<int> get_mode_params(std::string mode);
   bool has_settable_attribute(std::string attribute);

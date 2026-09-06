@@ -107,98 +107,172 @@ void Backend::perform(std::vector<float *> &in_buffer,
   }
 }
 
-void Backend::perform_autoencode(std::vector<float *> &in_buffer,
-                                 std::vector<float *> &out_buffer,
-                                 int n_batches, int n_out_channels, int n_vec,
-                                 LatentHook latent_hook) {
-  c10::InferenceMode guard;
+void Backend::perform_forward(std::vector<float *> &in_buffer,
+                              std::vector<float *> &out_buffer,
+                              int n_batches, int n_out_channels, int n_vec,
+                              LatentHook latent_hook) {
+  // If model has encode and decode, and a latent hook is provided or forward is missing,
+  // execute encode -> latent_hook -> decode
+  bool has_enc_dec = has_method("encode") && has_method("decode");
+  if (has_enc_dec && (latent_hook != nullptr || !has_method("forward"))) {
+    c10::InferenceMode guard;
+    if (!m_loaded) return;
 
-  if (!m_loaded)
-    return;
+    auto encode_params = get_method_params("encode");
+    auto decode_params = get_method_params("decode");
+    if (encode_params.empty() || decode_params.empty()) return;
 
-  auto encode_params = get_method_params("encode");
-  auto decode_params = get_method_params("decode");
-  if (encode_params.empty() || decode_params.empty())
-    return;
+    auto in_dim = encode_params[0];
+    auto in_ratio = encode_params[1];
+    auto out_dim = decode_params[2];
+    auto out_ratio = decode_params[3];
 
-  auto in_dim = encode_params[0];
-  auto in_ratio = encode_params[1];
-  auto out_dim = decode_params[2];
-  auto out_ratio = decode_params[3];
-
-  // COPY INPUT BUFFER INTO A TENSOR FOR ENCODE
-  std::vector<at::Tensor> tensor_in;
-  for (int i = 0; i < in_dim * n_batches; i++) {
-    if (i < (int)in_buffer.size()) {
-      tensor_in.push_back(torch::from_blob(in_buffer[i], {1, 1, n_vec}).clone());
-    } else {
-      tensor_in.push_back(torch::zeros({1, 1, n_vec}));
-    }
-  }
-
-  auto cat_tensor_in = torch::cat(tensor_in, 1);
-  cat_tensor_in = cat_tensor_in.reshape({in_dim, n_batches, -1, in_ratio});
-  cat_tensor_in = cat_tensor_in.select(-1, -1);
-  cat_tensor_in = cat_tensor_in.permute({1, 0, 2});
-
-  std::unique_lock<std::mutex> model_lock(m_model_mutex);
-  cat_tensor_in = cat_tensor_in.to(m_device);
-  std::vector<torch::jit::IValue> encode_inputs = {cat_tensor_in};
-  auto kwargs = empty_kwargs();
-
-  at::Tensor latent_tensor;
-  try {
-    latent_tensor = m_model.get_method("encode")(encode_inputs, kwargs).toTensor();
-  } catch (const std::exception &e) {
-    std::cerr << "Autoencode encode error: " << e.what() << '\n';
-    return;
-  }
-
-  // LATENT BENDING / MODULATION HOOK
-  if (latent_hook) {
-    try {
-      latent_tensor = latent_hook(latent_tensor);
-    } catch (const std::exception &e) {
-      std::cerr << "Autoencode latent hook error: " << e.what() << '\n';
-    }
-  }
-
-  // DECODE LATENTS TO AUDIO
-  std::vector<torch::jit::IValue> decode_inputs = {latent_tensor};
-  at::Tensor tensor_out;
-  try {
-    tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
-    tensor_out = tensor_out.repeat_interleave(out_ratio).reshape(
-        {n_batches, out_dim, -1});
-  } catch (const std::exception &e) {
-    std::cerr << "Autoencode decode error: " << e.what() << '\n';
-    return;
-  }
-  model_lock.unlock();
-
-  int out_n_vec(tensor_out.size(2));
-  if (out_n_vec != n_vec) {
-    std::cout << "autoencode output size is not consistent, expected " << n_vec
-              << " samples, got " << out_n_vec << "!\n";
-    return;
-  }
-
-  tensor_out = tensor_out.to(CPU);
-
-  for (int i = 0; i < n_out_channels; i++) {
-    for (int j = 0; j < n_batches; j++) {
-      if (i < tensor_out.size(1)) {
-        auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
-        memcpy(out_buffer[j * n_out_channels + i], out_ptr, n_vec * sizeof(float));
+    std::vector<at::Tensor> tensor_in;
+    for (int i = 0; i < in_dim * n_batches; i++) {
+      if (i < (int)in_buffer.size()) {
+        tensor_in.push_back(torch::from_blob(in_buffer[i], {1, 1, n_vec}).clone());
       } else {
-        memset(out_buffer[j * n_out_channels + i], 0, n_vec * sizeof(float));
+        tensor_in.push_back(torch::zeros({1, 1, n_vec}));
       }
     }
+
+    auto cat_tensor_in = torch::cat(tensor_in, 1);
+    cat_tensor_in = cat_tensor_in.reshape({in_dim, n_batches, -1, in_ratio});
+    cat_tensor_in = cat_tensor_in.select(-1, -1);
+    cat_tensor_in = cat_tensor_in.permute({1, 0, 2});
+
+    std::unique_lock<std::mutex> model_lock(m_model_mutex);
+    cat_tensor_in = cat_tensor_in.to(m_device);
+    std::vector<torch::jit::IValue> encode_inputs = {cat_tensor_in};
+    auto kwargs = empty_kwargs();
+
+    at::Tensor latent_tensor;
+    try {
+      latent_tensor = m_model.get_method("encode")(encode_inputs, kwargs).toTensor();
+    } catch (const std::exception &e) {
+      std::cerr << "Forward encode error: " << e.what() << '\n';
+      return;
+    }
+
+    if (latent_hook) {
+      try {
+        latent_tensor = latent_hook(latent_tensor);
+      } catch (const std::exception &e) {
+        std::cerr << "Forward latent hook error: " << e.what() << '\n';
+      }
+    }
+
+    std::vector<torch::jit::IValue> decode_inputs = {latent_tensor};
+    at::Tensor tensor_out;
+    try {
+      tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
+      tensor_out = tensor_out.repeat_interleave(out_ratio).reshape({n_batches, out_dim, -1});
+    } catch (const std::exception &e) {
+      std::cerr << "Forward decode error: " << e.what() << '\n';
+      return;
+    }
+    model_lock.unlock();
+
+    int out_n_vec(tensor_out.size(2));
+    if (out_n_vec != n_vec) return;
+    tensor_out = tensor_out.to(CPU);
+
+    for (int i = 0; i < n_out_channels; i++) {
+      for (int j = 0; j < n_batches; j++) {
+        if (i < tensor_out.size(1)) {
+          auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
+          memcpy(out_buffer[j * n_out_channels + i], out_ptr, n_vec * sizeof(float));
+        } else {
+          memset(out_buffer[j * n_out_channels + i], 0, n_vec * sizeof(float));
+        }
+      }
+    }
+  } else {
+    // Native forward method
+    perform(in_buffer, out_buffer, "forward", n_batches, n_out_channels, n_vec);
   }
 }
 
-bool Backend::has_autoencode() {
-  return has_method("encode") && has_method("decode");
+void Backend::perform_prior_decode(std::vector<float *> &out_buffer,
+                                  int n_batches, int n_out_channels, int n_vec) {
+  c10::InferenceMode guard;
+  if (!m_loaded) return;
+
+  std::string prior_method = has_method("prior") ? "prior" : (has_method("generate") ? "generate" : "");
+  if (prior_method.empty()) return;
+
+  // If decode exists and prior generates latents, chain prior -> decode
+  if (has_method("decode")) {
+    auto prior_params = get_method_params(prior_method);
+    auto decode_params = get_method_params("decode");
+    if (decode_params.empty()) return;
+
+    auto out_dim = decode_params[2];
+    auto out_ratio = decode_params[3];
+
+    std::unique_lock<std::mutex> model_lock(m_model_mutex);
+    auto kwargs = empty_kwargs();
+    std::vector<torch::jit::IValue> prior_inputs;
+
+    if (!prior_params.empty() && prior_params[0] > 0) {
+      int p_in_dim = prior_params[0];
+      int p_in_ratio = prior_params[1];
+      std::vector<at::Tensor> tensor_in;
+      for (int i = 0; i < p_in_dim * n_batches; i++) {
+        tensor_in.push_back(torch::zeros({1, 1, n_vec}));
+      }
+      auto cat_tensor_in = torch::cat(tensor_in, 1);
+      cat_tensor_in = cat_tensor_in.reshape({p_in_dim, n_batches, -1, p_in_ratio});
+      cat_tensor_in = cat_tensor_in.select(-1, -1);
+      cat_tensor_in = cat_tensor_in.permute({1, 0, 2}).to(m_device);
+      prior_inputs.push_back(cat_tensor_in);
+    }
+
+    at::Tensor latent_tensor;
+    try {
+      latent_tensor = m_model.get_method(prior_method)(prior_inputs, kwargs).toTensor();
+    } catch (const std::exception &e) {
+      std::cerr << "Prior error: " << e.what() << '\n';
+      return;
+    }
+
+    std::vector<torch::jit::IValue> decode_inputs = {latent_tensor};
+    at::Tensor tensor_out;
+    try {
+      tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
+      tensor_out = tensor_out.repeat_interleave(out_ratio).reshape({n_batches, out_dim, -1});
+    } catch (const std::exception &e) {
+      std::cerr << "Prior decode error: " << e.what() << '\n';
+      return;
+    }
+    model_lock.unlock();
+
+    int out_n_vec(tensor_out.size(2));
+    tensor_out = tensor_out.to(CPU);
+
+    int copy_samples = std::min(n_vec, out_n_vec);
+    for (int i = 0; i < n_out_channels; i++) {
+      for (int j = 0; j < n_batches; j++) {
+        if (i < tensor_out.size(1)) {
+          auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
+          memcpy(out_buffer[j * n_out_channels + i], out_ptr, copy_samples * sizeof(float));
+          if (copy_samples < n_vec) {
+            memset(out_buffer[j * n_out_channels + i] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+          }
+        } else {
+          memset(out_buffer[j * n_out_channels + i], 0, n_vec * sizeof(float));
+        }
+      }
+    }
+  } else {
+    // If no decode method, call prior directly with perform
+    std::vector<float*> empty_in_buf;
+    perform(empty_in_buf, out_buffer, prior_method, n_batches, n_out_channels, n_vec);
+  }
+}
+
+bool Backend::has_prior_decode() {
+  return (has_method("prior") || has_method("generate")) && has_method("decode");
 }
 
 std::vector<std::string> Backend::get_plugin_modes() {
@@ -206,10 +280,7 @@ std::vector<std::string> Backend::get_plugin_modes() {
   if (!is_loaded())
     return modes;
 
-  if (has_autoencode()) {
-    modes.push_back("autoencode");
-  }
-  if (has_method("forward")) {
+  if (has_method("forward") || (has_method("encode") && has_method("decode"))) {
     modes.push_back("forward");
   }
   if (has_method("prior")) {
@@ -229,12 +300,22 @@ std::vector<std::string> Backend::get_plugin_modes() {
 }
 
 std::vector<int> Backend::get_mode_params(std::string mode) {
-  if (mode == "autoencode" && has_autoencode()) {
-    auto ep = get_method_params("encode");
+  if (mode == "forward") {
+    if (has_method("forward")) {
+      return get_method_params("forward");
+    } else if (has_method("encode") && has_method("decode")) {
+      auto ep = get_method_params("encode");
+      auto dp = get_method_params("decode");
+      if (ep.size() >= 4 && dp.size() >= 4) {
+        return { ep[0], ep[1], dp[2], dp[3] };
+      }
+    }
+  }
+  if ((mode == "prior" || mode == "generate") && has_method("decode")) {
     auto dp = get_method_params("decode");
-    if (ep.size() >= 4 && dp.size() >= 4) {
-      // Return: [in_channels, in_ratio, out_channels, out_ratio]
-      return { ep[0], ep[1], dp[2], dp[3] };
+    if (dp.size() >= 4) {
+      // 0 inputs, audio out channels from decode
+      return { 0, 1, dp[2], dp[3] };
     }
   }
   return get_method_params(mode);
