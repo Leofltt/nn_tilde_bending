@@ -84,17 +84,23 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
         if (currentBendingLayer.isNotEmpty() && !modifiedWeights.empty())
         {
             currentWeights = modifiedWeights;
-            baseDrawnWeights = modifiedWeights;
 
-            // Reset knobs to baseline (1.0 scale, 0.0 offset) without triggering listener
-            scaleSlider.removeListener (this);
-            offsetSlider.removeListener (this);
-            scaleSlider.setValue (1.0);
-            offsetSlider.setValue (0.0);
-            lastKnobScale = 1.0;
-            lastKnobOffset = 0.0;
-            scaleSlider.addListener (this);
-            offsetSlider.addListener (this);
+            // Keep scale and offset knobs where they are:
+            // Inverse-transform the modified weights into baseDrawnWeights so subsequent
+            // knob tweaks scale/offset from the new drawn curve smoothly!
+            float scale = (float)scaleSlider.getValue();
+            float offset = (float)offsetSlider.getValue();
+
+            baseDrawnWeights.resize (modifiedWeights.size());
+            if (std::abs (scale) > 0.00001f)
+            {
+                for (size_t i = 0; i < modifiedWeights.size(); ++i)
+                    baseDrawnWeights[i] = (modifiedWeights[i] - offset) / scale;
+            }
+            else
+            {
+                baseDrawnWeights = modifiedWeights;
+            }
 
             audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
         }
