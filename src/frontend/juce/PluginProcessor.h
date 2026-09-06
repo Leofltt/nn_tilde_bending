@@ -151,6 +151,10 @@ public:
     // Thread communication
     void runInference();
 
+    // Dry / Wet control
+    float getDryWet() const { return m_dryWet.load(); }
+    void setDryWet(float value) { m_dryWet.store(juce::jlimit(0.0f, 1.0f, value)); }
+
 private:
     friend class ModelThread;
 
@@ -163,9 +167,12 @@ private:
     int m_model_in { 0 };
     int m_model_out { 0 };
 
+    std::atomic<float> m_dryWet { 1.0f }; // 0.0 = Dry, 1.0 = Wet
+
     // Buffers and synchronization
     std::vector<CircularBuffer> m_in_buffers;
     std::vector<CircularBuffer> m_out_buffers;
+    std::vector<CircularBuffer> m_dry_delay_buffers;
     
     std::vector<std::vector<float>> m_staging_in;
     std::vector<std::vector<float>> m_staging_out;

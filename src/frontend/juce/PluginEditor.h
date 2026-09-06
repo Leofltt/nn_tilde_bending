@@ -43,6 +43,10 @@ private:
     juce::Label bufferLabel { {}, "Buffer:" };
     juce::Label bufferStatusLabel;
 
+    // Output Mix Control
+    juce::Label dryWetLabel { {}, "Dry/Wet:" };
+    juce::Slider dryWetSlider;
+
     juce::TextButton saveModelButton { "Save Model (.ts)" };
 
     // Bending Section

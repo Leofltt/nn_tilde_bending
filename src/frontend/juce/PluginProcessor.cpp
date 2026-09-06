@@ -135,17 +135,30 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         }
     }
     
-    // 2. Feed incoming audio into input circular buffers (if model takes audio input)
+    // 2. Feed incoming audio into dry delay buffers (for all modes) and model inputs (for forward mode)
+    int numDryChannels = (int)m_dry_delay_buffers.size();
+    for (int c = 0; c < numDryChannels; ++c)
+    {
+        const float* inPtr = nullptr;
+        if (c < totalNumInputChannels)
+            inPtr = buffer.getReadPointer(c);
+        else if (totalNumInputChannels > 0)
+            inPtr = buffer.getReadPointer(0);
+
+        m_dry_delay_buffers[c].put(inPtr, numSamples);
+    }
+
     if (m_model_in > 0)
     {
         for (int c = 0; c < m_model_in; ++c)
         {
+            const float* inPtr = nullptr;
             if (c < totalNumInputChannels)
-                m_in_buffers[c].put(buffer.getReadPointer(c), numSamples);
+                inPtr = buffer.getReadPointer(c);
             else if (totalNumInputChannels > 0)
-                m_in_buffers[c].put(buffer.getReadPointer(0), numSamples);
-            else
-                m_in_buffers[c].put(nullptr, numSamples);
+                inPtr = buffer.getReadPointer(0);
+
+            m_in_buffers[c].put(inPtr, numSamples);
         }
         
         // Check if we have enough samples to trigger inference and thread is idle
@@ -187,6 +200,25 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     for (int c = std::max(n_outs, (m_model_out == 1 ? 2 : 1)); c < totalNumOutputChannels; ++c)
     {
         buffer.clear(c, 0, numSamples);
+    }
+
+    // 4. Dry/Wet Blending (equal-power / linear blend between dry input audio and model generated/processed audio)
+    float wetGain = m_dryWet.load();
+    float dryGain = 1.0f - wetGain;
+
+    std::vector<float> dryBlock(numSamples, 0.0f);
+    for (int c = 0; c < (int)totalNumOutputChannels; ++c)
+    {
+        int dryCh = std::min(c, (int)m_dry_delay_buffers.size() - 1);
+        if (dryCh >= 0)
+        {
+            m_dry_delay_buffers[dryCh].get(dryBlock.data(), numSamples);
+            float* outPtr = buffer.getWritePointer(c);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                outPtr[i] = outPtr[i] * wetGain + dryBlock[i] * dryGain;
+            }
+        }
     }
 }
 
@@ -297,10 +329,25 @@ void NNBendingAudioProcessor::initBuffers()
     m_staging_in.resize(n_in);
     m_staging_out.resize(n_out);
     
+    // In forward mode, delay is 2 * m_bufferSize (1 buffer input accumulation + 1 buffer model inference transfer)
+    int latencySamples = (m_model_in > 0) ? (m_bufferSize * 2) : 0;
+    setLatencySamples(latencySamples);
+
+    int n_dry = std::max(2, std::max(n_in, n_out));
+    m_dry_delay_buffers.resize(n_dry);
+
     for (int i = 0; i < n_in; ++i)
     {
         m_in_buffers[i].init(m_bufferSize);
         m_staging_in[i].assign(m_bufferSize, 0.0f);
+    }
+
+    for (int i = 0; i < n_dry; ++i)
+    {
+        m_dry_delay_buffers[i].init(m_bufferSize);
+        // Pre-fill dry delay buffer with latency zeros so dry aligns with wet output
+        if (latencySamples > 0)
+            m_dry_delay_buffers[i].put(nullptr, latencySamples);
     }
     
     for (int i = 0; i < n_out; ++i)

@@ -41,6 +41,18 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     bufferStatusLabel.setColour (juce::Label::textColourId, juce::Colours::cyan);
     addAndMakeVisible (bufferStatusLabel);
 
+    // Dry / Wet Slider
+    dryWetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (dryWetLabel);
+
+    dryWetSlider.setRange (0.0, 1.0, 0.01);
+    dryWetSlider.setValue (audioProcessor.getDryWet());
+    dryWetSlider.setSliderStyle (juce::Slider::LinearBar);
+    dryWetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 45, 18);
+    dryWetSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff7c3aed"));
+    dryWetSlider.addListener (this);
+    addAndMakeVisible (dryWetSlider);
+
     // Save Model Button
     saveModelButton.addListener (this);
     saveModelButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1e3a5f"));
@@ -174,8 +186,11 @@ void NNBendingAudioProcessorEditor::resized()
     headerRow.removeFromLeft (12); // Gap
 
     bufferLabel.setBounds (headerRow.removeFromLeft (50));
-    bufferStatusLabel.setBounds (headerRow.removeFromLeft (70));
-    headerRow.removeFromLeft (12); // Gap
+    bufferStatusLabel.setBounds (headerRow.removeFromLeft (65));
+    headerRow.removeFromLeft (14); // Gap
+
+    dryWetLabel.setBounds (headerRow.removeFromLeft (60));
+    dryWetSlider.setBounds (headerRow.removeFromLeft (110));
 
     saveModelButton.setBounds (headerRow.removeFromRight (140));
 
@@ -236,8 +251,14 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
 
 void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 {
-    juce::ignoreUnused (slider);
-    applyKnobBending();
+    if (slider == &dryWetSlider)
+    {
+        audioProcessor.setDryWet ((float)dryWetSlider.getValue());
+    }
+    else
+    {
+        applyKnobBending();
+    }
 }
 
 void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
