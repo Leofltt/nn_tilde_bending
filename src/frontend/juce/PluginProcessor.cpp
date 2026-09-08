@@ -482,10 +482,6 @@ void NNBendingAudioProcessor::runInference()
         {
             shortActive = m_shortCircuitActive.load() || (m_shortCircuitParam && m_shortCircuitParam->get());
         }
-        else if (mode == TriggerMode::Midi)
-        {
-            shortActive = m_midiGateActive.load();
-        }
         else if (mode == TriggerMode::Transient)
         {
             shortActive = (m_audioEnvelope.load() >= m_transientThreshold.load());
@@ -516,16 +512,22 @@ void NNBendingAudioProcessor::runInference()
             const std::string& layerName = pair.first;
             LayerBendingState& state = pair.second;
 
-            // If baseDrawnWeights is empty, fetch original layer weights as baseline
-            if (state.baseDrawnWeights.empty())
+            // Ensure baseline originalWeights is populated from model
+            if (state.originalWeights.empty())
             {
-                state.baseDrawnWeights = m_backend.get_original_layer_weights(layerName);
+                state.originalWeights = m_backend.get_original_layer_weights(layerName);
             }
-
-            if (state.baseDrawnWeights.empty())
+            if (state.originalWeights.empty())
                 continue;
 
-            size_t numWeights = state.baseDrawnWeights.size();
+            size_t numWeights = state.originalWeights.size();
+
+            // Ensure drawnWeights is initialized to original baseline if not drawn yet
+            if (state.drawnWeights.size() != numWeights)
+            {
+                state.drawnWeights = state.originalWeights;
+            }
+
             if (state.driftOffsets.size() != numWeights)
             {
                 state.driftOffsets.assign(numWeights, 0.0f);
@@ -558,8 +560,8 @@ void NNBendingAudioProcessor::runInference()
                         state.driftOffsets[i] = noise;
                     }
 
-                    // Calculate bent target weight (Static Scale/Offset + Stochastic Drift)
-                    float bentWeight = (state.baseDrawnWeights[i] * state.scale + state.offset) + state.driftOffsets[i];
+                    // Calculate bent target weight (User Drawn shape * Static Scale + Offset + Stochastic Drift)
+                    float bentWeight = (state.drawnWeights[i] * state.scale + state.offset) + state.driftOffsets[i];
 
                     if (mode == TriggerMode::Continuous)
                     {
@@ -567,37 +569,37 @@ void NNBendingAudioProcessor::runInference()
                     }
                     else
                     {
-                        // In momentary / midi / transient modes, crossfade from baseline W0 to bent W based on envelope
-                        finalWeights[i] = state.baseDrawnWeights[i] + currentEnv * (bentWeight - state.baseDrawnWeights[i]);
+                        // Crossfade from unbent baseline W0 (originalWeights) to target bent W based on envelope
+                        finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
                     }
                 }
                 m_backend.set_layer_weights(layerName, finalWeights);
             }
             else if (mode != TriggerMode::Continuous && currentEnv > 0.001f)
             {
-                // Momentary gate active without heat: scale/offset towards bent state
+                // Momentary gate active without heat: crossfade from unbent baseline to bent state
                 std::vector<float> finalWeights(numWeights);
                 for (size_t i = 0; i < numWeights; ++i)
                 {
-                    float bentWeight = (state.baseDrawnWeights[i] * state.scale + state.offset);
-                    finalWeights[i] = state.baseDrawnWeights[i] + currentEnv * (bentWeight - state.baseDrawnWeights[i]);
+                    float bentWeight = (state.drawnWeights[i] * state.scale + state.offset);
+                    finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
                 }
                 m_backend.set_layer_weights(layerName, finalWeights);
             }
-            else if (mode == TriggerMode::Continuous && (std::abs(state.scale - 1.0f) > 0.0001f || std::abs(state.offset) > 0.0001f))
+            else if (mode == TriggerMode::Continuous)
             {
-                // Continuous mode with static scale/offset: apply directly
+                // Continuous mode: apply bent target directly
                 std::vector<float> finalWeights(numWeights);
                 for (size_t i = 0; i < numWeights; ++i)
                 {
-                    finalWeights[i] = (state.baseDrawnWeights[i] * state.scale + state.offset);
+                    finalWeights[i] = (state.drawnWeights[i] * state.scale + state.offset);
                 }
                 m_backend.set_layer_weights(layerName, finalWeights);
             }
             else if (mode != TriggerMode::Continuous && currentEnv <= 0.001f)
             {
                 // Momentary gate inactive: restore unbent baseline weights
-                m_backend.set_layer_weights(layerName, state.baseDrawnWeights);
+                m_backend.set_layer_weights(layerName, state.originalWeights);
             }
         }
     }

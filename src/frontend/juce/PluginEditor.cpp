@@ -78,8 +78,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (triggerModeLabel);
     triggerModeCombo.addItem ("Continuous", 1);
     triggerModeCombo.addItem ("Momentary", 2);
-    triggerModeCombo.addItem ("MIDI Gate", 3);
-    triggerModeCombo.addItem ("Transient", 4);
+    triggerModeCombo.addItem ("Transient", 3);
     triggerModeCombo.setSelectedId ((int)audioProcessor.getTriggerMode() + 1, juce::dontSendNotification);
     triggerModeCombo.addListener (this);
     addAndMakeVisible (triggerModeCombo);
@@ -121,11 +120,8 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     {
         if (currentBendingLayer.isNotEmpty() && !modifiedWeights.empty())
         {
-            currentWeights = modifiedWeights;
-
-            // Keep scale and offset knobs where they are:
-            // Inverse-transform the modified weights into baseDrawnWeights so subsequent
-            // knob tweaks scale/offset from the new drawn curve smoothly!
+            // The drawn weights are stored as the layer's target drawn curve (drawnWeights)
+            // Normalized inverse against scale/offset so subsequent knob tweaks scale from the drawn shape:
             float scale = (float)scaleSlider.getValue();
             float offset = (float)offsetSlider.getValue();
 
@@ -140,8 +136,22 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
                 baseDrawnWeights = modifiedWeights;
             }
 
-            audioProcessor.setLayerBaseWeights (currentBendingLayer.toStdString(), baseDrawnWeights);
-            audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
+            audioProcessor.setLayerDrawnWeights (currentBendingLayer.toStdString(), baseDrawnWeights);
+
+            auto mode = audioProcessor.getTriggerMode();
+            if (mode == NNBendingAudioProcessor::TriggerMode::Continuous)
+            {
+                // In continuous mode, drawn weights apply directly to real-time model weights
+                currentWeights = modifiedWeights;
+                audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
+                weightCanvas.setTargetBentWeights ({});
+            }
+            else
+            {
+                // In momentary / midi / transient modes:
+                // Keep live model at whatever backend is currently playing, and update pink target preview
+                weightCanvas.setTargetBentWeights (modifiedWeights);
+            }
         }
     };
 
@@ -396,6 +406,26 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
         audioProcessor.setTriggerMode (mode);
         shortCircuitButton.setVisible (mode == NNBendingAudioProcessor::TriggerMode::Momentary);
         resized();
+
+        // Update target overlay immediately on mode change
+        if (mode == NNBendingAudioProcessor::TriggerMode::Continuous)
+        {
+            weightCanvas.setTargetBentWeights ({});
+            if (currentBendingLayer.isNotEmpty())
+                applyKnobBending();
+        }
+        else
+        {
+            if (currentBendingLayer.isNotEmpty() && !baseDrawnWeights.empty())
+            {
+                float scale = (float)scaleSlider.getValue();
+                float offset = (float)offsetSlider.getValue();
+                std::vector<float> targetBent(baseDrawnWeights.size());
+                for (size_t i = 0; i < baseDrawnWeights.size(); ++i)
+                    targetBent[i] = baseDrawnWeights[i] * scale + offset;
+                weightCanvas.setTargetBentWeights (targetBent);
+            }
+        }
     }
     else if (comboBoxThatHasChanged == &driftModeCombo)
     {
@@ -609,15 +639,44 @@ void NNBendingAudioProcessorEditor::timerCallback()
         shortCircuitButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff8b2500"));
     }
 
-    // If live heat is active and not frozen, or momentary envelope is animating, visualize live weights on the canvas
-    // (Only update when user is not actively drawing with the mouse)
+    // Update canvas curves:
+    // 1) In Momentary or Transient modes, display the target bent curve (neon pink dashed line)
+    // 2) Display live weights currently active inside the model (purple curve with gradient fill)
     if (audioProcessor.isModelLoaded() && currentBendingLayer.isNotEmpty() && !weightCanvas.isCurrentlyDrawing())
     {
+        auto triggerMode = audioProcessor.getTriggerMode();
         auto state = audioProcessor.getLayerState (currentBendingLayer.toStdString());
-        bool isAnimating = (state.heat > 0.0001f && !state.frozen)
-                        || (audioProcessor.getTriggerMode() != NNBendingAudioProcessor::TriggerMode::Continuous && env > 0.01f);
-        if (isAnimating)
+
+        if (triggerMode == NNBendingAudioProcessor::TriggerMode::Continuous)
         {
+            // In continuous mode, target is identical to current live state, so no separate dashed ghost needed
+            weightCanvas.setTargetBentWeights ({});
+            
+            // If heat/jitter is oscillating or parameters change, stream live weights to canvas
+            if (state.heat > 0.0001f && !state.frozen)
+            {
+                auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
+                if (!liveWeights.empty())
+                    weightCanvas.updateCurrentWeights (liveWeights);
+            }
+        }
+        else
+        {
+            // In Momentary / MIDI / Transient modes:
+            // Calculate target bent curve: (drawnWeights * scale + offset)
+            if (!state.drawnWeights.empty())
+            {
+                std::vector<float> targetBent(state.drawnWeights.size());
+                for (size_t i = 0; i < state.drawnWeights.size(); ++i)
+                    targetBent[i] = state.drawnWeights[i] * state.scale + state.offset;
+                weightCanvas.setTargetBentWeights (targetBent);
+            }
+            else
+            {
+                weightCanvas.setTargetBentWeights ({});
+            }
+
+            // Always update live curve to show real-time model weights transitioning between baseline and bent
             auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
             if (!liveWeights.empty())
             {
@@ -723,15 +782,21 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
 
     // Fetch this layer's stored state
     auto state = audioProcessor.getLayerState (layerName.toStdString());
-    if (state.baseDrawnWeights.empty())
+    if (state.originalWeights.empty())
     {
-        baseDrawnWeights = currentWeights;
-        state.baseDrawnWeights = currentWeights;
-        audioProcessor.setLayerBaseWeights (layerName.toStdString(), baseDrawnWeights);
+        state.originalWeights = originalWeights;
+        audioProcessor.setLayerOriginalWeights (layerName.toStdString(), originalWeights);
+    }
+
+    if (state.drawnWeights.empty())
+    {
+        baseDrawnWeights = originalWeights;
+        state.drawnWeights = originalWeights;
+        audioProcessor.setLayerDrawnWeights (layerName.toStdString(), baseDrawnWeights);
     }
     else
     {
-        baseDrawnWeights = state.baseDrawnWeights;
+        baseDrawnWeights = state.drawnWeights;
     }
 
     // Set knobs to this layer's saved values without triggering recursive listeners
@@ -767,6 +832,19 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     driftModeCombo.addListener (this);
 
     weightCanvas.setWeights (originalWeights, currentWeights);
+
+    // If in momentary/midi/transient modes, compute target bent overlay
+    if (audioProcessor.getTriggerMode() != NNBendingAudioProcessor::TriggerMode::Continuous)
+    {
+        std::vector<float> targetBent(baseDrawnWeights.size());
+        for (size_t i = 0; i < baseDrawnWeights.size(); ++i)
+            targetBent[i] = baseDrawnWeights[i] * state.scale + state.offset;
+        weightCanvas.setTargetBentWeights (targetBent);
+    }
+    else
+    {
+        weightCanvas.setTargetBentWeights ({});
+    }
     
     // Display layer shape / category info
     auto category = NNBendingAudioProcessor::classifyLayer (currentBendingLayer.toStdString());
@@ -781,9 +859,9 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
 
 void NNBendingAudioProcessorEditor::applyKnobBending()
 {
-    if (currentBendingLayer.isEmpty() || currentWeights.empty()) return;
+    if (currentBendingLayer.isEmpty()) return;
     if (baseDrawnWeights.empty())
-        baseDrawnWeights = currentWeights;
+        baseDrawnWeights = audioProcessor.getBackend().get_original_layer_weights (currentBendingLayer.toStdString());
     
     float scale = (float)scaleSlider.getValue();
     float offset = (float)offsetSlider.getValue();
@@ -795,14 +873,25 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
     if (auto* p = audioProcessor.getScaleParam())  *p = scale;
     if (auto* p = audioProcessor.getOffsetParam()) *p = offset;
     
-    currentWeights.resize (baseDrawnWeights.size());
+    std::vector<float> bentTarget(baseDrawnWeights.size());
     for (size_t i = 0; i < baseDrawnWeights.size(); ++i)
     {
-        currentWeights[i] = baseDrawnWeights[i] * scale + offset;
+        bentTarget[i] = baseDrawnWeights[i] * scale + offset;
     }
-    
-    audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
-    weightCanvas.updateCurrentWeights (currentWeights);
+
+    auto mode = audioProcessor.getTriggerMode();
+    if (mode == NNBendingAudioProcessor::TriggerMode::Continuous)
+    {
+        currentWeights = bentTarget;
+        audioProcessor.getBackend().set_layer_weights (currentBendingLayer.toStdString(), currentWeights);
+        weightCanvas.updateCurrentWeights (currentWeights);
+        weightCanvas.setTargetBentWeights ({});
+    }
+    else
+    {
+        // In momentary/midi/transient mode, knobs shape the neon pink target bent curve!
+        weightCanvas.setTargetBentWeights (bentTarget);
+    }
 }
 
 void NNBendingAudioProcessorEditor::resetLayerWeights()
@@ -838,6 +927,7 @@ void NNBendingAudioProcessorEditor::resetLayerWeights()
     baseDrawnWeights = originalWeights;
 
     weightCanvas.setWeights (originalWeights, currentWeights);
+    weightCanvas.setTargetBentWeights ({});
 }
 
 void NNBendingAudioProcessorEditor::resetAllLayerWeights()
@@ -872,6 +962,7 @@ void NNBendingAudioProcessorEditor::resetAllLayerWeights()
         currentWeights = originalWeights;
         baseDrawnWeights = originalWeights;
         weightCanvas.setWeights (originalWeights, currentWeights);
+        weightCanvas.setTargetBentWeights ({});
     }
 }
 

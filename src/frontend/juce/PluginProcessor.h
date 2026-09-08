@@ -204,8 +204,9 @@ public:
         float memory { 0.8f };       // Mean reversion drag / elastic pull (theta)
         DriftMode driftMode { DriftMode::ThermalOU };
         bool frozen { false };
-        std::vector<float> baseDrawnWeights;
-        std::vector<float> driftOffsets; // Current stochastic drift vector
+        std::vector<float> originalWeights; // Unbent baseline weights W0
+        std::vector<float> drawnWeights;    // User-drawn / bent target curve
+        std::vector<float> driftOffsets;    // Current stochastic drift vector
     };
 
     LayerBendingState getLayerState(const std::string& layerName) const
@@ -260,10 +261,21 @@ public:
         m_layerStates[layerName].frozen = frozen;
     }
 
-    void setLayerBaseWeights(const std::string& layerName, const std::vector<float>& weights)
+    void setLayerDrawnWeights(const std::string& layerName, const std::vector<float>& weights)
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
-        m_layerStates[layerName].baseDrawnWeights = weights;
+        m_layerStates[layerName].drawnWeights = weights;
+    }
+
+    void setLayerBaseWeights(const std::string& layerName, const std::vector<float>& weights)
+    {
+        setLayerDrawnWeights(layerName, weights);
+    }
+
+    void setLayerOriginalWeights(const std::string& layerName, const std::vector<float>& weights)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].originalWeights = weights;
     }
 
     void clearLayerBending(const std::string& layerName)
@@ -307,7 +319,6 @@ public:
     {
         Continuous = 0, // Default: Always active / continuous bending
         Momentary,      // UI "Short" Button / Parameter hold
-        Midi,           // MIDI Note-On / Gate
         Transient       // Audio sidechain transient follower
     };
 

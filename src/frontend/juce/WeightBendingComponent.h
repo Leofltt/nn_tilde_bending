@@ -35,6 +35,12 @@ public:
         repaint();
     }
 
+    void setTargetBentWeights(const std::vector<float>& target)
+    {
+        m_targetBentWeights = target;
+        repaint();
+    }
+
     const std::vector<float>& getCurrentWeights() const { return m_currentWeights; }
     const std::vector<float>& getOriginalWeights() const { return m_originalWeights; }
     bool isCurrentlyDrawing() const { return m_dragMode == DragMode::Drawing; }
@@ -148,15 +154,27 @@ public:
             {
                 juce::Path origPath;
                 buildPathForWeights(origPath, m_originalWeights, pw, ph);
-                g.setColour(juce::Colours::cyan.withAlpha(0.28f));
-                g.strokePath(origPath, juce::PathStrokeType(1.0f));
+                g.setColour(juce::Colours::cyan.withAlpha(0.35f));
+                g.strokePath(origPath, juce::PathStrokeType(1.2f));
             }
 
-            // Render current (bent) weights
+            // Render target bent curve (neon pink / magenta dashed overlay showing target state)
+            if (!m_targetBentWeights.empty())
+            {
+                juce::Path targetPath;
+                buildPathForWeights(targetPath, m_targetBentWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ffec4899")); // Vivid neon pink/magenta
+                juce::PathStrokeType dashedStroke(1.6f);
+                float dashLengths[] = { 6.0f, 4.0f };
+                dashedStroke.createDashedStroke(targetPath, targetPath, dashLengths, 2);
+                g.strokePath(targetPath, dashedStroke);
+            }
+
+            // Render current live weights
             juce::Path bentPath;
             buildPathForWeights(bentPath, m_currentWeights, pw, ph);
 
-            // Gradient fill under the curve
+            // Gradient fill under the live curve
             if (!bentPath.isEmpty())
             {
                 juce::Path fillPath = bentPath;
@@ -165,15 +183,40 @@ public:
                 fillPath.closeSubPath();
 
                 juce::ColourGradient grad(
-                    juce::Colour::fromString("#77c084fc"), 0, 0,
-                    juce::Colour::fromString("#0d9333ea"), 0, ph, false
+                    juce::Colour::fromString("#66c084fc"), 0, 0,
+                    juce::Colour::fromString("#0a9333ea"), 0, ph, false
                 );
                 g.setGradientFill(grad);
                 g.fillPath(fillPath);
 
-                // Vibrant neon purple/violet stroke
+                // Vibrant neon purple/violet stroke for real-time model weights
                 g.setColour(juce::Colour::fromString("#ffc084fc"));
-                g.strokePath(bentPath, juce::PathStrokeType(1.8f));
+                g.strokePath(bentPath, juce::PathStrokeType(2.0f));
+            }
+
+            // Legend / Color key overlay in top right corner
+            {
+                int legendX = (int)pw - 275;
+                int legendY = 8;
+                g.setFont(juce::FontOptions(10.0f));
+
+                // Cyan: Baseline
+                g.setColour(juce::Colours::cyan.withAlpha(0.7f));
+                g.fillRect(legendX, legendY + 3, 10, 3);
+                g.drawText("Baseline W0", legendX + 14, legendY - 2, 70, 14, juce::Justification::centredLeft);
+
+                // Pink: Target Bent (when present)
+                if (!m_targetBentWeights.empty())
+                {
+                    g.setColour(juce::Colour::fromString("#ffec4899"));
+                    g.fillRect(legendX + 85, legendY + 3, 10, 3);
+                    g.drawText("Target Bent", legendX + 99, legendY - 2, 70, 14, juce::Justification::centredLeft);
+                }
+
+                // Purple: Live Model
+                g.setColour(juce::Colour::fromString("#ffc084fc"));
+                g.fillRect(legendX + 175, legendY + 3, 10, 3);
+                g.drawText("Live Model", legendX + 189, legendY - 2, 70, 14, juce::Justification::centredLeft);
             }
 
             // Stats & zoom readout on bottom right of plot area
@@ -465,6 +508,7 @@ private:
 
     std::vector<float> m_originalWeights;
     std::vector<float> m_currentWeights;
+    std::vector<float> m_targetBentWeights;
 
     // Viewport transform
     float m_viewStartX { 0.0f }; // 0.0 to 1.0 (start index fraction)
