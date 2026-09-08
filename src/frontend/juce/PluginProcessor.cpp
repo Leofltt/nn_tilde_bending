@@ -72,9 +72,18 @@ NNBendingAudioProcessor::NNBendingAudioProcessor()
         juce::NormalisableRange<float> (-2.0f, 2.0f, 0.001f), 0.0f
     ));
 
-    addParameter (m_jitterParam = new juce::AudioParameterFloat (
-        juce::ParameterID ("jitter", 1), "Layer Jitter",
+    addParameter (m_heatParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("heat", 1), "Layer Heat / Volatility",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.0f
+    ));
+
+    addParameter (m_memoryParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("memory", 1), "Drift Memory / Drag",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.8f
+    ));
+
+    addParameter (m_shortCircuitParam = new juce::AudioParameterBool (
+        juce::ParameterID ("short_circuit", 1), "Momentary Short Circuit", false
     ));
 }
 
@@ -117,11 +126,23 @@ bool NNBendingAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts
 
 void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
-    juce::ignoreUnused(midiMessages);
-    
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    // Process incoming MIDI triggers (Note On kicks momentary glitch; Note Off releases)
+    for (const auto metadata : midiMessages)
+    {
+        auto msg = metadata.getMessage();
+        if (msg.isNoteOn())
+        {
+            m_midiGateActive.store(true);
+        }
+        else if (msg.isNoteOff())
+        {
+            m_midiGateActive.store(false);
+        }
+    }
 
     // Clear unused output channels
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
@@ -135,6 +156,20 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     }
 
     auto numSamples = buffer.getNumSamples();
+
+    // Sidechain Audio Envelope Follower for Transient Triggering
+    if (totalNumInputChannels > 0 && numSamples > 0)
+    {
+        float maxPeak = 0.0f;
+        for (int c = 0; c < totalNumInputChannels; ++c)
+        {
+            float peak = buffer.getMagnitude(c, 0, numSamples);
+            if (peak > maxPeak) maxPeak = peak;
+        }
+        float prevEnv = m_audioEnvelope.load();
+        float newEnv = std::max(maxPeak, prevEnv * 0.9f); // Fast attack, smooth decay
+        m_audioEnvelope.store(newEnv);
+    }
     
     // 1. If inference output is ready from background thread, transfer to output ring buffers
     if (m_output_ready.load())
@@ -221,9 +256,10 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         buffer.clear(c, 0, numSamples);
     }
 
-    // 4. Dry/Wet Blending (equal-power / linear blend between dry input audio and model generated/processed audio)
+    // 4. Dry/Wet Blending & Safety Sentry
     float wetGain = m_dryWet.load();
     float dryGain = 1.0f - wetGain;
+    bool fuseBlown = m_blownFuse.load();
 
     std::vector<float> dryBlock(numSamples, 0.0f);
     for (int c = 0; c < (int)totalNumOutputChannels; ++c)
@@ -233,10 +269,46 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             m_dry_delay_buffers[dryCh].get(dryBlock.data(), numSamples);
             float* outPtr = buffer.getWritePointer(c);
-            for (int i = 0; i < numSamples; ++i)
+            
+            if (fuseBlown)
             {
-                outPtr[i] = outPtr[i] * wetGain + dryBlock[i] * dryGain;
+                // Blown fuse: bypass wet model output and pass pure dry audio to protect listeners
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    outPtr[i] = dryBlock[i];
+                }
             }
+            else
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    float sample = outPtr[i] * wetGain + dryBlock[i] * dryGain;
+
+                    // NaN Sentry & Safety Check (+3 dBFS is approx 1.414f; cutoff at 2.0f)
+                    if (std::isnan(sample) || std::isinf(sample) || std::abs(sample) > 2.0f)
+                    {
+                        m_blownFuse.store(true);
+                        sample = 0.0f; // Instantly silence runaway sample
+                    }
+                    else
+                    {
+                        // Soft clamp to +/- 1.5 to protect output converters
+                        sample = juce::jlimit(-1.5f, 1.5f, sample);
+                    }
+                    outPtr[i] = sample;
+                }
+            }
+        }
+    }
+
+    // Auto-recovery handling if enabled
+    if (m_blownFuse.load() && m_autoResetFuse.load())
+    {
+        int cooldown = m_fuseCooldownBlocks.fetch_add(1);
+        if (cooldown > 40) // ~0.5-1.0s depending on block size
+        {
+            m_fuseCooldownBlocks.store(0);
+            resetFuse();
         }
     }
 }
@@ -392,15 +464,53 @@ void NNBendingAudioProcessor::runInference()
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         std::string activeLayer = m_activeLayerName.toStdString();
-        if (!activeLayer.empty() && m_scaleParam && m_offsetParam && m_jitterParam)
+        if (!activeLayer.empty() && m_scaleParam && m_offsetParam && m_heatParam)
         {
             auto& state = m_layerStates[activeLayer];
             state.scale = m_scaleParam->get();
             state.offset = m_offsetParam->get();
-            state.jitter = m_jitterParam->get();
+            state.heat = m_heatParam->get();
+            if (m_memoryParam)
+                state.memory = m_memoryParam->get();
         }
 
-        // 2. For each configured layer, apply its own Scale, Offset, and Live Jitter
+        // Calculate momentary envelope progression based on TriggerMode:
+        TriggerMode mode = m_triggerMode.load();
+        bool shortActive = false;
+
+        if (mode == TriggerMode::Momentary)
+        {
+            shortActive = m_shortCircuitActive.load() || (m_shortCircuitParam && m_shortCircuitParam->get());
+        }
+        else if (mode == TriggerMode::Midi)
+        {
+            shortActive = m_midiGateActive.load();
+        }
+        else if (mode == TriggerMode::Transient)
+        {
+            shortActive = (m_audioEnvelope.load() >= m_transientThreshold.load());
+        }
+
+        float currentEnv = m_momentaryEnvelope.load();
+        float att = m_envAttack.load();
+        float rel = m_envRelease.load();
+
+        if (mode == TriggerMode::Continuous)
+        {
+            // In continuous mode, bending is always 100% active
+            currentEnv = 1.0f;
+        }
+        else
+        {
+            if (shortActive)
+                currentEnv = std::min(1.0f, currentEnv + att);
+            else
+                currentEnv = std::max(0.0f, currentEnv * rel);
+        }
+
+        m_momentaryEnvelope.store(currentEnv);
+
+        // 2. For each configured layer, apply Scale, Offset, and Stochastic Drift (Noise / OU / Random Walk)
         for (auto& pair : m_layerStates)
         {
             const std::string& layerName = pair.first;
@@ -415,16 +525,79 @@ void NNBendingAudioProcessor::runInference()
             if (state.baseDrawnWeights.empty())
                 continue;
 
-            // If jitter is active and not frozen, compute fresh stochastic weights per compute pass
-            if (state.jitter > 0.0001f && !state.frozen)
+            size_t numWeights = state.baseDrawnWeights.size();
+            if (state.driftOffsets.size() != numWeights)
             {
-                std::vector<float> jittered(state.baseDrawnWeights.size());
-                for (size_t i = 0; i < state.baseDrawnWeights.size(); ++i)
+                state.driftOffsets.assign(numWeights, 0.0f);
+            }
+
+            // Compute stochastic drift when heat > 0 and not frozen
+            if (state.heat > 0.0001f && !state.frozen)
+            {
+                float heat = state.heat;
+                float memory = juce::jlimit(0.0f, 0.999f, state.memory);
+
+                std::vector<float> finalWeights(numWeights);
+
+                for (size_t i = 0; i < numWeights; ++i)
                 {
-                    float noise = (m_jitterRng.nextFloat() * 2.0f - 1.0f) * state.jitter;
-                    jittered[i] = (state.baseDrawnWeights[i] * state.scale + state.offset) + noise;
+                    float noise = (m_jitterRng.nextFloat() * 2.0f - 1.0f) * heat;
+
+                    if (state.driftMode == DriftMode::ThermalOU)
+                    {
+                        // Ornstein-Uhlenbeck: dW = -theta * W + sigma * dW_noise
+                        state.driftOffsets[i] = (state.driftOffsets[i] * memory) + noise * (1.0f - memory);
+                    }
+                    else if (state.driftMode == DriftMode::RandomWalk)
+                    {
+                        // Continuous wandering walk with soft bounds
+                        state.driftOffsets[i] = juce::jlimit(-1.0f, 1.0f, state.driftOffsets[i] + noise * 0.1f);
+                    }
+                    else // Classic Noise / Glitch
+                    {
+                        state.driftOffsets[i] = noise;
+                    }
+
+                    // Calculate bent target weight (Static Scale/Offset + Stochastic Drift)
+                    float bentWeight = (state.baseDrawnWeights[i] * state.scale + state.offset) + state.driftOffsets[i];
+
+                    if (mode == TriggerMode::Continuous)
+                    {
+                        finalWeights[i] = bentWeight;
+                    }
+                    else
+                    {
+                        // In momentary / midi / transient modes, crossfade from baseline W0 to bent W based on envelope
+                        finalWeights[i] = state.baseDrawnWeights[i] + currentEnv * (bentWeight - state.baseDrawnWeights[i]);
+                    }
                 }
-                m_backend.set_layer_weights(layerName, jittered);
+                m_backend.set_layer_weights(layerName, finalWeights);
+            }
+            else if (mode != TriggerMode::Continuous && currentEnv > 0.001f)
+            {
+                // Momentary gate active without heat: scale/offset towards bent state
+                std::vector<float> finalWeights(numWeights);
+                for (size_t i = 0; i < numWeights; ++i)
+                {
+                    float bentWeight = (state.baseDrawnWeights[i] * state.scale + state.offset);
+                    finalWeights[i] = state.baseDrawnWeights[i] + currentEnv * (bentWeight - state.baseDrawnWeights[i]);
+                }
+                m_backend.set_layer_weights(layerName, finalWeights);
+            }
+            else if (mode == TriggerMode::Continuous && (std::abs(state.scale - 1.0f) > 0.0001f || std::abs(state.offset) > 0.0001f))
+            {
+                // Continuous mode with static scale/offset: apply directly
+                std::vector<float> finalWeights(numWeights);
+                for (size_t i = 0; i < numWeights; ++i)
+                {
+                    finalWeights[i] = (state.baseDrawnWeights[i] * state.scale + state.offset);
+                }
+                m_backend.set_layer_weights(layerName, finalWeights);
+            }
+            else if (mode != TriggerMode::Continuous && currentEnv <= 0.001f)
+            {
+                // Momentary gate inactive: restore unbent baseline weights
+                m_backend.set_layer_weights(layerName, state.baseDrawnWeights);
             }
         }
     }
@@ -467,6 +640,10 @@ void NNBendingAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xmlState.setAttribute ("bufferSize", m_bufferSize);
     xmlState.setAttribute ("activeLayer", m_activeLayerName);
     xmlState.setAttribute ("dryWet", (double)getDryWet());
+    xmlState.setAttribute ("triggerMode", (int)m_triggerMode.load());
+    xmlState.setAttribute ("envAttack", (double)m_envAttack.load());
+    xmlState.setAttribute ("envRelease", (double)m_envRelease.load());
+    xmlState.setAttribute ("transientThresh", (double)m_transientThreshold.load());
 
     // Save per-layer bending states
     std::lock_guard<std::mutex> lock(m_layerStateMutex);
@@ -477,7 +654,9 @@ void NNBendingAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         layerEl->setAttribute ("name", pair.first);
         layerEl->setAttribute ("scale", (double)pair.second.scale);
         layerEl->setAttribute ("offset", (double)pair.second.offset);
-        layerEl->setAttribute ("jitter", (double)pair.second.jitter);
+        layerEl->setAttribute ("heat", (double)pair.second.heat);
+        layerEl->setAttribute ("memory", (double)pair.second.memory);
+        layerEl->setAttribute ("driftMode", (int)pair.second.driftMode);
         layerEl->setAttribute ("frozen", pair.second.frozen);
     }
 
@@ -494,6 +673,10 @@ void NNBendingAudioProcessor::setStateInformation (const void* data, int sizeInB
             m_bufferSize = xmlState->getIntAttribute ("bufferSize", 2048);
             setDryWet ((float)xmlState->getDoubleAttribute ("dryWet", 1.0));
             m_activeLayerName = xmlState->getStringAttribute ("activeLayer");
+            setTriggerMode ((TriggerMode)xmlState->getIntAttribute ("triggerMode", 0));
+            setEnvelopeAttack ((float)xmlState->getDoubleAttribute ("envAttack", 0.25));
+            setEnvelopeRelease ((float)xmlState->getDoubleAttribute ("envRelease", 0.85));
+            setTransientThreshold ((float)xmlState->getDoubleAttribute ("transientThresh", 0.15));
 
             juce::String path = xmlState->getStringAttribute ("modelPath");
             if (path.isNotEmpty())
@@ -519,7 +702,13 @@ void NNBendingAudioProcessor::setStateInformation (const void* data, int sizeInB
                         auto& state = m_layerStates[name];
                         state.scale = (float)layerEl->getDoubleAttribute ("scale", 1.0);
                         state.offset = (float)layerEl->getDoubleAttribute ("offset", 0.0);
-                        state.jitter = (float)layerEl->getDoubleAttribute ("jitter", 0.0);
+                        // Read heat, fallback to jitter if older project
+                        double heatVal = layerEl->getDoubleAttribute ("heat", -1.0);
+                        if (heatVal < 0.0)
+                            heatVal = layerEl->getDoubleAttribute ("jitter", 0.0);
+                        state.heat = (float)heatVal;
+                        state.memory = (float)layerEl->getDoubleAttribute ("memory", 0.8);
+                        state.driftMode = (DriftMode)layerEl->getIntAttribute ("driftMode", 0);
                         state.frozen = layerEl->getBoolAttribute ("frozen", false);
                     }
                 }

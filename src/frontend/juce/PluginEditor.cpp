@@ -59,8 +59,46 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     saveModelButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     addAndMakeVisible (saveModelButton);
 
+    // Configure Fuse Button
+    fuseButton.setButtonText ("FUSE: OK");
+    fuseButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1b3a2a"));
+    fuseButton.setColour (juce::TextButton::textColourOffId, juce::Colours::lightgreen);
+    fuseButton.addListener (this);
+    addAndMakeVisible (fuseButton);
+
+    // Configure Momentary Short Circuit Button
+    shortCircuitButton.setButtonText ("SHORT [!]");
+    shortCircuitButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff8b2500"));
+    shortCircuitButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    shortCircuitButton.addListener (this);
+    addAndMakeVisible (shortCircuitButton);
+
+    // Trigger Mode Selector
+    triggerModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (triggerModeLabel);
+    triggerModeCombo.addItem ("Continuous", 1);
+    triggerModeCombo.addItem ("Momentary", 2);
+    triggerModeCombo.addItem ("MIDI Gate", 3);
+    triggerModeCombo.addItem ("Transient", 4);
+    triggerModeCombo.setSelectedId ((int)audioProcessor.getTriggerMode() + 1, juce::dontSendNotification);
+    triggerModeCombo.addListener (this);
+    addAndMakeVisible (triggerModeCombo);
+    shortCircuitButton.setVisible (audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Momentary);
+
     // Bending Group
     addAndMakeVisible (bendingGroup);
+
+    // Category Filter
+    categoryLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (categoryLabel);
+    categoryCombo.addItem ("All Traces", 1);
+    categoryCombo.addItem ("Norm / Dynamics", 2);
+    categoryCombo.addItem ("Conv Kernels", 3);
+    categoryCombo.addItem ("Linear / Dense", 4);
+    categoryCombo.addItem ("Biases", 5);
+    categoryCombo.setSelectedId (1, juce::dontSendNotification);
+    categoryCombo.addListener (this);
+    addAndMakeVisible (categoryCombo);
 
     layerLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (layerLabel);
@@ -136,19 +174,40 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     offsetSlider.addListener (this);
     addAndMakeVisible (offsetSlider);
 
-    jitterLabel.setText ("Jitter", juce::dontSendNotification);
-    jitterLabel.setJustificationType (juce::Justification::centred);
-    jitterLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    addAndMakeVisible (jitterLabel);
+    heatLabel.setText ("Heat", juce::dontSendNotification);
+    heatLabel.setJustificationType (juce::Justification::centred);
+    heatLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (heatLabel);
 
-    jitterSlider.setRange (0.0, 1.0, 0.001);
-    jitterSlider.setValue (0.0);
-    jitterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    jitterSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    jitterSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffff9933"));
-    jitterSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
-    jitterSlider.addListener (this);
-    addAndMakeVisible (jitterSlider);
+    heatSlider.setRange (0.0, 1.0, 0.001);
+    heatSlider.setValue (0.0);
+    heatSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    heatSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
+    heatSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffff9933"));
+    heatSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    heatSlider.addListener (this);
+    addAndMakeVisible (heatSlider);
+
+    memoryLabel.setText ("Memory", juce::dontSendNotification);
+    memoryLabel.setJustificationType (juce::Justification::centred);
+    memoryLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (memoryLabel);
+
+    memorySlider.setRange (0.0, 1.0, 0.001);
+    memorySlider.setValue (0.8);
+    memorySlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    memorySlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
+    memorySlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ff38bdf8"));
+    memorySlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    memorySlider.addListener (this);
+    addAndMakeVisible (memorySlider);
+
+    driftModeCombo.addItem ("Thermal OU", 1);
+    driftModeCombo.addItem ("Random Walk", 2);
+    driftModeCombo.addItem ("Glitch Noise", 3);
+    driftModeCombo.setSelectedId (1, juce::dontSendNotification);
+    driftModeCombo.addListener (this);
+    addAndMakeVisible (driftModeCombo);
 
     freezeButton.setButtonText ("Freeze");
     freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
@@ -169,7 +228,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
 
     // Initial load
     updateModelInfo();
-    startTimer (300);
+    startTimer (60); // 16 FPS for responsive live bending and jitter animation
 }
 
 NNBendingAudioProcessorEditor::~NNBendingAudioProcessorEditor()
@@ -196,46 +255,62 @@ void NNBendingAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (15);
 
-    // Top Header: Row 1 (Title + Status)
+    // Top Header: Row 1 (Title + Status + Fuse)
     auto titleRow = area.removeFromTop (26);
-    titleLabel.setBounds (titleRow.removeFromLeft (260));
+    titleLabel.setBounds (titleRow.removeFromLeft (240));
+    fuseButton.setBounds (titleRow.removeFromRight (100));
+    titleRow.removeFromRight (12);
     statusLabel.setBounds (titleRow);
 
     area.removeFromTop (6); // Spacer
 
-    // Header Controls: Row 2 (Load, Mode, Buffer, Save)
+    // Header Controls: Row 2 (Load, Mode, Buffer, Dry/Wet, Trigger, Short, Save)
     auto headerRow = area.removeFromTop (32);
-    loadButton.setBounds (headerRow.removeFromLeft (130));
-    headerRow.removeFromLeft (12); // Gap
+    loadButton.setBounds (headerRow.removeFromLeft (125));
+    headerRow.removeFromLeft (10);
 
     methodLabel.setBounds (headerRow.removeFromLeft (45));
-    methodCombo.setBounds (headerRow.removeFromLeft (100));
-    headerRow.removeFromLeft (12); // Gap
+    methodCombo.setBounds (headerRow.removeFromLeft (95));
+    headerRow.removeFromLeft (10);
 
-    bufferLabel.setBounds (headerRow.removeFromLeft (50));
-    bufferStatusLabel.setBounds (headerRow.removeFromLeft (65));
-    headerRow.removeFromLeft (14); // Gap
+    bufferLabel.setBounds (headerRow.removeFromLeft (48));
+    bufferStatusLabel.setBounds (headerRow.removeFromLeft (60));
+    headerRow.removeFromLeft (10);
 
-    dryWetLabel.setBounds (headerRow.removeFromLeft (60));
-    dryWetSlider.setBounds (headerRow.removeFromLeft (110));
+    dryWetLabel.setBounds (headerRow.removeFromLeft (55));
+    dryWetSlider.setBounds (headerRow.removeFromLeft (100));
+    headerRow.removeFromLeft (10);
 
-    saveModelButton.setBounds (headerRow.removeFromRight (140));
+    triggerModeLabel.setBounds (headerRow.removeFromLeft (50));
+    triggerModeCombo.setBounds (headerRow.removeFromLeft (100));
 
-    area.removeFromTop (20); // Spacer clearing the divider line
+    if (shortCircuitButton.isVisible())
+    {
+        headerRow.removeFromLeft (8);
+        shortCircuitButton.setBounds (headerRow.removeFromLeft (85));
+    }
+
+    saveModelButton.setBounds (headerRow.removeFromRight (130));
+
+    area.removeFromTop (18); // Spacer clearing the divider line
 
     // Bending Group Section
     bendingGroup.setBounds (area);
     auto groupArea = bendingGroup.getBounds().reduced (14);
     groupArea.removeFromTop (12); // Group title offset
 
-    // Layer Selection & Action Row
+    // Layer Selection & Action Row (Category filter + Layer Combo + Reset buttons)
     auto layerRow = groupArea.removeFromTop (32);
-    layerLabel.setBounds (layerRow.removeFromLeft (45));
+    categoryLabel.setBounds (layerRow.removeFromLeft (42));
+    categoryCombo.setBounds (layerRow.removeFromLeft (120));
+    layerRow.removeFromLeft (10);
+
+    layerLabel.setBounds (layerRow.removeFromLeft (42));
     
-    resetAllButton.setBounds (layerRow.removeFromRight (130));
-    layerRow.removeFromRight (8); // Gap
-    resetLayerButton.setBounds (layerRow.removeFromRight (110));
-    layerRow.removeFromRight (12); // Gap
+    resetAllButton.setBounds (layerRow.removeFromRight (125));
+    layerRow.removeFromRight (6);
+    resetLayerButton.setBounds (layerRow.removeFromRight (105));
+    layerRow.removeFromRight (10);
     
     layerCombo.setBounds (layerRow); // Takes remaining center width
 
@@ -254,16 +329,25 @@ void NNBendingAudioProcessorEditor::resized()
 
     weightCanvas.setBounds (groupArea);
 
-    // Layout side controls
-    scaleLabel.setBounds (sideControls.removeFromTop (16));
-    scaleSlider.setBounds (sideControls.removeFromTop (74));
-    sideControls.removeFromTop (8); // Spacer
-    offsetLabel.setBounds (sideControls.removeFromTop (16));
-    offsetSlider.setBounds (sideControls.removeFromTop (74));
-    sideControls.removeFromTop (8); // Spacer
-    jitterLabel.setBounds (sideControls.removeFromTop (16));
-    jitterSlider.setBounds (sideControls.removeFromTop (74));
-    sideControls.removeFromTop (4); // Spacer
+    // Layout side controls: Scale, Offset, Heat, Memory, Drift Mode, Freeze
+    scaleLabel.setBounds (sideControls.removeFromTop (14));
+    scaleSlider.setBounds (sideControls.removeFromTop (64));
+    sideControls.removeFromTop (4);
+
+    offsetLabel.setBounds (sideControls.removeFromTop (14));
+    offsetSlider.setBounds (sideControls.removeFromTop (64));
+    sideControls.removeFromTop (4);
+
+    heatLabel.setBounds (sideControls.removeFromTop (14));
+    heatSlider.setBounds (sideControls.removeFromTop (64));
+    sideControls.removeFromTop (4);
+
+    memoryLabel.setBounds (sideControls.removeFromTop (14));
+    memorySlider.setBounds (sideControls.removeFromTop (64));
+    sideControls.removeFromTop (6);
+
+    driftModeCombo.setBounds (sideControls.removeFromTop (24));
+    sideControls.removeFromTop (4);
     freezeButton.setBounds (sideControls.removeFromTop (22));
 }
 
@@ -279,6 +363,46 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
     {
         selectLayer (layerCombo.getText());
     }
+    else if (comboBoxThatHasChanged == &categoryCombo)
+    {
+        // Filter layerCombo based on selected trace category
+        int catId = categoryCombo.getSelectedId();
+        layerCombo.clear (juce::dontSendNotification);
+        auto layers = audioProcessor.getBackend().get_available_layers();
+        int id = 1;
+        for (const auto& l : layers)
+        {
+            auto cat = NNBendingAudioProcessor::classifyLayer (l);
+            bool include = false;
+            if (catId == 1) include = true; // All
+            else if (catId == 2 && cat == NNBendingAudioProcessor::LayerCategory::Norm) include = true;
+            else if (catId == 3 && cat == NNBendingAudioProcessor::LayerCategory::Conv) include = true;
+            else if (catId == 4 && cat == NNBendingAudioProcessor::LayerCategory::Linear) include = true;
+            else if (catId == 5 && cat == NNBendingAudioProcessor::LayerCategory::Bias) include = true;
+
+            if (include)
+                layerCombo.addItem (l, id++);
+        }
+        if (layerCombo.getNumItems() > 0)
+        {
+            layerCombo.setSelectedId (1);
+            selectLayer (layerCombo.getText());
+        }
+    }
+    else if (comboBoxThatHasChanged == &triggerModeCombo)
+    {
+        int modeIdx = triggerModeCombo.getSelectedId() - 1;
+        auto mode = (NNBendingAudioProcessor::TriggerMode)modeIdx;
+        audioProcessor.setTriggerMode (mode);
+        shortCircuitButton.setVisible (mode == NNBendingAudioProcessor::TriggerMode::Momentary);
+        resized();
+    }
+    else if (comboBoxThatHasChanged == &driftModeCombo)
+    {
+        int modeIdx = driftModeCombo.getSelectedId() - 1;
+        if (currentBendingLayer.isNotEmpty())
+            audioProcessor.setLayerDriftMode (currentBendingLayer.toStdString(), (NNBendingAudioProcessor::DriftMode)modeIdx);
+    }
 }
 
 void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
@@ -287,12 +411,20 @@ void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
     {
         audioProcessor.setDryWet ((float)dryWetSlider.getValue());
     }
-    else if (slider == &jitterSlider)
+    else if (slider == &heatSlider)
     {
-        float val = (float)jitterSlider.getValue();
+        float val = (float)heatSlider.getValue();
         if (currentBendingLayer.isNotEmpty())
-            audioProcessor.setLayerJitter (currentBendingLayer.toStdString(), val);
-        if (auto* param = audioProcessor.getJitterParam())
+            audioProcessor.setLayerHeat (currentBendingLayer.toStdString(), val);
+        if (auto* param = audioProcessor.getHeatParam())
+            *param = val;
+    }
+    else if (slider == &memorySlider)
+    {
+        float val = (float)memorySlider.getValue();
+        if (currentBendingLayer.isNotEmpty())
+            audioProcessor.setLayerMemory (currentBendingLayer.toStdString(), val);
+        if (auto* param = audioProcessor.getMemoryParam())
             *param = val;
     }
     else
@@ -303,7 +435,24 @@ void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 
 void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
 {
-    if (button == &freezeButton)
+    if (button == &fuseButton)
+    {
+        audioProcessor.resetFuse();
+        fuseButton.setButtonText ("FUSE: OK");
+        fuseButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1b3a2a"));
+        fuseButton.setColour (juce::TextButton::textColourOffId, juce::Colours::lightgreen);
+        if (currentBendingLayer.isNotEmpty())
+            selectLayer (currentBendingLayer);
+    }
+    else if (button == &shortCircuitButton)
+    {
+        // Toggle or pulse momentary short-circuit gate
+        bool active = !audioProcessor.isShortCircuitActive();
+        audioProcessor.triggerShortCircuit (active);
+        shortCircuitButton.setColour (juce::TextButton::buttonColourId,
+                                      active ? juce::Colour::fromString ("#ffff3300") : juce::Colour::fromString ("#ff8b2500"));
+    }
+    else if (button == &freezeButton)
     {
         bool frozen = freezeButton.getToggleState();
         if (currentBendingLayer.isNotEmpty())
@@ -397,10 +546,15 @@ void NNBendingAudioProcessorEditor::timerCallback()
         if (std::abs (p->get() - (float)offsetSlider.getValue()) > 0.0001f && !offsetSlider.isMouseButtonDown())
             offsetSlider.setValue (p->get(), juce::sendNotificationSync);
     }
-    if (auto* p = audioProcessor.getJitterParam())
+    if (auto* p = audioProcessor.getHeatParam())
     {
-        if (std::abs (p->get() - (float)jitterSlider.getValue()) > 0.0001f && !jitterSlider.isMouseButtonDown())
-            jitterSlider.setValue (p->get(), juce::sendNotificationSync);
+        if (std::abs (p->get() - (float)heatSlider.getValue()) > 0.0001f && !heatSlider.isMouseButtonDown())
+            heatSlider.setValue (p->get(), juce::sendNotificationSync);
+    }
+    if (auto* p = audioProcessor.getMemoryParam())
+    {
+        if (std::abs (p->get() - (float)memorySlider.getValue()) > 0.0001f && !memorySlider.isMouseButtonDown())
+            memorySlider.setValue (p->get(), juce::sendNotificationSync);
     }
     if (auto* p = audioProcessor.getDryWetParam())
     {
@@ -408,12 +562,61 @@ void NNBendingAudioProcessorEditor::timerCallback()
             dryWetSlider.setValue (p->get(), juce::dontSendNotification);
     }
 
-    // If live jitter is active and not frozen on this layer, visualize the jittering weights on the canvas
+    // Update Fuse Button State visually
+    if (audioProcessor.isFuseBlown())
+    {
+        fuseButton.setButtonText ("FUSE: BLOWN!");
+        fuseButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff990000"));
+        fuseButton.setColour (juce::TextButton::textColourOffId, juce::Colours::yellow);
+    }
+    else
+    {
+        // Live bending status: in Continuous mode with bends active, or momentary/midi/transient active
+        float env = audioProcessor.getMomentaryEnvelope();
+        bool bendingActive = false;
+        if (audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Continuous)
+        {
+            bendingActive = audioProcessor.hasActiveBending();
+        }
+        else
+        {
+            bendingActive = (env > 0.01f);
+        }
+
+        if (bendingActive)
+        {
+            fuseButton.setButtonText ("FUSE: ACTIVE");
+            fuseButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff006633")); // Vibrant glowing green
+            fuseButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        }
+        else
+        {
+            fuseButton.setButtonText ("FUSE: OK");
+            fuseButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1b3a2a")); // Idle dark green
+            fuseButton.setColour (juce::TextButton::textColourOffId, juce::Colours::lightgreen);
+        }
+    }
+
+    // Update Short Button glow based on live momentary envelope
+    float env = audioProcessor.getMomentaryEnvelope();
+    if (env > 0.05f)
+    {
+        shortCircuitButton.setColour (juce::TextButton::buttonColourId,
+            juce::Colour::fromString ("#ff8b2500").interpolatedWith (juce::Colour::fromString ("#ffff3300"), env));
+    }
+    else
+    {
+        shortCircuitButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff8b2500"));
+    }
+
+    // If live heat is active and not frozen, or momentary envelope is animating, visualize live weights on the canvas
     // (Only update when user is not actively drawing with the mouse)
     if (audioProcessor.isModelLoaded() && currentBendingLayer.isNotEmpty() && !weightCanvas.isCurrentlyDrawing())
     {
         auto state = audioProcessor.getLayerState (currentBendingLayer.toStdString());
-        if (state.jitter > 0.0001f && !state.frozen)
+        bool isAnimating = (state.heat > 0.0001f && !state.frozen)
+                        || (audioProcessor.getTriggerMode() != NNBendingAudioProcessor::TriggerMode::Continuous && env > 0.01f);
+        if (isAnimating)
         {
             auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
             if (!liveWeights.empty())
@@ -445,19 +648,29 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         }
         methodCombo.setText (audioProcessor.getCurrentMode(), juce::dontSendNotification);
 
-        // Update Layer combo box
+        // Update Layer combo box respecting selected Category
         layerCombo.clear (juce::dontSendNotification);
         auto layers = audioProcessor.getBackend().get_available_layers();
+        int catId = categoryCombo.getSelectedId();
         id = 1;
         for (const auto& l : layers)
         {
-            layerCombo.addItem (l, id++);
+            auto cat = NNBendingAudioProcessor::classifyLayer (l);
+            bool include = false;
+            if (catId <= 1) include = true;
+            else if (catId == 2 && cat == NNBendingAudioProcessor::LayerCategory::Norm) include = true;
+            else if (catId == 3 && cat == NNBendingAudioProcessor::LayerCategory::Conv) include = true;
+            else if (catId == 4 && cat == NNBendingAudioProcessor::LayerCategory::Linear) include = true;
+            else if (catId == 5 && cat == NNBendingAudioProcessor::LayerCategory::Bias) include = true;
+
+            if (include)
+                layerCombo.addItem (l, id++);
         }
         
         bool layerFound = false;
-        for (const auto& l : layers)
+        for (int i = 0; i < layerCombo.getNumItems(); ++i)
         {
-            if (l == currentBendingLayer.toStdString())
+            if (layerCombo.getItemText(i) == currentBendingLayer)
             {
                 layerFound = true;
                 break;
@@ -469,10 +682,10 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
             layerCombo.setText (currentBendingLayer, juce::dontSendNotification);
             selectLayer (currentBendingLayer);
         }
-        else if (!layers.empty())
+        else if (layerCombo.getNumItems() > 0)
         {
-            layerCombo.setText (layers[0], juce::dontSendNotification);
-            selectLayer (layers[0]);
+            layerCombo.setSelectedId (1, juce::dontSendNotification);
+            selectLayer (layerCombo.getItemText(0));
         }
         else
         {
@@ -524,11 +737,16 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     // Set knobs to this layer's saved values without triggering recursive listeners
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
-    jitterSlider.removeListener (this);
+    heatSlider.removeListener (this);
+    memorySlider.removeListener (this);
+    driftModeCombo.removeListener (this);
     
     scaleSlider.setValue (state.scale, juce::dontSendNotification);
     offsetSlider.setValue (state.offset, juce::dontSendNotification);
-    jitterSlider.setValue (state.jitter, juce::dontSendNotification);
+    heatSlider.setValue (state.heat, juce::dontSendNotification);
+    memorySlider.setValue (state.memory, juce::dontSendNotification);
+    driftModeCombo.setSelectedId ((int)state.driftMode + 1, juce::dontSendNotification);
+
     freezeButton.setToggleState (state.frozen, juce::dontSendNotification);
     freezeButton.setColour (juce::ToggleButton::textColourId,
                             state.frozen ? juce::Colour::fromString ("#ffff9933") : juce::Colours::lightgrey);
@@ -536,17 +754,29 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     // Sync DAW host automatable parameters to active layer values
     if (auto* p = audioProcessor.getScaleParam())  *p = state.scale;
     if (auto* p = audioProcessor.getOffsetParam()) *p = state.offset;
-    if (auto* p = audioProcessor.getJitterParam()) *p = state.jitter;
+    if (auto* p = audioProcessor.getHeatParam())   *p = state.heat;
+    if (auto* p = audioProcessor.getMemoryParam()) *p = state.memory;
 
     lastKnobScale = state.scale;
     lastKnobOffset = state.offset;
     
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
-    jitterSlider.addListener (this);
+    heatSlider.addListener (this);
+    memorySlider.addListener (this);
+    driftModeCombo.addListener (this);
 
     weightCanvas.setWeights (originalWeights, currentWeights);
-    infoBendingLabel.setText ("Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " parameters", juce::dontSendNotification);
+    
+    // Display layer shape / category info
+    auto category = NNBendingAudioProcessor::classifyLayer (currentBendingLayer.toStdString());
+    juce::String catName = "Other";
+    if (category == NNBendingAudioProcessor::LayerCategory::Norm) catName = "Norm / Dynamics";
+    else if (category == NNBendingAudioProcessor::LayerCategory::Conv) catName = "Conv Kernel";
+    else if (category == NNBendingAudioProcessor::LayerCategory::Linear) catName = "Linear / Dense";
+    else if (category == NNBendingAudioProcessor::LayerCategory::Bias) catName = "Bias";
+
+    infoBendingLabel.setText ("Trace: [" + catName + "]  |  Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " params", juce::dontSendNotification);
 }
 
 void NNBendingAudioProcessorEditor::applyKnobBending()
@@ -584,24 +814,24 @@ void NNBendingAudioProcessorEditor::resetLayerWeights()
     
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
-    jitterSlider.removeListener (this);
+    heatSlider.removeListener (this);
 
     scaleSlider.setValue (1.0, juce::dontSendNotification);
     offsetSlider.setValue (0.0, juce::dontSendNotification);
-    jitterSlider.setValue (0.0, juce::dontSendNotification);
+    heatSlider.setValue (0.0, juce::dontSendNotification);
     freezeButton.setToggleState (false, juce::dontSendNotification);
     freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
 
     if (auto* p = audioProcessor.getScaleParam())  *p = 1.0f;
     if (auto* p = audioProcessor.getOffsetParam()) *p = 0.0f;
-    if (auto* p = audioProcessor.getJitterParam()) *p = 0.0f;
+    if (auto* p = audioProcessor.getHeatParam())   *p = 0.0f;
 
     lastKnobScale = 1.0;
     lastKnobOffset = 0.0;
 
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
-    jitterSlider.addListener (this);
+    heatSlider.addListener (this);
 
     originalWeights = audioProcessor.getBackend().get_original_layer_weights (currentBendingLayer.toStdString());
     currentWeights = originalWeights;
@@ -617,24 +847,24 @@ void NNBendingAudioProcessorEditor::resetAllLayerWeights()
     
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
-    jitterSlider.removeListener (this);
+    heatSlider.removeListener (this);
 
     scaleSlider.setValue (1.0, juce::dontSendNotification);
     offsetSlider.setValue (0.0, juce::dontSendNotification);
-    jitterSlider.setValue (0.0, juce::dontSendNotification);
+    heatSlider.setValue (0.0, juce::dontSendNotification);
     freezeButton.setToggleState (false, juce::dontSendNotification);
     freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
 
     if (auto* p = audioProcessor.getScaleParam())  *p = 1.0f;
     if (auto* p = audioProcessor.getOffsetParam()) *p = 0.0f;
-    if (auto* p = audioProcessor.getJitterParam()) *p = 0.0f;
+    if (auto* p = audioProcessor.getHeatParam())   *p = 0.0f;
 
     lastKnobScale = 1.0;
     lastKnobOffset = 0.0;
 
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
-    jitterSlider.addListener (this);
+    heatSlider.addListener (this);
 
     if (currentBendingLayer.isNotEmpty())
     {

@@ -61,6 +61,18 @@ private:
     // Interactive canvas
     WeightBendingComponent weightCanvas;
 
+    // Category Filter for Trace Isolation
+    juce::Label categoryLabel { {}, "Trace:" };
+    juce::ComboBox categoryCombo;
+
+    // Safety Sentry & Blown Fuse UI
+    juce::TextButton fuseButton { "FUSE: OK" };
+
+    // Momentary Short-Circuit Glitch UI
+    juce::TextButton shortCircuitButton { "SHORT [!]" };
+    juce::Label triggerModeLabel { {}, "Trigger:" };
+    juce::ComboBox triggerModeCombo;
+
     // Side Controls
     juce::Label scaleLabel { {}, "Scale" };
     juce::Slider scaleSlider;
@@ -68,8 +80,13 @@ private:
     juce::Label offsetLabel { {}, "Offset" };
     juce::Slider offsetSlider;
 
-    juce::Label jitterLabel { {}, "Jitter" };
-    juce::Slider jitterSlider;
+    juce::Label heatLabel { {}, "Heat" };
+    juce::Slider heatSlider;
+
+    juce::Label memoryLabel { {}, "Memory" };
+    juce::Slider memorySlider;
+
+    juce::ComboBox driftModeCombo;
     juce::ToggleButton freezeButton { "Freeze" };
     
     juce::Label infoBendingLabel;

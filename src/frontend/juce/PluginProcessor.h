@@ -161,14 +161,51 @@ public:
             *m_dryWetParam = v;
     }
 
+    // Layer classification for Trace Isolation
+    enum class LayerCategory
+    {
+        All = 0,
+        Norm,       // LayerNorm, BatchNorm, weight_g, scale/shift
+        Conv,       // Convolution kernels
+        Linear,     // Dense / linear weights
+        Bias,       // All bias vectors
+        Other       // Any remaining tensor parameters
+    };
+
+    static LayerCategory classifyLayer(const std::string& name)
+    {
+        std::string lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        if (lower.find("norm") != std::string::npos || lower.find("weight_g") != std::string::npos)
+            return LayerCategory::Norm;
+        if (lower.find("bias") != std::string::npos)
+            return LayerCategory::Bias;
+        if (lower.find("conv") != std::string::npos)
+            return LayerCategory::Conv;
+        if (lower.find("linear") != std::string::npos || lower.find("dense") != std::string::npos || lower.find("fc") != std::string::npos)
+            return LayerCategory::Linear;
+        return LayerCategory::Other;
+    }
+
+    // Stochastic Drift Modes
+    enum class DriftMode
+    {
+        Noise = 0,    // Classic independent uniform/Gaussian jitter per block
+        ThermalOU,    // Ornstein-Uhlenbeck mean-reverting thermal drift
+        RandomWalk    // Continuous wandering walk
+    };
+
     // Per-Layer Bending State
     struct LayerBendingState
     {
         float scale { 1.0f };
         float offset { 0.0f };
-        float jitter { 0.0f };
+        float heat { 0.0f };         // Thermal volatility / Jitter depth (sigma)
+        float memory { 0.8f };       // Mean reversion drag / elastic pull (theta)
+        DriftMode driftMode { DriftMode::ThermalOU };
         bool frozen { false };
         std::vector<float> baseDrawnWeights;
+        std::vector<float> driftOffsets; // Current stochastic drift vector
     };
 
     LayerBendingState getLayerState(const std::string& layerName) const
@@ -198,10 +235,23 @@ public:
         m_layerStates[layerName].offset = offset;
     }
 
-    void setLayerJitter(const std::string& layerName, float jitter)
+    void setLayerHeat(const std::string& layerName, float heat)
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
-        m_layerStates[layerName].jitter = std::max(0.0f, jitter);
+        m_layerStates[layerName].heat = std::max(0.0f, heat);
+    }
+    void setLayerJitter(const std::string& layerName, float jitter) { setLayerHeat(layerName, jitter); }
+
+    void setLayerMemory(const std::string& layerName, float memory)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].memory = juce::jlimit(0.0f, 1.0f, memory);
+    }
+
+    void setLayerDriftMode(const std::string& layerName, DriftMode mode)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].driftMode = mode;
     }
 
     void setLayerFrozen(const std::string& layerName, bool frozen)
@@ -228,6 +278,56 @@ public:
         m_layerStates.clear();
     }
 
+    bool hasActiveBending() const
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        if (m_layerStates.empty()) return false;
+        for (const auto& pair : m_layerStates)
+        {
+            const auto& s = pair.second;
+            if (std::abs(s.scale - 1.0f) > 0.001f || std::abs(s.offset) > 0.001f || s.heat > 0.001f || s.frozen)
+                return true;
+        }
+        return false;
+    }
+
+    // Safety Sentry & Blown Fuse Control
+    bool isFuseBlown() const { return m_blownFuse.load(); }
+    void resetFuse()
+    {
+        m_blownFuse.store(false);
+        clearAllLayerBending();
+        m_backend.reset_all_layer_weights();
+    }
+    void setAutoResetFuse(bool enabled) { m_autoResetFuse.store(enabled); }
+    bool getAutoResetFuse() const { return m_autoResetFuse.load(); }
+
+    // Bending Trigger Modes
+    enum class TriggerMode
+    {
+        Continuous = 0, // Default: Always active / continuous bending
+        Momentary,      // UI "Short" Button / Parameter hold
+        Midi,           // MIDI Note-On / Gate
+        Transient       // Audio sidechain transient follower
+    };
+
+    // Momentary Short-Circuit Gate Control
+    void triggerShortCircuit(bool active) { m_shortCircuitActive.store(active); }
+    bool isShortCircuitActive() const { return m_shortCircuitActive.load(); }
+    float getMomentaryEnvelope() const { return m_momentaryEnvelope.load(); }
+
+    void setTriggerMode(TriggerMode mode) { m_triggerMode.store(mode); }
+    TriggerMode getTriggerMode() const { return m_triggerMode.load(); }
+
+    void setEnvelopeAttack(float att) { m_envAttack.store(juce::jlimit(0.01f, 1.0f, att)); }
+    float getEnvelopeAttack() const { return m_envAttack.load(); }
+
+    void setEnvelopeRelease(float rel) { m_envRelease.store(juce::jlimit(0.5f, 0.999f, rel)); }
+    float getEnvelopeRelease() const { return m_envRelease.load(); }
+
+    void setTransientThreshold(float th) { m_transientThreshold.store(juce::jlimit(0.01f, 1.0f, th)); }
+    float getTransientThreshold() const { return m_transientThreshold.load(); }
+
     // Active UI layer target for DAW automation mapping
     void setActiveLayerName(const juce::String& name) { m_activeLayerName = name; }
     juce::String getActiveLayerName() const { return m_activeLayerName; }
@@ -236,7 +336,10 @@ public:
     juce::AudioParameterFloat* getDryWetParam() const { return m_dryWetParam; }
     juce::AudioParameterFloat* getScaleParam() const { return m_scaleParam; }
     juce::AudioParameterFloat* getOffsetParam() const { return m_offsetParam; }
-    juce::AudioParameterFloat* getJitterParam() const { return m_jitterParam; }
+    juce::AudioParameterFloat* getHeatParam() const { return m_heatParam; }
+    juce::AudioParameterFloat* getJitterParam() const { return m_heatParam; } // alias
+    juce::AudioParameterFloat* getMemoryParam() const { return m_memoryParam; }
+    juce::AudioParameterBool*  getShortCircuitParam() const { return m_shortCircuitParam; }
 
 private:
     friend class ModelThread;
@@ -252,11 +355,28 @@ private:
 
     std::atomic<float> m_dryWet { 1.0f }; // 0.0 = Dry, 1.0 = Wet
 
+    // Safety Sentry state
+    std::atomic<bool> m_blownFuse { false };
+    std::atomic<bool> m_autoResetFuse { false };
+    std::atomic<int>  m_fuseCooldownBlocks { 0 };
+
+    // Momentary Glitch state
+    std::atomic<bool>        m_shortCircuitActive { false };
+    std::atomic<float>       m_momentaryEnvelope { 0.0f };
+    std::atomic<TriggerMode> m_triggerMode { TriggerMode::Continuous };
+    std::atomic<float>       m_envAttack { 0.25f };   // Fast ramp-in step (0.01 - 1.0)
+    std::atomic<float>       m_envRelease { 0.85f };  // Exponential relaxation multiplier (0.5 - 0.999)
+    std::atomic<float>       m_transientThreshold { 0.15f }; // Sidechain audio envelope follower threshold
+    std::atomic<bool>        m_midiGateActive { false };
+    std::atomic<float>       m_audioEnvelope { 0.0f };
+
     // DAW Automatable parameters
     juce::AudioParameterFloat* m_dryWetParam { nullptr };
     juce::AudioParameterFloat* m_scaleParam { nullptr };
     juce::AudioParameterFloat* m_offsetParam { nullptr };
-    juce::AudioParameterFloat* m_jitterParam { nullptr };
+    juce::AudioParameterFloat* m_heatParam { nullptr };
+    juce::AudioParameterFloat* m_memoryParam { nullptr };
+    juce::AudioParameterBool*  m_shortCircuitParam { nullptr };
 
     // Per-layer states & threading
     juce::String m_activeLayerName;
