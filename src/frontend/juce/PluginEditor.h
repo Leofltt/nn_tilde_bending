@@ -89,6 +89,12 @@ private:
     juce::ComboBox driftModeCombo;
     juce::ToggleButton freezeButton { "Freeze" };
     
+    // Trace Bridging (Cross-Talk)
+    juce::Label bridgeLabel { {}, "Bridge Wire:" };
+    juce::ComboBox bridgeCombo;
+    juce::Label bridgeDepthLabel { {}, "Cross-Talk" };
+    juce::Slider bridgeDepthSlider;
+
     juce::Label infoBendingLabel;
 
     // File Chooser
@@ -101,6 +107,11 @@ private:
     std::vector<float> baseDrawnWeights;
     double lastKnobScale { 1.0 };
     double lastKnobOffset { 0.0 };
+    float lastKnownScale { 1.0f };
+    float lastKnownOffset { 0.0f };
+    float lastKnownHeat { 0.0f };
+    float lastKnownMemory { 0.8f };
+    float lastKnownDryWet { 1.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NNBendingAudioProcessorEditor)
 };

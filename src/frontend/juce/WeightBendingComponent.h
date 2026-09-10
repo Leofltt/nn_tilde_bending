@@ -41,6 +41,15 @@ public:
         repaint();
     }
 
+    void setBridgeWeights(const std::vector<float>& sourceWeights, const std::vector<float>& mixWeights, float depth, bool isContinuous)
+    {
+        m_bridgeSourceWeights = sourceWeights;
+        m_bridgeMixWeights = mixWeights;
+        m_bridgeDepth = depth;
+        m_isContinuousMode = isContinuous;
+        repaint();
+    }
+
     const std::vector<float>& getCurrentWeights() const { return m_currentWeights; }
     const std::vector<float>& getOriginalWeights() const { return m_originalWeights; }
     bool isCurrentlyDrawing() const { return m_dragMode == DragMode::Drawing; }
@@ -149,16 +158,48 @@ public:
                 g.drawVerticalLine((int)x, 0.0f, ph);
             }
 
-            // Render original weights curve (faint cyan reference)
+            // 1. Render original weights curve (faint green/cyan reference)
             if (!m_originalWeights.empty())
             {
                 juce::Path origPath;
                 buildPathForWeights(origPath, m_originalWeights, pw, ph);
-                g.setColour(juce::Colours::cyan.withAlpha(0.35f));
+                g.setColour(juce::Colour::fromString("#ff22c55e").withAlpha(0.35f)); // Forest green baseline
                 g.strokePath(origPath, juce::PathStrokeType(1.2f));
             }
 
-            // Render target bent curve (neon pink / magenta dashed overlay showing target state)
+            // 2. Render bridged source layer curve (muted copper/terracotta reference if bridge active)
+            if (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
+            {
+                juce::Path srcPath;
+                buildPathForWeights(srcPath, m_bridgeSourceWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.35f)); // Muted copper
+                juce::PathStrokeType thinDashed(1.0f);
+                float dashLengths[] = { 4.0f, 4.0f };
+                thinDashed.createDashedStroke(srcPath, srcPath, dashLengths, 2);
+                g.strokePath(srcPath, thinDashed);
+            }
+
+            // 3. Render Cross-Talk composite blend curve (Warm golden amber: intermediate between emerald and copper)
+            if (m_bridgeDepth > 0.001f && !m_bridgeMixWeights.empty())
+            {
+                juce::Path mixPath;
+                buildPathForWeights(mixPath, m_bridgeMixWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ffd99b26")); // Warm golden ochre / amber
+
+                if (m_isContinuousMode)
+                {
+                    g.strokePath(mixPath, juce::PathStrokeType(1.5f));
+                }
+                else
+                {
+                    juce::PathStrokeType dashedMix(1.6f);
+                    float dashLengths[] = { 5.0f, 3.0f };
+                    dashedMix.createDashedStroke(mixPath, mixPath, dashLengths, 2);
+                    g.strokePath(mixPath, dashedMix);
+                }
+            }
+
+            // 4. Render target bent curve (neon pink / magenta dashed overlay showing target state in momentary)
             if (!m_targetBentWeights.empty())
             {
                 juce::Path targetPath;
@@ -170,7 +211,7 @@ public:
                 g.strokePath(targetPath, dashedStroke);
             }
 
-            // Render current live weights
+            // 5. Render current live weights (Neon purple/violet with gradient fill)
             juce::Path bentPath;
             buildPathForWeights(bentPath, m_currentWeights, pw, ph);
 
@@ -194,29 +235,56 @@ public:
                 g.strokePath(bentPath, juce::PathStrokeType(2.0f));
             }
 
-            // Legend / Color key overlay in top right corner
+            // Dynamic Legend / Color key overlay in top right corner
             {
-                int legendX = (int)pw - 275;
                 int legendY = 8;
                 g.setFont(juce::FontOptions(10.0f));
 
-                // Cyan: Baseline
-                g.setColour(juce::Colours::cyan.withAlpha(0.7f));
-                g.fillRect(legendX, legendY + 3, 10, 3);
-                g.drawText("Baseline W0", legendX + 14, legendY - 2, 70, 14, juce::Justification::centredLeft);
+                // Calculate required width based on active curves
+                bool showBridge = (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty());
+                bool showTarget = (!m_targetBentWeights.empty());
+
+                int totalItems = 2 + (showBridge ? 2 : 0) + (showTarget ? 1 : 0);
+                int itemW = 78;
+                int legendW = totalItems * itemW;
+                int legendX = (int)pw - legendW - 8;
+
+                int curX = legendX;
+
+                // Green: Baseline
+                g.setColour(juce::Colour::fromString("#ff22c55e"));
+                g.fillRect(curX, legendY + 3, 10, 3);
+                g.drawText("Baseline W0", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
+                curX += itemW;
+
+                // Copper: Bridge Source
+                if (showBridge)
+                {
+                    g.setColour(juce::Colour::fromString("#ffc26a38"));
+                    g.fillRect(curX, legendY + 3, 10, 3);
+                    g.drawText("Bridge Src", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
+                    curX += itemW;
+
+                    // Golden Amber: Cross-Talk Mix
+                    g.setColour(juce::Colour::fromString("#ffd99b26"));
+                    g.fillRect(curX, legendY + 3, 10, 3);
+                    g.drawText(m_isContinuousMode ? "Cross-Talk" : "Cross-Talk (·)", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
+                    curX += itemW;
+                }
 
                 // Pink: Target Bent (when present)
-                if (!m_targetBentWeights.empty())
+                if (showTarget)
                 {
                     g.setColour(juce::Colour::fromString("#ffec4899"));
-                    g.fillRect(legendX + 85, legendY + 3, 10, 3);
-                    g.drawText("Target Bent", legendX + 99, legendY - 2, 70, 14, juce::Justification::centredLeft);
+                    g.fillRect(curX, legendY + 3, 10, 3);
+                    g.drawText("Target Bent", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
+                    curX += itemW;
                 }
 
                 // Purple: Live Model
                 g.setColour(juce::Colour::fromString("#ffc084fc"));
-                g.fillRect(legendX + 175, legendY + 3, 10, 3);
-                g.drawText("Live Model", legendX + 189, legendY - 2, 70, 14, juce::Justification::centredLeft);
+                g.fillRect(curX, legendY + 3, 10, 3);
+                g.drawText("Live Model", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
             }
 
             // Stats & zoom readout on bottom right of plot area
@@ -509,6 +577,10 @@ private:
     std::vector<float> m_originalWeights;
     std::vector<float> m_currentWeights;
     std::vector<float> m_targetBentWeights;
+    std::vector<float> m_bridgeSourceWeights;
+    std::vector<float> m_bridgeMixWeights;
+    float m_bridgeDepth { 0.0f };
+    bool m_isContinuousMode { true };
 
     // Viewport transform
     float m_viewStartX { 0.0f }; // 0.0 to 1.0 (start index fraction)

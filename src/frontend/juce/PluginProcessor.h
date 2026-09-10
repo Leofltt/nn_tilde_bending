@@ -204,6 +204,8 @@ public:
         float memory { 0.8f };       // Mean reversion drag / elastic pull (theta)
         DriftMode driftMode { DriftMode::ThermalOU };
         bool frozen { false };
+        std::string bridgeSourceLayer;      // Target cross-talk source layer name
+        float bridgeDepth { 0.0f };         // Cross-talk blend ratio alpha (0.0 = off, 1.0 = 100% source)
         std::vector<float> originalWeights; // Unbent baseline weights W0
         std::vector<float> drawnWeights;    // User-drawn / bent target curve
         std::vector<float> driftOffsets;    // Current stochastic drift vector
@@ -261,6 +263,18 @@ public:
         m_layerStates[layerName].frozen = frozen;
     }
 
+    void setLayerBridgeSource(const std::string& layerName, const std::string& sourceLayer)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].bridgeSourceLayer = sourceLayer;
+    }
+
+    void setLayerBridgeDepth(const std::string& layerName, float depth)
+    {
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        m_layerStates[layerName].bridgeDepth = juce::jlimit(0.0f, 1.0f, depth);
+    }
+
     void setLayerDrawnWeights(const std::string& layerName, const std::vector<float>& weights)
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
@@ -297,7 +311,8 @@ public:
         for (const auto& pair : m_layerStates)
         {
             const auto& s = pair.second;
-            if (std::abs(s.scale - 1.0f) > 0.001f || std::abs(s.offset) > 0.001f || s.heat > 0.001f || s.frozen)
+            if (std::abs(s.scale - 1.0f) > 0.001f || std::abs(s.offset) > 0.001f || s.heat > 0.001f || s.frozen
+                || (s.bridgeDepth > 0.001f && !s.bridgeSourceLayer.empty()))
                 return true;
         }
         return false;

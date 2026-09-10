@@ -533,6 +533,23 @@ void NNBendingAudioProcessor::runInference()
                 state.driftOffsets.assign(numWeights, 0.0f);
             }
 
+            // Cross-Talk (Trace Bridging): Blend target layer's base shape with a source layer
+            std::vector<float> bridgedBase = state.drawnWeights;
+            if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != layerName)
+            {
+                auto sourceWeights = m_backend.get_original_layer_weights(state.bridgeSourceLayer);
+                if (!sourceWeights.empty())
+                {
+                    float alpha = juce::jlimit(0.0f, 1.0f, state.bridgeDepth);
+                    size_t srcSize = sourceWeights.size();
+                    for (size_t i = 0; i < numWeights; ++i)
+                    {
+                        float srcVal = sourceWeights[i % srcSize];
+                        bridgedBase[i] = (1.0f - alpha) * state.drawnWeights[i] + alpha * srcVal;
+                    }
+                }
+            }
+
             // Compute stochastic drift when heat > 0 and not frozen
             if (state.heat > 0.0001f && !state.frozen)
             {
@@ -560,8 +577,8 @@ void NNBendingAudioProcessor::runInference()
                         state.driftOffsets[i] = noise;
                     }
 
-                    // Calculate bent target weight (User Drawn shape * Static Scale + Offset + Stochastic Drift)
-                    float bentWeight = (state.drawnWeights[i] * state.scale + state.offset) + state.driftOffsets[i];
+                    // Calculate bent target weight (Bridged base shape * Static Scale + Offset + Stochastic Drift)
+                    float bentWeight = (bridgedBase[i] * state.scale + state.offset) + state.driftOffsets[i];
 
                     if (mode == TriggerMode::Continuous)
                     {
@@ -581,7 +598,7 @@ void NNBendingAudioProcessor::runInference()
                 std::vector<float> finalWeights(numWeights);
                 for (size_t i = 0; i < numWeights; ++i)
                 {
-                    float bentWeight = (state.drawnWeights[i] * state.scale + state.offset);
+                    float bentWeight = (bridgedBase[i] * state.scale + state.offset);
                     finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
                 }
                 m_backend.set_layer_weights(layerName, finalWeights);
@@ -592,7 +609,7 @@ void NNBendingAudioProcessor::runInference()
                 std::vector<float> finalWeights(numWeights);
                 for (size_t i = 0; i < numWeights; ++i)
                 {
-                    finalWeights[i] = (state.drawnWeights[i] * state.scale + state.offset);
+                    finalWeights[i] = (bridgedBase[i] * state.scale + state.offset);
                 }
                 m_backend.set_layer_weights(layerName, finalWeights);
             }
