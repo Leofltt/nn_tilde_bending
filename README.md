@@ -1,54 +1,124 @@
-# Build
+# nn_tilde_bending — Creative Neural Circuit-Bending Engine
 
-```bash
-mkdir build && cd build
-cmake ../src -DCMAKE_PREFIX_PATH=../libtorch -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.15
-```
+`nn_tilde_bending` is a creative, performative neural circuit-bending fork of [IRCAM's `nn~`](https://github.com/acids-ircam/nn_tilde). It transforms deep learning audio models (such as [RAVE](https://github.com/acids-ircam/RAVE) and other 1D/2D neural audio architectures) into expressive, tactile instruments by enabling real-time weight mutation, layer-selective trace isolation, momentary short-circuiting, thermal drift, resonant cross-talk, and safety circuit breakers.
 
-### Build Targets
+---
 
-You can build specific targets using `make <target>` or `cmake --build . --target <target>`:
+## Frontends & Build Targets
+
+The project provides multiple frontends tailored for modern music production workflows, live performance, and modular patch environments:
 
 | Target | Description | Output / Installation |
 |---|---|---|
-| `plugin` | JUCE VST3 & AudioUnit (AU) plugins (`nn_bending_plugin`) | Bundles dylibs, signs with `SIGN_ID` & entitlements, and copies to `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/Components` (macOS). |
-| `standalone` | JUCE Standalone desktop application (`nn_bending_standalone`) | Standalone executable with embedded UI and libtorch backend. |
-| `maxmsp` | Max/MSP externals (`nn_tilde`, `mc.nn_tilde`, `mcs.nn_tilde`, `nn.info`) | Bundles externals into `src/` (macOS / Windows). |
-| `puredata` | PureData external (`nn`) | Built to `build/frontend/puredata/Release`. |
+| `plugin` | **JUCE VST3 & AudioUnit (AU)** plugins (`nn_bending_plugin`) | Bundled dylibs, signed with `SIGN_ID` & entitlements, copied to `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/Components` (macOS). |
+| `standalone` | **JUCE Standalone Application** (`nn_bending_standalone`) | Standalone desktop executable with direct audio/MIDI I/O, embedded interactive UI, and LibTorch backend. |
+| `maxmsp` | **Max/MSP Externals** (`nn~`, `mc.nn~`, `mcs.nn~`, `nn.info`) | Bundles externals into `src/frontend/maxmsp` for Max 8+. |
+| `puredata` | **PureData External** (`nn~`) | Built to `build/frontend/puredata/Release`. |
 | `all` (default) | Builds all enabled frontend targets | Builds everything configured. |
+
+---
+
+## Key Neural Circuit-Bending Features
+
+1. **Interactive Weight Canvas & Visualizer (JUCE Plugin & Standalone)**:
+   - Direct 2D interactive canvas allowing you to draw, invert, scramble, and sculpt weights in real time.
+   - Live spectrum, gain staging, and layer parameter inspector.
+2. **Layer-Selective "Trace Isolation" & Categorization**:
+   - Categorizes model layers into functional trace types: **Normalization / Dynamics ($\gamma, \beta$)**, **Early Transient Layers**, **Internal Latent Residuals / Temporal Kernels**, and **Output Projection Heads**.
+   - Target specific network structures instead of corrupting random parameter blocks.
+3. **Momentary Short-Circuits & Dynamic Envelopes**:
+   - Performative "SHORT [!]" momentary trigger with variable Attack/Hold/Release (AHR) smoothing.
+   - Audio transient follower (sidechain trigger) that bursts glitches on transients and relaxes on tails.
+4. **Stochastic Thermal Drift**:
+   - Simulates physical circuit warm-up, component aging, and battery brownout via bounded Brownian / Ornstein-Uhlenbeck drift.
+5. **Safety Fuse & DC Breaker**:
+   - Automatic protection circuitry (hard limiter, soft clipper, and DC blocker) preventing ear/speaker damage from runaway weight blowouts.
+
+---
+
+## Quickstart & Build Instructions
+
+> [!IMPORTANT]
+> **Source Directory Note**: The primary CMake configuration file (`CMakeLists.txt`) is located in the **`src/`** directory, not at the root of the repository. When configuring CMake, always point the source directory to `src` (e.g., `-S src -B build`).
+
+### Prerequisites
+- **CMake** (v3.15 or newer recommended)
+- **LibTorch** (C++ PyTorch library, CPU version matching your OS/architecture). Download it from [pytorch.org](https://pytorch.org/get-started/locally/) and extract it into the repository root as `libtorch/`, or pass `-DCMAKE_PREFIX_PATH` pointing to your LibTorch folder.
+- Modern C++ compiler (Clang on macOS with Xcode Command Line Tools, GCC 9+ on Linux, or Visual Studio 2022 on Windows).
+
+### 1. Configure CMake
+
+From the repository root:
+
+```bash
+# Recommended modern CMake style:
+cmake -S src -B build -DCMAKE_PREFIX_PATH="$(pwd)/libtorch" -DCMAKE_BUILD_TYPE=Release
+```
+
+*Or traditional out-of-source directory approach:*
+```bash
+mkdir -p build && cd build
+cmake ../src -DCMAKE_PREFIX_PATH=../libtorch -DCMAKE_BUILD_TYPE=Release
+```
+
+### 2. Build Specific Targets
+
+You can build specific targets using `cmake --build`:
+
+```bash
+# Build the JUCE VST3 and AU plugins:
+cmake --build build --target plugin
+
+# Build the standalone desktop app:
+cmake --build build --target standalone
+
+# Build the Max/MSP externals:
+cmake --build build --target maxmsp
+
+# Build the PureData externals:
+cmake --build build --target puredata
+
+# Build all enabled targets:
+cmake --build build --target all
+```
+*(If you are already inside the `build/` directory, replace `build` with `.` : `cmake --build . --target <target>`)*
 
 ### CMake Configuration Options
 
-The build system is located in the `src/` directory. Configure with `cmake ../src [OPTIONS]`:
+The build system can be customized with the following flags during configuration (`-D<OPTION>=<VALUE>`):
 
 - `-DBUILD_JUCE_PLUGIN=ON|OFF` (default: `ON`): Enable/disable JUCE VST3/AU plugins and standalone targets.
 - `-DBUILD_MAXMSP=ON|OFF` (default: `ON`): Enable/disable Max/MSP externals.
 - `-DBUILD_PUREDATA=ON|OFF` (default: `ON`): Enable/disable PureData externals.
-- `-DBUNDLE_DEPENDENCIES=ON|OFF` (default: `OFF`): When `ON`, copies and bundles ~1.5 GB of shared libraries into `support/` for standalone package distribution. Leave `OFF` for fast, native `@rpath` development builds.
+- `-DBUNDLE_DEPENDENCIES=ON|OFF` (default: `OFF`): When `ON`, copies shared libraries (~1.5 GB) into `support/` for standalone distribution. Leave `OFF` for fast native `@rpath` development.
 - `-DSIGN_ID="..."` (default: `-`): Codesigning identity for macOS binaries, frameworks, and bundles.
 - `-DCMAKE_POLICY_VERSION_MINIMUM=3.15`: Ensures compatibility with modern CMake policies.
 
 #### Environment Variables & `.env`
-
 You can create a `.env` file at the root of the repository to set build variables automatically (e.g., `SIGN_ID`):
 
 ```bash
 SIGN_ID="Developer ID Application: Your Name (TEAM_ID)"
 ```
 
+---
 
-# Installation
+## Original `nn~` Documentation & Architecture Reference (IRCAM)
 
-Grab the [latest release of nn~](https://github.com/acids-ircam/nn_tilde/releases/latest) ! Be sure to download the correct version for your installation.
+Below is the upstream documentation from [acids-ircam/nn~](https://github.com/acids-ircam/nn_tilde) detailing model loading, Max/MSP and PureData integration, pretrained models, and scripting.
 
-## MaxMSP
+### Installation (Pre-built Binaries)
 
-Uncompress the `.tar.gz` file in the Package folder of your Max installation, i.e. in `Documents/Max [your version]/Packages/`. You can then instantiate  an `nn~` object!  Alt-click the `nn~` object to open the help patch, or access the nn~ Overview patch in the Extras menu.
+Grab the [latest release of nn~](https://github.com/acids-ircam/nn_tilde/releases/latest)! Be sure to download the correct version for your installation.
 
-##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so,  please launch in the terminal
+#### MaxMSP
+
+Uncompress the `.tar.gz` file in the Package folder of your Max installation, i.e. in `Documents/Max [your version]/Packages/`. You can then instantiate an `nn~` object! Alt-click the `nn~` object to open the help patch, or access the nn~ Overview patch in the Extras menu.
+
+##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so, please launch in the terminal:
 
 ```bash
-cd "~/Max X/Packages/nn_tilde
+cd "~/Max X/Packages/nn_tilde"
 sudo codesign --deep --force --sign - support/*.dylib
 sudo codesign --deep --force --sign - externals/*/Contents/MacOS/*
 xattr -r -d com.apple.quarantine externals/*/Contents/MacOS/*  
@@ -56,30 +126,29 @@ xattr -r -d com.apple.quarantine externals/*/Contents/MacOS/*
 
 Alt+click on the `nn~` object to open the help patch, and follow the tabs to learn more about this project.
 
-## PureData
+#### PureData
 
 Uncompress the `.tar.gz` file in the Package folder of your Pd installation, i.e. in `Documents/Pd/externals/`. You can then add a new path in the `Pd/File/Preferences/Path` menu pointing to the `nn_tilde` folder.
 
-Similarly, the external should not be blocked on recent MacOS systems. It it still is, `cd` to the `nn_tilde` folder and fix with
+Similarly, the external should not be blocked on recent MacOS systems. If it still is, `cd` to the `nn_tilde` folder and fix with:
 
 ```bash
-
 xattr -r -d com.apple.quarantine Documents/Pd/externals/nn_tilde
 sudo codesign --deep --force --sign - Documents/Pd/externals/nn_tilde/*.dylib
 sudo codesign --deep --force --sign - Documents/Pd/externals/nn_tilde/nn\~.pd_darwin
 ```
 
-# Usage
+---
 
-## Pretrained models
+### Usage
 
-At its core, `nn~` is a translation layer between Max/MSP or PureData and the [libtorch c++ interface for deep learning](https://pytorch.org/). Alone, `nn~` is like an empty shell, and **requires pretrained models** to operate. Since v1.6.0, you can download them directly through Forum IRCAM API. Alternatively, you can find a few [RAVE](https://github.com/acids-ircam/RAVE) models [here](https://acids-ircam.github.io/rave_models_download) or [here](https://huggingface.co/Intelligent-Instruments-Lab/rave-models). Few [vschaos2](https://github.com/acids-ircam/vschaos2) models are also available[here](https://www.dropbox.com/sh/avdeiza7c6bn2of/AAAGZsnRo9ZVMa0iFhouCBL-a?dl=0).
+#### Pretrained Models
 
-Pretrained model for `nn~` are **torchscript files**, with a `.ts` extension. You can add these files to `nn_tilde/models` folders, or any place accessible through Max / Pd filesystem (Max: `Options/File Preferences`, PureData: `File/Preferences/Path`).
+At its core, `nn~` is a translation layer between Max/MSP or PureData and the [libtorch C++ interface for deep learning](https://pytorch.org/). Alone, `nn~` is like an empty shell, and **requires pretrained models** to operate. Since v1.6.0, you can download them directly through the Forum IRCAM API. Alternatively, you can find a few [RAVE](https://github.com/acids-ircam/RAVE) models [here](https://acids-ircam.github.io/rave_models_download) or [here](https://huggingface.co/Intelligent-Instruments-Lab/rave-models). A few [vschaos2](https://github.com/acids-ircam/vschaos2) models are also available [here](https://www.dropbox.com/sh/avdeiza7c6bn2of/AAAGZsnRo9ZVMa0iFhouCBL-a?dl=0).
 
-**New** : since v1.6.0, some models are directly downloadable through IRCAM Forum API.
+Pretrained models for `nn~` are **TorchScript files**, with a `.ts` extension. You can add these files to `nn_tilde/models` folders, or any place accessible through the Max / Pd filesystem (Max: `Options/File Preferences`, PureData: `File/Preferences/Path`).
 
-Once this is done, you can load a model with `nn~` by providing its name as first argument (for example, here `isis.ts` located inside `nn_tilde/models` for Max, or among the PureData patch):  
+Once this is done, you can load a model with `nn~` by providing its name as first argument (for example, `isis.ts` located inside `nn_tilde/models` for Max, or among the PureData patch):
 
 <table>
   <tr>
@@ -92,29 +161,27 @@ Once this is done, you can load a model with `nn~` by providing its name as firs
   </tr>
 </table>
 
-## Model information fetching
+#### Model Information Fetching
 
-## Model information fetching
-
-Coming with v1.6.0, the `nn.info` object allows model inspection and fetching avilable models for download on the IRCAM-API. With this object, you can get available methods and attributes for a given model. For example, you can see below that a RAVE model has three different methods : `encode`, `decode`, and `forward`.
+The `nn.info` object allows model inspection and fetching available models for download on the IRCAM-API. With this object, you can get available methods and attributes for a given model. For example, you can see below that a RAVE model has three different methods: `encode`, `decode`, and `forward`.
 
 <center>
 <img src="assets/max_nninfo.png"/>
 </center>
 
-### Methods
+##### Methods
 
-Models can have several _methods_, that correspond to several processing pipelines the model can achieve. Hence, each method can have a different number in inlets / outlets. The method is given as the third argument (for exemple, `decode` above), and equals `forward` by default.
+Models can have several *methods* that correspond to several processing pipelines the model can achieve. Hence, each method can have a different number of inlets / outlets. The method is given as the third argument (for example, `decode` above), and equals `forward` by default.
 
-### Attributes
+##### Attributes
 
-It is possible the internal state of the module through _attributes_, that are **model-dependent** and defined at exportation. Model attributes can be set using _messages_, with the following syntax:
+It is possible to inspect and change the internal state of the module through *attributes*, which are **model-dependent** and defined at exportation. Model attributes can be set using *messages*, with the following syntax:
 
 ```bash
 set ATTRIBUTE_NAME ATTRIBUTE_VAL_1 ATTRIBUTE_VAL_2
 ```
 
-Using Max/MSP and PureData graphical objects, this can lead to an intuitive way to modify the behavior of the model, as shown below where we have two model attributes (i.e. generation temperature and generation mode), and the special `enable` attribute.
+Using Max/MSP and PureData graphical objects, this provides an intuitive way to modify model behavior, such as generation temperature and generation mode, and the special `enable` attribute.
 
 <table>
   <tr>
@@ -127,16 +194,15 @@ Using Max/MSP and PureData graphical objects, this can lead to an intuitive way 
   </tr>
 </table>
 
-**New in 1.6.0**
+**Since v1.6.0:**
+- Buffers (Max) / Array (Pd) attribute setting allows the `.ts` model to access internal buffers / arrays.
+- `torch.Tensor` attributes can be set through Max/MSP `[array]`, allowing attributes of unlimited size.
 
-- Buffers (Max) / Array (Pd) attribute setting to allow the `.ts` model to access internal buffers / arrays.
-- `torch.Tensor` attributes can be set through Max/MSP `[array]`, allowing to set attributes of unlimited size.
+#### Buffer Configuration
 
-## Buffer configuration
+Internally, `nn~` has a circular buffer mechanism that helps maintain a reasonable computational load, if the given buffer size is greater than 0. You can modify its size through the use of an additional integer after the method declaration.
 
-Internally, `nn~` has a circular buffer mechanism that helps maintain a reasonable computational load, if the given buffer size is greater tha 0. You can modify its size through the use of an additional integer after the method declaration, as shown below.
-
-**Important**For Windows users, the circular buffer is automatically disabled because of a memory leak [that occurs when a TorchScript model is used in a separate thread](https://github.com/pytorch/pytorch/issues/24237). Unfortunately, this implies a much lower efficiency in terms of CPU.  
+**Important for Windows users**: The circular buffer is automatically disabled on Windows due to an upstream TorchScript threading issue.
 
 <table>
   <tr>
@@ -149,82 +215,61 @@ Internally, `nn~` has a circular buffer mechanism that helps maintain a reasonab
   </tr>
 </table>
 
-## Multichannel (Max/MSP)
+#### Multichannel (Max/MSP)
 
-The Max/MSP release of `nn~` includes additional externals, namely `mc.nn~` and `mcs.nn~`, allowing the use of the multicanal abilities of Max 8+ to simplify the patching process with `nn~` and optionally decrease the computational load.
+The Max/MSP release of `nn~` includes additional externals, namely `mc.nn~` and `mcs.nn~`, allowing the use of the multichannel abilities of Max 8+ to simplify patching and decrease computational load:
 
-In the following examples, two audio files are being encoded then decoded by the same model in parallel
+- `mc.nn~`: Builds multichannel signals **over different batches**.
+- `mcs.nn~`: Builds multichannel signals **over different dimensions** (e.g., 16 latent dimensions of a RAVE model).
 
-![regular](assets/max_regular.png)
+<table>
+  <tr>
+    <th>Regular</th>
+    <th>mc.nn~</th>
+    <th>mcs.nn~</th>
+  </tr>
+  <tr>
+    <td><img src="assets/max_regular.png" /></td>
+    <td><img src="assets/max_mc.png" /></td>
+    <td><img src="assets/max_mcs.png" /></td>
+  </tr>
+</table>
 
-This patch can be improved both visually _and_ computationally speaking by using `mc.nn~` and using _batch operations_
+#### Lazy Mode (Max/MSP)
 
-![mc](assets/max_mc.png)
-
-Using `mc.nn~` we build the multicanal signals **over the different batches**. In the example above, each multicanal signal will have 2 different canals. We also propose the `mcs.nn~` external that builds multicanal signals **over the different dimensions**, as shown in the example below
-
-![mcs](assets/max_mcs.png)
-
-In the example above, the two multicanals signals yielded by the `nn~ rave encode 2` object have 16 canals each, corresponding to the 16 latent dimensions. This can help patching, while keeping the batching abilities of `mc.nn~` by creating an explicit number of inlets / oulets corresponding to the number of examples we want to process in parallel.
-
-To recap, the regular `nn~` operates on a single example, and has as many inlets / outlets as the model has inputs / outputs. The `mc.nn~` external is like `nn~`, but can process multiple examples _at the same time_. The `mcs.nn~` variant is a bit different, and can process mulitple examples at the same time, but will **have one inlet / outlet per examples**.
-
-## Lazy mode (Max/MSP)
-
-Since v1.6.0, nn~ has a `void` mode, that allows to initialise it with a fixed number of inlets / outlets, and may be attached to a model afterwards. This can be done with the `void` special model, that enables this lazy initialisation.
+`nn~` includes a `void` mode that allows initializing with a fixed number of inlets / outlets, attaching a model afterwards:
 
 <center>
 <img src="assets/max_void.png" width="30%"/>
 </center>
 
-## Special messages
+#### Special Messages
 
-### enable [0 / 1]
+- `enable [0 / 1]`: Enable / disable computation to save CPU without deleting the model (bypass).
+- `reload`: Dynamically reload the model.
+- `dump`: Print methods and attributes of the loaded model.
+- `print_available_models`: Print models downloadable through the API.
+- `download`: Download a model from the API.
+- `delete`: Delete a downloaded model.
+- `load`: Dynamically change the active model.
+- `method`: Dynamically change the active method.
 
-Enable / Disable computation to save up computation without deleting the model. Similar to how a _bypass_ function would work.
+---
 
-### reload
+### Scripting any PyTorch Model in `nn~`
 
-Dynamically reloads the model. Can be useful if you want to periodically update the state of a model during a training.
+In the [`scripting`](https://github.com/acids-ircam/nn_tilde/tree/master/scripting) subfolder, you can find a series of examples demonstrating how to export PyTorch models into TorchScript for `nn~`:
 
-### dump
+- `effects.py`: Apply simple effects to the input (identical input and output shapes).
+- `features.py`: Compute spectral descriptors from the PyTorch audio library.
+- `unmix.py`: Apply the unmix deep source separation model.
 
-Prints methods / attributes of the loaded model.
+---
 
-### print_available_models
+### Platform-Specific Legacy Build Recipes
 
-Prints models downloadable through API.
-
-### download
-
-Download a model from the API.
-
-### delete
-
-Deletes a downloaded model.
-
-### load
-
-Change dynamically the incoming model.
-
-### method
-
-Change dynamically the used method.
-
-# Scripting any PyTorch model in nn~
-
-In the [`scripting`](https://github.com/acids-ircam/nn_tilde/tree/master/scripting) subfolder, you can find a series of examples that demonstrate how to write simple scripts to incorporate any type of deep models from PyTorch into MaxMSP (and potentially running on GPU). The examples show different use cases that also help to understand the input/output shapes relationships.
-
-- `effects.py` : apply simple effects to the input (identical input and output shapes)
-- `features.py` : compute spectral descriptors from the PyTorch audio library (each input audio buffer produces a single float as output)
-- `unmix.py` : apply the unmix deep source separation model (input is split into 4 different audio streams containing « drums », « vocals », « bass » and « others »)
-
-# Build Instructions
-
-## macOS
-
-- Download the latest libtorch (CPU) [here](https://pytorch.org/get-started/locally/) and unzip it to a known directory
-- Run the following commands:
+<details>
+<summary><b>macOS (with Conda environment)</b></summary>
 
 ```bash
 git clone https://github.com/acids-ircam/nn_tilde --recurse-submodules
@@ -243,22 +288,10 @@ export CXX=$(brew --prefix llvm)/bin/clang++
 cmake ../src -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_PREFIX_PATH=../env/lib/python3.12/site-packages/torch -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../puredata_include -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake --build . --config Release
 ```
+</details>
 
-To build a specific frontend/target only:
-```bash
-cmake --build . --config Release --target plugin      # Builds VST3 & AU plugins
-cmake --build . --config Release --target standalone  # Builds standalone app
-cmake --build . --config Release --target maxmsp      # Builds Max/MSP externals
-cmake --build . --config Release --target puredata    # Builds PureData external
-```
-
-Please replace `arm64` in the cmake command by `x86_64` if compiling for Intel 64 bits. You can disable targets using `-DBUILD_JUCE_PLUGIN=OFF`, `-DBUILD_MAXMSP=OFF`, or `-DBUILD_PUREDATA=OFF`.
-
-## Windows
-
-- Download Libtorch (CPU) and dependencies [here](https://pytorch.org/get-started/locally/) and unzip to a known directory.
-- Install [Visual Studio Redistributable](https://learn.microsoft.com/fr-fr/cpp/windows/latest-supported-vc-redist?view=msvc-170)
-- Run the following commands (here for Git Bash):
+<details>
+<summary><b>Windows (Visual Studio 2022)</b></summary>
 
 ```bash
 git clone https://github.com/acids-ircam/nn_tilde --recurse-submodules
@@ -283,26 +316,12 @@ curl -L https://raw.githubusercontent.com/pure-data/pure-data/master/src/m_pd.h 
 cmake ../src -G "Visual Studio 17 2022" -DTorch_DIR=../libtorch/share/cmake/Torch -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../pd/src -DPUREDATA_BIN_DIR=../pd/bin -A x64
 cmake --build . --config Release
 ```
+</details>
 
-To build a specific frontend/target:
-```bash
-cmake --build . --config Release --target plugin      # Builds VST3 plugin
-cmake --build . --config Release --target standalone  # Builds standalone app
-cmake --build . --config Release --target maxmsp      # Builds Max/MSP externals
-cmake --build . --config Release --target puredata    # Builds PureData external
-```
-
-You can disable targets using `-DBUILD_JUCE_PLUGIN=OFF`, `-DBUILD_MAXMSP=OFF`, or `-DBUILD_PUREDATA=OFF`.
-
-
-## Raspberry Pi
-
-**not availble in v1.6.0, planned in next version ; please take previous versions if needed**
-
-While nn~ can be compiled and used on Raspberry Pi, you may have to consider using lighter deep learning models. We currently only support 64bit OS.
-
-Install nn~ for PureData using
+<details>
+<summary><b>Raspberry Pi (64-bit)</b></summary>
 
 ```bash
 curl -s https://raw.githubusercontent.com/acids-ircam/nn_tilde/master/install/raspberrypi.sh | bash
 ```
+</details>
