@@ -883,6 +883,7 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         currentWeights.clear();
         currentBendingLayer = "";
         weightCanvas.setWeights ({}, {});
+        updateKnobContextLabels (NNBendingAudioProcessor::LayerCategory::Other);
     }
 }
 
@@ -1009,6 +1010,9 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     else if (category == NNBendingAudioProcessor::LayerCategory::Bias) catName = "Bias";
 
     infoBendingLabel.setText ("Trace: [" + catName + "]  |  Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " params", juce::dontSendNotification);
+
+    // Update contextual knob labels (Gamma / Beta for Norm, Scale / Offset for other traces)
+    updateKnobContextLabels (category);
 
     // Re-enable listeners so user interactions are captured
     scaleSlider.addListener (this);
@@ -1220,3 +1224,26 @@ void NNBendingAudioProcessorEditor::saveModelToFile()
         }
     });
 }
+
+void NNBendingAudioProcessorEditor::updateKnobContextLabels (NNBendingAudioProcessor::LayerCategory category)
+{
+    if (category == NNBendingAudioProcessor::LayerCategory::Norm)
+    {
+        // Normalization / Dynamics context: Gamma (Gain) & Beta (Bias)
+        scaleLabel.setText (juce::CharPointer_UTF8 ("Gamma (\xce\xb3)"), juce::dontSendNotification);
+        scaleLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#ffc084fc")); // Soft violet
+
+        offsetLabel.setText (juce::CharPointer_UTF8 ("Beta (\xce\xb2)"), juce::dontSendNotification);
+        offsetLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#ff38bdf8")); // Sky blue
+    }
+    else
+    {
+        // Standard convolution / dense / bias context: Scale & Offset
+        scaleLabel.setText ("Scale", juce::dontSendNotification);
+        scaleLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+
+        offsetLabel.setText ("Offset", juce::dontSendNotification);
+        offsetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    }
+}
+

@@ -29,6 +29,7 @@ private:
     void resetLayerWeights();
     void resetAllLayerWeights();
     void saveModelToFile();
+    void updateKnobContextLabels (NNBendingAudioProcessor::LayerCategory category);
 
     NNBendingAudioProcessor& audioProcessor;
 
