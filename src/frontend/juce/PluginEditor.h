@@ -1,6 +1,6 @@
 #pragma once
-#include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include <JuceHeader.h>
 #include "WeightBendingComponent.h"
 #include <vector>
 

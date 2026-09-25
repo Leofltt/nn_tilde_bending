@@ -1,6 +1,6 @@
 #pragma once
-#include <JuceHeader.h>
 #include "backend.h"
+#include <JuceHeader.h>
 #include <mutex>
 #include <atomic>
 #include <vector>

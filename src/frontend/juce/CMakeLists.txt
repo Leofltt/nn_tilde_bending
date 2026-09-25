@@ -25,6 +25,7 @@ function(configure_nn_bending_target target_name)
     target_compile_features(${target_name} PRIVATE cxx_std_20)
     target_compile_definitions(${target_name} PRIVATE
         JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
+        NOMINMAX=1
     )
     set_target_properties(${target_name} PROPERTIES
         CXX_STANDARD 20
@@ -118,6 +119,43 @@ function(configure_nn_bending_target target_name)
                             VERBATIM
                         )
                     endif()
+                endif()
+            endforeach()
+        endif()
+    elseif (WIN32)
+        get_target_property(active_targets ${target_name} JUCE_ACTIVE_PLUGIN_TARGETS)
+        if (active_targets)
+            file(GLOB TORCH_DLLS "${TORCH_INSTALL_PREFIX}/lib/*.dll")
+            foreach(sub_target IN LISTS active_targets)
+                # Copy LibTorch DLLs next to the target executable or plugin binary
+                if (TORCH_DLLS)
+                    add_custom_command(
+                        TARGET ${sub_target} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            ${TORCH_DLLS}
+                            "$<TARGET_FILE_DIR:${sub_target}>"
+                        COMMENT "Copying LibTorch DLLs to $<TARGET_FILE_DIR:${sub_target}>"
+                    )
+                endif()
+
+                # For VST3 plugin, copy bundle to the system VST3 directory
+                if (sub_target MATCHES ".*_VST3$")
+                    set(SRC_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/${target_name}_artefacts/$<CONFIG>/VST3/nn~ Bending.vst3")
+                    if (DEFINED ENV{VST3_INSTALL_PATH})
+                        file(TO_CMAKE_PATH "$ENV{VST3_INSTALL_PATH}" VST3_DIR)
+                        set(COPY_DEST "${VST3_DIR}/nn~ Bending.vst3")
+                    else()
+                        file(TO_CMAKE_PATH "$ENV{CommonProgramFiles}" CPF_DIR)
+                        set(COPY_DEST "${CPF_DIR}/VST3/nn~ Bending.vst3")
+                    endif()
+
+                    add_custom_command(
+                        TARGET ${sub_target} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E rm -rf "${COPY_DEST}"
+                        COMMAND ${CMAKE_COMMAND} -E copy_directory "${SRC_BUNDLE}" "${COPY_DEST}"
+                        COMMENT "Installing VST3 plugin to ${COPY_DEST}"
+                        VERBATIM
+                    )
                 endif()
             endforeach()
         endif()

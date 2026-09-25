@@ -156,7 +156,6 @@ if (UNIX AND NOT APPLE)
 endif()
 
 if(MSVC)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
 
     # Base DLLs (these work for CPU version)
     set(REQUIRED_DLLS

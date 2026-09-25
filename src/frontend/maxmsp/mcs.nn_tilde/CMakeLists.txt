@@ -43,9 +43,7 @@ add_library(
 
 include(${C74_MIN_API_DIR}/script/min-posttarget.cmake)
 
-if (MSVC)
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-endif()
+
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
