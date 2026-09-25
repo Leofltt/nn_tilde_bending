@@ -419,6 +419,8 @@ void NNBendingAudioProcessor::initBuffers()
     
     m_staging_in.resize(n_in);
     m_staging_out.resize(n_out);
+    m_worker_in.resize(n_in);
+    m_worker_out.resize(n_out);
     
     // In forward mode, delay is 2 * m_bufferSize (1 buffer input accumulation + 1 buffer model inference transfer)
     int latencySamples = (m_model_in > 0) ? (m_bufferSize * 2) : 0;
@@ -431,6 +433,7 @@ void NNBendingAudioProcessor::initBuffers()
     {
         m_in_buffers[i].init(m_bufferSize);
         m_staging_in[i].assign(m_bufferSize, 0.0f);
+        m_worker_in[i].assign(m_bufferSize, 0.0f);
     }
 
     for (int i = 0; i < n_dry; ++i)
@@ -445,6 +448,7 @@ void NNBendingAudioProcessor::initBuffers()
     {
         m_out_buffers[i].init(m_bufferSize);
         m_staging_out[i].assign(m_bufferSize, 0.0f);
+        m_worker_out[i].assign(m_bufferSize, 0.0f);
     }
     
     m_output_ready.store(false);
@@ -621,29 +625,52 @@ void NNBendingAudioProcessor::runInference()
         }
     }
         
-    std::vector<float*> in_ptrs;
-    std::vector<float*> out_ptrs;
-    
+    // 3. Copy audio inputs from staging buffers to local worker buffers under a brief lock
     {
         std::lock_guard<std::mutex> lock(m_staging_mutex);
         for (int c = 0; c < m_model_in; ++c)
-            in_ptrs.push_back(m_staging_in[c].data());
-            
+        {
+            if (c < (int)m_staging_in.size() && c < (int)m_worker_in.size())
+            {
+                std::memcpy(m_worker_in[c].data(), m_staging_in[c].data(), m_bufferSize * sizeof(float));
+            }
+        }
+    }
+
+    // 4. Run PyTorch model inference completely WITHOUT holding m_staging_mutex!
+    // This ensures processBlock is never blocked or starved during heavy model execution.
+    std::vector<float*> in_ptrs;
+    std::vector<float*> out_ptrs;
+    
+    for (int c = 0; c < m_model_in; ++c)
+        in_ptrs.push_back(m_worker_in[c].data());
+        
+    for (int c = 0; c < m_model_out; ++c)
+        out_ptrs.push_back(m_worker_out[c].data());
+        
+    std::string modeStr = m_currentMethod.toStdString();
+    if (modeStr == "forward")
+    {
+        m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, m_latentHook);
+    }
+    else if (modeStr == "prior" || modeStr == "generate")
+    {
+        m_backend.perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
+    }
+    else
+    {
+        m_backend.perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
+    }
+
+    // 5. Transfer computed output back to staging_out under a brief lock
+    {
+        std::lock_guard<std::mutex> lock(m_staging_mutex);
         for (int c = 0; c < m_model_out; ++c)
-            out_ptrs.push_back(m_staging_out[c].data());
-            
-        std::string modeStr = m_currentMethod.toStdString();
-        if (modeStr == "forward")
         {
-            m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, m_latentHook);
-        }
-        else if (modeStr == "prior" || modeStr == "generate")
-        {
-            m_backend.perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
-        }
-        else
-        {
-            m_backend.perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
+            if (c < (int)m_staging_out.size() && c < (int)m_worker_out.size())
+            {
+                std::memcpy(m_staging_out[c].data(), m_worker_out[c].data(), m_bufferSize * sizeof(float));
+            }
         }
     }
     

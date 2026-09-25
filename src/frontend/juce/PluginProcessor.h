@@ -36,7 +36,12 @@ public:
     CircularBuffer& operator=(const CircularBuffer&) = delete;
 
     void init(int size) {
-        m_capacity = std::max(size * 4, 8192);
+        // Enforce power-of-two capacity for fast bitwise wrap-around
+        int target = std::max(size * 4, 8192);
+        m_capacity = 1;
+        while (m_capacity < target)
+            m_capacity <<= 1;
+        m_mask = m_capacity - 1;
         m_buffer.assign(m_capacity, 0.0f);
         m_writeIndex = 0;
         m_readIndex = 0;
@@ -45,25 +50,44 @@ public:
     
     void put(const float* data, int numSamples) {
         if (m_capacity <= 0 || numSamples <= 0) return;
-        for (int i = 0; i < numSamples; ++i) {
-            m_buffer[m_writeIndex] = data ? data[i] : 0.0f;
-            m_writeIndex = (m_writeIndex + 1) % m_capacity;
+        int toWrite = std::min(numSamples, m_capacity);
+
+        if (data != nullptr) {
+            int firstPart = std::min(toWrite, m_capacity - m_writeIndex);
+            std::memcpy(m_buffer.data() + m_writeIndex, data, firstPart * sizeof(float));
+            if (toWrite > firstPart) {
+                std::memcpy(m_buffer.data(), data + firstPart, (toWrite - firstPart) * sizeof(float));
+            }
+        } else {
+            int firstPart = std::min(toWrite, m_capacity - m_writeIndex);
+            std::memset(m_buffer.data() + m_writeIndex, 0, firstPart * sizeof(float));
+            if (toWrite > firstPart) {
+                std::memset(m_buffer.data(), 0, (toWrite - firstPart) * sizeof(float));
+            }
         }
-        m_available.fetch_add(numSamples);
+
+        m_writeIndex = (m_writeIndex + toWrite) & m_mask;
+        m_available.fetch_add(toWrite);
     }
     
     void get(float* dest, int numSamples) {
-        if (m_capacity <= 0 || numSamples <= 0) return;
+        if (m_capacity <= 0 || numSamples <= 0 || dest == nullptr) return;
         int avail = m_available.load();
         int toRead = std::min(numSamples, avail);
-        for (int i = 0; i < toRead; ++i) {
-            dest[i] = m_buffer[m_readIndex];
-            m_readIndex = (m_readIndex + 1) % m_capacity;
+
+        if (toRead > 0) {
+            int firstPart = std::min(toRead, m_capacity - m_readIndex);
+            std::memcpy(dest, m_buffer.data() + m_readIndex, firstPart * sizeof(float));
+            if (toRead > firstPart) {
+                std::memcpy(dest + firstPart, m_buffer.data(), (toRead - firstPart) * sizeof(float));
+            }
+            m_readIndex = (m_readIndex + toRead) & m_mask;
+            m_available.fetch_sub(toRead);
         }
+
         if (toRead < numSamples) {
-            std::fill(dest + toRead, dest + numSamples, 0.0f);
+            std::memset(dest + toRead, 0, (numSamples - toRead) * sizeof(float));
         }
-        m_available.fetch_sub(toRead);
     }
     
     int getAvailable() const { return m_available.load(); }
@@ -79,6 +103,7 @@ public:
 private:
     std::vector<float> m_buffer;
     int m_capacity { 0 };
+    int m_mask { 0 };
     int m_writeIndex { 0 };
     int m_readIndex { 0 };
     std::atomic<int> m_available { 0 };
@@ -417,6 +442,10 @@ private:
     
     std::vector<std::vector<float>> m_staging_in;
     std::vector<std::vector<float>> m_staging_out;
+
+    // Dedicated worker buffers for background model inference
+    std::vector<std::vector<float>> m_worker_in;
+    std::vector<std::vector<float>> m_worker_out;
     
     std::mutex m_staging_mutex;
     std::atomic<bool> m_output_ready { false };
