@@ -471,11 +471,22 @@ void NNBendingAudioProcessor::runInference()
         if (!activeLayer.empty() && m_scaleParam && m_offsetParam && m_heatParam)
         {
             auto& state = m_layerStates[activeLayer];
-            state.scale = m_scaleParam->get();
-            state.offset = m_offsetParam->get();
-            state.heat = m_heatParam->get();
-            if (m_memoryParam)
-                state.memory = m_memoryParam->get();
+            float newScale = m_scaleParam->get();
+            float newOffset = m_offsetParam->get();
+            float newHeat = m_heatParam->get();
+            float newMemory = m_memoryParam ? m_memoryParam->get() : state.memory;
+
+            if (std::abs(state.scale - newScale) > 0.0001f ||
+                std::abs(state.offset - newOffset) > 0.0001f ||
+                std::abs(state.heat - newHeat) > 0.0001f ||
+                std::abs(state.memory - newMemory) > 0.0001f)
+            {
+                state.scale = newScale;
+                state.offset = newOffset;
+                state.heat = newHeat;
+                state.memory = newMemory;
+                state.isApplied = false; // Trigger re-application
+            }
         }
 
         // Calculate momentary envelope progression based on TriggerMode:
@@ -595,32 +606,48 @@ void NNBendingAudioProcessor::runInference()
                     }
                 }
                 m_backend.set_layer_weights(layerName, finalWeights);
+                state.isApplied = true;
+                state.lastAppliedEnv = currentEnv;
             }
             else if (mode != TriggerMode::Continuous && currentEnv > 0.001f)
             {
-                // Momentary gate active without heat: crossfade from unbent baseline to bent state
-                std::vector<float> finalWeights(numWeights);
-                for (size_t i = 0; i < numWeights; ++i)
+                // Momentary gate active without heat: only recompute if envelope moved significantly
+                if (std::abs(currentEnv - state.lastAppliedEnv) > 0.002f)
                 {
-                    float bentWeight = (bridgedBase[i] * state.scale + state.offset);
-                    finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
+                    std::vector<float> finalWeights(numWeights);
+                    for (size_t i = 0; i < numWeights; ++i)
+                    {
+                        float bentWeight = (bridgedBase[i] * state.scale + state.offset);
+                        finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
+                    }
+                    m_backend.set_layer_weights(layerName, finalWeights);
+                    state.isApplied = true;
+                    state.lastAppliedEnv = currentEnv;
                 }
-                m_backend.set_layer_weights(layerName, finalWeights);
             }
             else if (mode == TriggerMode::Continuous)
             {
-                // Continuous mode: apply bent target directly
-                std::vector<float> finalWeights(numWeights);
-                for (size_t i = 0; i < numWeights; ++i)
+                // Continuous mode without drift: apply bent target once and skip redundant uploads
+                if (!state.isApplied)
                 {
-                    finalWeights[i] = (bridgedBase[i] * state.scale + state.offset);
+                    std::vector<float> finalWeights(numWeights);
+                    for (size_t i = 0; i < numWeights; ++i)
+                    {
+                        finalWeights[i] = (bridgedBase[i] * state.scale + state.offset);
+                    }
+                    m_backend.set_layer_weights(layerName, finalWeights);
+                    state.isApplied = true;
                 }
-                m_backend.set_layer_weights(layerName, finalWeights);
             }
             else if (mode != TriggerMode::Continuous && currentEnv <= 0.001f)
             {
-                // Momentary gate inactive: restore unbent baseline weights
-                m_backend.set_layer_weights(layerName, state.originalWeights);
+                // Momentary gate inactive: restore unbent baseline weights once
+                if (state.isApplied)
+                {
+                    m_backend.set_layer_weights(layerName, state.originalWeights);
+                    state.isApplied = false;
+                    state.lastAppliedEnv = 0.0f;
+                }
             }
         }
     }

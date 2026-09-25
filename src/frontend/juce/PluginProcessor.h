@@ -234,6 +234,8 @@ public:
         std::vector<float> originalWeights; // Unbent baseline weights W0
         std::vector<float> drawnWeights;    // User-drawn / bent target curve
         std::vector<float> driftOffsets;    // Current stochastic drift vector
+        bool isApplied { false };           // True if bent weights currently applied to model
+        float lastAppliedEnv { -1.0f };     // Previous momentary envelope value applied
     };
 
     LayerBendingState getLayerState(const std::string& layerName) const
@@ -255,12 +257,14 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         m_layerStates[layerName].scale = scale;
+        m_layerStates[layerName].isApplied = false;
     }
 
     void setLayerOffset(const std::string& layerName, float offset)
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         m_layerStates[layerName].offset = offset;
+        m_layerStates[layerName].isApplied = false;
     }
 
     void setLayerHeat(const std::string& layerName, float heat)
@@ -292,18 +296,21 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         m_layerStates[layerName].bridgeSourceLayer = sourceLayer;
+        m_layerStates[layerName].isApplied = false;
     }
 
     void setLayerBridgeDepth(const std::string& layerName, float depth)
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         m_layerStates[layerName].bridgeDepth = juce::jlimit(0.0f, 1.0f, depth);
+        m_layerStates[layerName].isApplied = false;
     }
 
     void setLayerDrawnWeights(const std::string& layerName, const std::vector<float>& weights)
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         m_layerStates[layerName].drawnWeights = weights;
+        m_layerStates[layerName].isApplied = false;
     }
 
     void setLayerBaseWeights(const std::string& layerName, const std::vector<float>& weights)

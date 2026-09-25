@@ -31,6 +31,30 @@ Backend::Backend() : m_loaded(0), m_device(CPU), m_use_gpu(false) {
   at::init_num_threads();
 }
 
+torch::Tensor Backend::prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec) {
+  // Directly allocate one contiguous tensor of shape [in_dim * n_batches, n_vec]
+  // This avoids per-channel .clone() heap thrashing and subsequent torch::cat() allocations!
+  auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  auto cat_tensor_in = torch::empty({in_dim * n_batches, n_vec}, options);
+  float* tensor_data = cat_tensor_in.data_ptr<float>();
+
+  int total_channels = in_dim * n_batches;
+  for (int i = 0; i < total_channels; ++i) {
+    float* dest = tensor_data + i * n_vec;
+    if (i < (int)in_buffer.size() && in_buffer[i] != nullptr) {
+      std::memcpy(dest, in_buffer[i], n_vec * sizeof(float));
+    } else {
+      std::memset(dest, 0, n_vec * sizeof(float));
+    }
+  }
+
+  // Reshape and permute to desired [n_batches, in_dim, samples]
+  cat_tensor_in = cat_tensor_in.reshape({in_dim, n_batches, -1, in_ratio});
+  cat_tensor_in = cat_tensor_in.select(-1, -1);
+  cat_tensor_in = cat_tensor_in.permute({1, 0, 2});
+  return cat_tensor_in;
+}
+
 void Backend::perform(std::vector<float *> &in_buffer,
                       std::vector<float *> &out_buffer, 
                       std::string method, 
@@ -49,21 +73,8 @@ void Backend::perform(std::vector<float *> &in_buffer,
   if (!m_loaded)
     return;
 
-  // COPY BUFFER INTO A TENSOR
-  std::vector<at::Tensor> tensor_in;
-  // for (auto buf : in_buffer)
-  for (int i(0); i < in_dim * n_batches; i++) {
-    if (i < in_buffer.size()) {
-      tensor_in.push_back(torch::from_blob(in_buffer[i], {1, 1, n_vec}).clone());
-    } else {
-      tensor_in.push_back(torch::zeros({1, 1, n_vec}));
-    }
-  }
-
-  auto cat_tensor_in = torch::cat(tensor_in, 1);
-  cat_tensor_in = cat_tensor_in.reshape({in_dim, n_batches, -1, in_ratio});
-  cat_tensor_in = cat_tensor_in.select(-1, -1);
-  cat_tensor_in = cat_tensor_in.permute({1, 0, 2});
+  // COPY BUFFER INTO A SINGLE PRE-ALLOCATED CONTIGUOUS TENSOR (Zero clone / Zero cat)
+  auto cat_tensor_in = prepare_io_tensor(in_buffer, in_dim, n_batches, in_ratio, n_vec);
 
   // SEND TENSOR TO DEVICE
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
@@ -92,16 +103,19 @@ void Backend::perform(std::vector<float *> &in_buffer,
     return;
   }
 
-  tensor_out = tensor_out.to(CPU);
+  tensor_out = tensor_out.contiguous().to(CPU);
+  const float* out_data = tensor_out.data_ptr<float>();
 
-  for (int i(0); i < n_out_channels; i++) {
-    for (int j(0); j < n_batches; j++) {
-      if (i < tensor_out.size(1)) {
-        auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
-        memcpy(out_buffer[j * n_out_channels + i], out_ptr, n_vec * sizeof(float));
+  for (int j = 0; j < n_batches; j++) {
+    for (int i = 0; i < n_out_channels; i++) {
+      float* dest = out_buffer[j * n_out_channels + i];
+      if (dest == nullptr) continue;
+
+      if (i < out_channels) {
+        const float* src = out_data + (j * out_channels + i) * out_n_vec;
+        std::memcpy(dest, src, n_vec * sizeof(float));
       } else {
-        // put zeros
-        memset(out_buffer[j * n_out_channels + i], 0, n_vec *sizeof(float));
+        std::memset(dest, 0, n_vec * sizeof(float));
       }
     }
   }
@@ -127,19 +141,7 @@ void Backend::perform_forward(std::vector<float *> &in_buffer,
     auto out_dim = decode_params[2];
     auto out_ratio = decode_params[3];
 
-    std::vector<at::Tensor> tensor_in;
-    for (int i = 0; i < in_dim * n_batches; i++) {
-      if (i < (int)in_buffer.size()) {
-        tensor_in.push_back(torch::from_blob(in_buffer[i], {1, 1, n_vec}).clone());
-      } else {
-        tensor_in.push_back(torch::zeros({1, 1, n_vec}));
-      }
-    }
-
-    auto cat_tensor_in = torch::cat(tensor_in, 1);
-    cat_tensor_in = cat_tensor_in.reshape({in_dim, n_batches, -1, in_ratio});
-    cat_tensor_in = cat_tensor_in.select(-1, -1);
-    cat_tensor_in = cat_tensor_in.permute({1, 0, 2});
+    auto cat_tensor_in = prepare_io_tensor(in_buffer, in_dim, n_batches, in_ratio, n_vec);
 
     std::unique_lock<std::mutex> model_lock(m_model_mutex);
     cat_tensor_in = cat_tensor_in.to(m_device);
@@ -173,17 +175,22 @@ void Backend::perform_forward(std::vector<float *> &in_buffer,
     }
     model_lock.unlock();
 
-    int out_n_vec(tensor_out.size(2));
+    int out_batches(tensor_out.size(0)), out_channels(tensor_out.size(1)),
+        out_n_vec(tensor_out.size(2));
     if (out_n_vec != n_vec) return;
-    tensor_out = tensor_out.to(CPU);
+    tensor_out = tensor_out.contiguous().to(CPU);
+    const float* out_data = tensor_out.data_ptr<float>();
 
-    for (int i = 0; i < n_out_channels; i++) {
-      for (int j = 0; j < n_batches; j++) {
-        if (i < tensor_out.size(1)) {
-          auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
-          memcpy(out_buffer[j * n_out_channels + i], out_ptr, n_vec * sizeof(float));
+    for (int j = 0; j < n_batches; j++) {
+      for (int i = 0; i < n_out_channels; i++) {
+        float* dest = out_buffer[j * n_out_channels + i];
+        if (dest == nullptr) continue;
+
+        if (i < out_channels) {
+          const float* src = out_data + (j * out_channels + i) * out_n_vec;
+          std::memcpy(dest, src, n_vec * sizeof(float));
         } else {
-          memset(out_buffer[j * n_out_channels + i], 0, n_vec * sizeof(float));
+          std::memset(dest, 0, n_vec * sizeof(float));
         }
       }
     }
@@ -217,14 +224,8 @@ void Backend::perform_prior_decode(std::vector<float *> &out_buffer,
     if (!prior_params.empty() && prior_params[0] > 0) {
       int p_in_dim = prior_params[0];
       int p_in_ratio = prior_params[1];
-      std::vector<at::Tensor> tensor_in;
-      for (int i = 0; i < p_in_dim * n_batches; i++) {
-        tensor_in.push_back(torch::zeros({1, 1, n_vec}));
-      }
-      auto cat_tensor_in = torch::cat(tensor_in, 1);
-      cat_tensor_in = cat_tensor_in.reshape({p_in_dim, n_batches, -1, p_in_ratio});
-      cat_tensor_in = cat_tensor_in.select(-1, -1);
-      cat_tensor_in = cat_tensor_in.permute({1, 0, 2}).to(m_device);
+      std::vector<float*> empty_in;
+      auto cat_tensor_in = prepare_io_tensor(empty_in, p_in_dim, n_batches, p_in_ratio, n_vec).to(m_device);
       prior_inputs.push_back(cat_tensor_in);
     }
 
@@ -247,20 +248,25 @@ void Backend::perform_prior_decode(std::vector<float *> &out_buffer,
     }
     model_lock.unlock();
 
-    int out_n_vec(tensor_out.size(2));
-    tensor_out = tensor_out.to(CPU);
+    int out_batches(tensor_out.size(0)), out_channels(tensor_out.size(1)),
+        out_n_vec(tensor_out.size(2));
+    tensor_out = tensor_out.contiguous().to(CPU);
+    const float* out_data = tensor_out.data_ptr<float>();
 
     int copy_samples = std::min(n_vec, out_n_vec);
-    for (int i = 0; i < n_out_channels; i++) {
-      for (int j = 0; j < n_batches; j++) {
-        if (i < tensor_out.size(1)) {
-          auto out_ptr = tensor_out.index({j, i}).contiguous().data_ptr<float>();
-          memcpy(out_buffer[j * n_out_channels + i], out_ptr, copy_samples * sizeof(float));
+    for (int j = 0; j < n_batches; j++) {
+      for (int i = 0; i < n_out_channels; i++) {
+        float* dest = out_buffer[j * n_out_channels + i];
+        if (dest == nullptr) continue;
+
+        if (i < out_channels) {
+          const float* src = out_data + (j * out_channels + i) * out_n_vec;
+          std::memcpy(dest, src, copy_samples * sizeof(float));
           if (copy_samples < n_vec) {
-            memset(out_buffer[j * n_out_channels + i] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+            std::memset(dest + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
           }
         } else {
-          memset(out_buffer[j * n_out_channels + i], 0, n_vec * sizeof(float));
+          std::memset(dest, 0, n_vec * sizeof(float));
         }
       }
     }
@@ -348,9 +354,11 @@ int Backend::load(std::string path, double sampleRate, const std::string* target
     set_sample_rate(sampleRate);
     m_loaded = 1;
 
-    // Cache original weights for bending / reset
+    // Cache original weights and parameter tensor handles for bending / reset
     m_original_weights.clear();
+    m_parameter_cache.clear();
     for (const auto &layer : m_model.named_parameters()) {
+      m_parameter_cache[layer.name] = layer.value;
       auto t = layer.value.contiguous().to(CPU);
       m_original_weights[layer.name] = std::vector<float>(
           t.data_ptr<float>(), t.data_ptr<float>() + t.numel());
@@ -859,25 +867,26 @@ std::vector<float> Backend::get_layer_weights(std::string layer_name) {
 }
 
 void Backend::set_layer_weights(std::string layer_name,
-                                std::vector<float> weights) {
-  std::cout << "set_layer_weights: entering the function" << std::endl;
+                                const std::vector<float>& weights) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
 
-  for (const auto &layer : m_model.named_parameters())
+  // O(1) parameter lookup using cached tensor references
+  auto it = m_parameter_cache.find(layer_name);
+  if (it != m_parameter_cache.end()) {
+    torch::NoGradGuard no_grad;
+    it->second.copy_(torch::from_blob(const_cast<float*>(weights.data()), it->second.sizes()));
+    return;
+  }
+
+  // Fallback linear search in case cache was bypassed
+  for (const auto &layer : m_model.named_parameters()) {
     if (layer.name == layer_name) {
-      std::cout << "first layer weight before copy " << layer.value[0] << std::endl;
-      {
-        torch::NoGradGuard no_grad;
-        layer.value.copy_(torch::from_blob(weights.data(), layer.value.sizes()));
-      }
+      torch::NoGradGuard no_grad;
+      layer.value.copy_(torch::from_blob(const_cast<float*>(weights.data()), layer.value.sizes()));
+      m_parameter_cache[layer_name] = layer.value;
+      break;
     }
-
-  std::cout << "set_layer_weights: weights copied" << std::endl;
-
-  for (const auto &layer : m_model.named_parameters())
-    if (layer.name == layer_name)
-      std::cout << "first layer weight after copy " << layer.value[0] << std::endl;
-  model_lock.unlock();
+  }
 }
 
 std::vector<float> Backend::get_original_layer_weights(std::string layer_name) {

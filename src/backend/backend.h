@@ -48,6 +48,8 @@ protected:
   std::unique_ptr<std::thread> set_attribute_thread; 
   double m_sr; 
   std::unordered_map<std::string, std::vector<float>> m_original_weights;
+  std::unordered_map<std::string, torch::Tensor> m_parameter_cache;
+  torch::Tensor prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec);
 
 public:
   using DataType = float; 
@@ -108,7 +110,7 @@ public:
   std::vector<std::string> get_available_layers();
   std::vector<float> get_layer_weights(std::string layer_name);
   std::vector<float> get_original_layer_weights(std::string layer_name);
-  void set_layer_weights(std::string layer_name, std::vector<float> weights);
+  void set_layer_weights(std::string layer_name, const std::vector<float>& weights);
   void reset_layer_weights(std::string layer_name);
   void reset_all_layer_weights();
   int save_model(std::string path);
