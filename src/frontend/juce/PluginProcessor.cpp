@@ -615,11 +615,15 @@ void NNBendingAudioProcessor::runInference()
                 if (std::abs(currentEnv - state.lastAppliedEnv) > 0.002f)
                 {
                     std::vector<float> finalWeights(numWeights);
-                    for (size_t i = 0; i < numWeights; ++i)
-                    {
-                        float bentWeight = (bridgedBase[i] * state.scale + state.offset);
-                        finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
-                    }
+                    // Vectorized: bentWeight = bridgedBase * scale + offset
+                    juce::FloatVectorOperations::copy(finalWeights.data(), bridgedBase.data(), (int)numWeights);
+                    juce::FloatVectorOperations::multiply(finalWeights.data(), state.scale, (int)numWeights);
+                    juce::FloatVectorOperations::add(finalWeights.data(), state.offset, (int)numWeights);
+
+                    // Vectorized crossfade: finalWeights = originalWeights * (1 - env) + bentWeight * env
+                    juce::FloatVectorOperations::multiply(finalWeights.data(), currentEnv, (int)numWeights);
+                    juce::FloatVectorOperations::addWithMultiply(finalWeights.data(), state.originalWeights.data(), 1.0f - currentEnv, (int)numWeights);
+
                     m_backend.set_layer_weights(layerName, finalWeights);
                     state.isApplied = true;
                     state.lastAppliedEnv = currentEnv;
@@ -631,10 +635,11 @@ void NNBendingAudioProcessor::runInference()
                 if (!state.isApplied)
                 {
                     std::vector<float> finalWeights(numWeights);
-                    for (size_t i = 0; i < numWeights; ++i)
-                    {
-                        finalWeights[i] = (bridgedBase[i] * state.scale + state.offset);
-                    }
+                    // Vectorized: finalWeights = bridgedBase * scale + offset
+                    juce::FloatVectorOperations::copy(finalWeights.data(), bridgedBase.data(), (int)numWeights);
+                    juce::FloatVectorOperations::multiply(finalWeights.data(), state.scale, (int)numWeights);
+                    juce::FloatVectorOperations::add(finalWeights.data(), state.offset, (int)numWeights);
+
                     m_backend.set_layer_weights(layerName, finalWeights);
                     state.isApplied = true;
                 }

@@ -172,11 +172,8 @@ public:
             {
                 juce::Path srcPath;
                 buildPathForWeights(srcPath, m_bridgeSourceWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.35f)); // Muted copper
-                juce::PathStrokeType thinDashed(1.0f);
-                float dashLengths[] = { 4.0f, 4.0f };
-                thinDashed.createDashedStroke(srcPath, srcPath, dashLengths, 2);
-                g.strokePath(srcPath, thinDashed);
+                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.40f)); // Muted copper
+                g.strokePath(srcPath, juce::PathStrokeType(1.0f));
             }
 
             // 3. Render Cross-Talk composite blend curve (Warm golden amber: intermediate between emerald and copper)
@@ -184,31 +181,17 @@ public:
             {
                 juce::Path mixPath;
                 buildPathForWeights(mixPath, m_bridgeMixWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffd99b26")); // Warm golden ochre / amber
-
-                if (m_isContinuousMode)
-                {
-                    g.strokePath(mixPath, juce::PathStrokeType(1.5f));
-                }
-                else
-                {
-                    juce::PathStrokeType dashedMix(1.6f);
-                    float dashLengths[] = { 5.0f, 3.0f };
-                    dashedMix.createDashedStroke(mixPath, mixPath, dashLengths, 2);
-                    g.strokePath(mixPath, dashedMix);
-                }
+                g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(m_isContinuousMode ? 1.0f : 0.75f));
+                g.strokePath(mixPath, juce::PathStrokeType(m_isContinuousMode ? 1.5f : 1.2f));
             }
 
-            // 4. Render target bent curve (neon pink / magenta dashed overlay showing target state in momentary)
+            // 4. Render target bent curve (neon pink / magenta overlay showing target state in momentary)
             if (!m_targetBentWeights.empty())
             {
                 juce::Path targetPath;
                 buildPathForWeights(targetPath, m_targetBentWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffec4899")); // Vivid neon pink/magenta
-                juce::PathStrokeType dashedStroke(1.6f);
-                float dashLengths[] = { 6.0f, 4.0f };
-                dashedStroke.createDashedStroke(targetPath, targetPath, dashLengths, 2);
-                g.strokePath(targetPath, dashedStroke);
+                g.setColour(juce::Colour::fromString("#ffec4899").withAlpha(0.85f)); // Vivid neon pink/magenta
+                g.strokePath(targetPath, juce::PathStrokeType(1.4f));
             }
 
             // 5. Render current live weights (Neon purple/violet with gradient fill)
@@ -640,11 +623,59 @@ private:
         if (weights.empty() || w <= 0.0f) return;
 
         int totalWeights = (int)weights.size();
-        float startIdx = m_viewStartX * (totalWeights - 1);
-        float endIdx = (m_viewStartX + m_viewSpanX) * (totalWeights - 1);
-        int numPoints = std::min((int)std::ceil(endIdx - startIdx + 1), (int)w);
-        if (numPoints <= 1) return;
+        float startIdxF = m_viewStartX * (float)(totalWeights - 1);
+        float endIdxF = (m_viewStartX + m_viewSpanX) * (float)(totalWeights - 1);
+        int totalVisible = (int)std::ceil(endIdxF - startIdxF + 1);
+        int numPixels = (int)w;
+        if (numPixels <= 1 || totalVisible <= 1) return;
 
+        // If weight density is high (> 2 weights per pixel), use min/max decimation
+        // This avoids point aliasing, preserves visual peaks/transients, and reduces path overhead
+        if (totalVisible > numPixels * 2)
+        {
+            p.preallocateSpace(numPixels * 4);
+            bool first = true;
+
+            for (int px = 0; px < numPixels; ++px)
+            {
+                float normX0 = (float)px / (float)numPixels;
+                float normX1 = (float)(px + 1) / (float)numPixels;
+
+                int i0 = juce::jlimit(0, totalWeights - 1, (int)std::floor((m_viewStartX + normX0 * m_viewSpanX) * (float)(totalWeights - 1)));
+                int i1 = juce::jlimit(0, totalWeights - 1, (int)std::ceil((m_viewStartX + normX1 * m_viewSpanX) * (float)(totalWeights - 1)));
+                if (i1 < i0) i1 = i0;
+
+                float minVal = weights[(size_t)i0];
+                float maxVal = minVal;
+                for (int i = i0 + 1; i <= i1; ++i)
+                {
+                    float v = weights[(size_t)i];
+                    if (v < minVal) minVal = v;
+                    if (v > maxVal) maxVal = v;
+                }
+
+                float screenX = normX0 * w;
+                float yMin = valueToY(minVal, h);
+                float yMax = valueToY(maxVal, h);
+
+                if (first)
+                {
+                    p.startNewSubPath(screenX, yMin);
+                    if (std::abs(yMax - yMin) > 0.5f)
+                        p.lineTo(screenX, yMax);
+                    first = false;
+                }
+                else
+                {
+                    p.lineTo(screenX, yMin);
+                    if (std::abs(yMax - yMin) > 0.5f)
+                        p.lineTo(screenX, yMax);
+                }
+            }
+            return;
+        }
+
+        int numPoints = std::min(totalVisible, numPixels);
         p.preallocateSpace(numPoints * 2);
         bool first = true;
 
