@@ -11,13 +11,13 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
         with:
           submodules: recursive
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: "3.11"
 
@@ -98,7 +98,7 @@ jobs:
           bash install/package_macos.sh
 
       - name: Upload Installer Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.1
         with:
           name: macos-audio-plugins-installer
           path: dist/*.pkg
