@@ -55,7 +55,7 @@ function(configure_nn_bending_target target_name)
     if (APPLE)
         set_target_properties(${target_name} PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../Frameworks"
+            INSTALL_RPATH "/Library/Application Support/nn_bending/lib;${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../Frameworks"
         )
 
         # Post-build library handling and local plugin installation
@@ -64,7 +64,7 @@ function(configure_nn_bending_target target_name)
             foreach(sub_target IN LISTS active_targets)
                 set_target_properties(${sub_target} PROPERTIES
                     BUILD_WITH_INSTALL_RPATH TRUE
-                    INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../Frameworks"
+                    INSTALL_RPATH "/Library/Application Support/nn_bending/lib;${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../Frameworks"
                 )
 
                 # Determine destination path for local installation

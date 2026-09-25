@@ -70,10 +70,25 @@ echo " Bundle Deps:       ${BUNDLE_DEPS}"
 echo " Output Package:    ${OUTPUT_DIR}/${PKG_NAME}"
 echo "=================================================================="
 
-# Check build artifacts
-VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3"
-AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/nn~ Bending.component"
-APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/nn~ Bending.app"
+# Check build artifacts (handles both multi-config like Xcode with Release/ and single-config like Ninja/Makefiles)
+CONFIG="${CMAKE_BUILD_TYPE:-Release}"
+if [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/VST3/nn~ Bending.vst3" ]; then
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/VST3/nn~ Bending.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/AU/nn~ Bending.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/${CONFIG}/Standalone/nn~ Bending.app"
+elif [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3" ]; then
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/nn~ Bending.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/nn~ Bending.app"
+elif [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/VST3/nn~ Bending.vst3" ]; then
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/VST3/nn~ Bending.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/AU/nn~ Bending.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Standalone/nn~ Bending.app"
+else
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/nn~ Bending.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/nn~ Bending.app"
+fi
 
 for src in "${VST3_SRC}" "${AU_SRC}" "${APP_SRC}"; do
     if [ ! -d "${src}" ]; then
@@ -87,6 +102,8 @@ done
 # 3. Prepare Staging Directory
 # ------------------------------------------------------------------------------
 rm -rf "${STAGE_DIR}"
+SHARED_LIB_DEST="/Library/Application Support/nn_bending/lib"
+mkdir -p "${STAGE_DIR}/support_root${SHARED_LIB_DEST}"
 mkdir -p "${STAGE_DIR}/vst3_root/Library/Audio/Plug-Ins/VST3"
 mkdir -p "${STAGE_DIR}/au_root/Library/Audio/Plug-Ins/Components"
 mkdir -p "${STAGE_DIR}/app_root/Applications"
@@ -101,12 +118,16 @@ cp -R "${APP_SRC}"  "${STAGE_DIR}/app_root/Applications/"
 STAGE_VST3="${STAGE_DIR}/vst3_root/Library/Audio/Plug-Ins/VST3/nn~ Bending.vst3"
 STAGE_AU="${STAGE_DIR}/au_root/Library/Audio/Plug-Ins/Components/nn~ Bending.component"
 STAGE_APP="${STAGE_DIR}/app_root/Applications/nn~ Bending.app"
+STAGE_SUPPORT_LIB="${STAGE_DIR}/support_root${SHARED_LIB_DEST}"
 
 # ------------------------------------------------------------------------------
-# 4. Bundle Dynamic Dependencies (LibTorch, C10, etc.) with dylib_fix.py
+# 4. Bundle Dynamic Dependencies (LibTorch, C10, etc.)
 # ------------------------------------------------------------------------------
+# We place shared LibTorch runtime dylibs in /Library/Application Support/nn_bending/lib
+# so that when a DAW loads both AU and VST3 in the same process, dyld resolves to
+# the exact same dylib instances and does not duplicate operator registrations.
 if [ "${BUNDLE_DEPS}" = "1" ]; then
-    echo "==> Bundling shared dependencies into bundles using dylib_fix.py..."
+    echo "==> Bundling shared runtime dependencies into ${SHARED_LIB_DEST}..."
     LIB_SEARCH_PATHS=(
         "${REPO_ROOT}/libtorch"
         "${BUILD_DIR}/../torch/libtorch"
@@ -125,33 +146,70 @@ if [ "${BUNDLE_DEPS}" = "1" ]; then
             fi
         fi
 
-        echo "-> Fixing dependencies for VST3..."
+        echo "-> Fixing dependencies for VST3 into shared support dir..."
         "${PYTHON_CMD}" "${DYLIB_FIX_SCRIPT}" \
             -p "${STAGE_VST3}/Contents/MacOS/nn~ Bending" \
+            -o "${STAGE_SUPPORT_LIB}" \
             -l "${LIB_SEARCH_PATHS[@]}" \
+            --use_rpath \
+            --keep_rpaths "${SHARED_LIB_DEST}" \
             --sign_id "${SIGN_ID}" \
             --entitlements "${ENTITLEMENTS}"
 
-        echo "-> Fixing dependencies for AU..."
+        echo "-> Fixing dependencies for AU into shared support dir..."
         "${PYTHON_CMD}" "${DYLIB_FIX_SCRIPT}" \
             -p "${STAGE_AU}/Contents/MacOS/nn~ Bending" \
+            -o "${STAGE_SUPPORT_LIB}" \
             -l "${LIB_SEARCH_PATHS[@]}" \
+            --use_rpath \
+            --keep_rpaths "${SHARED_LIB_DEST}" \
             --sign_id "${SIGN_ID}" \
             --entitlements "${ENTITLEMENTS}"
 
-        echo "-> Fixing dependencies for Standalone App..."
+        echo "-> Fixing dependencies for Standalone App into shared support dir..."
         "${PYTHON_CMD}" "${DYLIB_FIX_SCRIPT}" \
             -p "${STAGE_APP}/Contents/MacOS/nn~ Bending" \
+            -o "${STAGE_SUPPORT_LIB}" \
             -l "${LIB_SEARCH_PATHS[@]}" \
+            --use_rpath \
+            --keep_rpaths "${SHARED_LIB_DEST}" \
             --sign_id "${SIGN_ID}" \
             --entitlements "${ENTITLEMENTS}"
+
+        # Ensure binaries link to @rpath for shared dylibs and have SHARED_LIB_DEST in rpaths
+        for bin in "${STAGE_VST3}/Contents/MacOS/nn~ Bending" \
+                   "${STAGE_AU}/Contents/MacOS/nn~ Bending" \
+                   "${STAGE_APP}/Contents/MacOS/nn~ Bending"; do
+            # Add shared rpath if not present
+            install_name_tool -add_rpath "${SHARED_LIB_DEST}" "${bin}" 2>/dev/null || true
+            # Clean any references that pointed to support_root or local files
+            for lib in "${STAGE_SUPPORT_LIB}"/*.dylib; do
+                if [ -f "${lib}" ]; then
+                    lib_name="$(basename "${lib}")"
+                    # Fix ID of shared library
+                    install_name_tool -id "@rpath/${lib_name}" "${lib}" 2>/dev/null || true
+                    # Find any existing load command in bin ending with /lib_name and rewrite to @rpath/lib_name
+                    old_refs="$(otool -L "${bin}" | awk '{print $1}' | grep "/${lib_name}$" || true)"
+                    for old_ref in ${old_refs}; do
+                        install_name_tool -change "${old_ref}" "@rpath/${lib_name}" "${bin}" 2>/dev/null || true
+                    done
+                    # Also change inter-library dependencies between shared dylibs
+                    for other_lib in "${STAGE_SUPPORT_LIB}"/*.dylib; do
+                        old_other_refs="$(otool -L "${other_lib}" | awk '{print $1}' | grep "/${lib_name}$" || true)"
+                        for old_ref in ${old_other_refs}; do
+                            install_name_tool -change "${old_ref}" "@rpath/${lib_name}" "${other_lib}" 2>/dev/null || true
+                        done
+                    done
+                fi
+            done
+        done
     else
         echo "Warning: ${DYLIB_FIX_SCRIPT} not found. Skipping dependency bundling."
     fi
 fi
 
 # ------------------------------------------------------------------------------
-# 5. Sign Bundles
+# 5. Sign Bundles and Support Libraries
 # ------------------------------------------------------------------------------
 sign_bundle() {
     local target="$1"
@@ -171,10 +229,26 @@ sign_bundle "${STAGE_VST3}"
 sign_bundle "${STAGE_AU}"
 sign_bundle "${STAGE_APP}"
 
+# Sign shared libraries in support_root
+if [ -d "${STAGE_SUPPORT_LIB}" ]; then
+    echo "==> Codesigning shared support libraries..."
+    for lib in "${STAGE_SUPPORT_LIB}"/*.dylib; do
+        if [ -f "${lib}" ]; then
+            sign_bundle "${lib}"
+        fi
+    done
+fi
+
 # ------------------------------------------------------------------------------
 # 6. Build Component Packages (.pkg)
 # ------------------------------------------------------------------------------
 echo "==> Building component packages with pkgbuild..."
+
+pkgbuild --root "${STAGE_DIR}/support_root" \
+         --identifier "${BUNDLE_PREFIX}.support" \
+         --version "${VERSION}" \
+         --install-location "/" \
+         "${STAGE_DIR}/packages/support.pkg"
 
 pkgbuild --root "${STAGE_DIR}/vst3_root" \
          --identifier "${BUNDLE_PREFIX}.vst3" \
@@ -207,11 +281,16 @@ cat <<EOF > "${STAGE_DIR}/distribution.xml"
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     
     <choices-outline>
+        <line choice="choice_support"/>
         <line choice="choice_vst3"/>
         <line choice="choice_au"/>
         <line choice="choice_app"/>
     </choices-outline>
     
+    <choice id="choice_support" title="Shared AI Runtime" description="Installs shared LibTorch runtime libraries into /Library/Application Support/nn_bending/lib" visible="false" enabled="true" selected="true">
+        <pkg-ref id="${BUNDLE_PREFIX}.support"/>
+    </choice>
+
     <choice id="choice_vst3" title="VST3 Plugin" description="Installs nn~ Bending VST3 plugin into /Library/Audio/Plug-Ins/VST3">
         <pkg-ref id="${BUNDLE_PREFIX}.vst3"/>
     </choice>
@@ -224,6 +303,7 @@ cat <<EOF > "${STAGE_DIR}/distribution.xml"
         <pkg-ref id="${BUNDLE_PREFIX}.app"/>
     </choice>
     
+    <pkg-ref id="${BUNDLE_PREFIX}.support" version="${VERSION}">support.pkg</pkg-ref>
     <pkg-ref id="${BUNDLE_PREFIX}.vst3" version="${VERSION}">vst3.pkg</pkg-ref>
     <pkg-ref id="${BUNDLE_PREFIX}.au" version="${VERSION}">au.pkg</pkg-ref>
     <pkg-ref id="${BUNDLE_PREFIX}.app" version="${VERSION}">app.pkg</pkg-ref>

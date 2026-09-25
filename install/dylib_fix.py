@@ -24,6 +24,8 @@ parser.add_argument('--safe', action="store_true", help="safe mode")
 parser.add_argument('--sign_id', type=str, default="-", help="codesign sign")
 parser.add_argument('--entitlements', type=str, default=None, help="path to entitlements plist file")
 parser.add_argument('--noclean_rpath', action="store_true", help="does not clean rpath")
+parser.add_argument('--keep_rpaths', nargs="*", default=[], help="rpaths to preserve during clean_rpath")
+parser.add_argument('--use_rpath', action="store_true", help="link shared libraries with @rpath instead of relative @loader_path")
 parser.add_argument('--verbose', action="store_true", help="verbose output")
 args = parser.parse_args()
 
@@ -337,22 +339,29 @@ def parse_actions_from_executable(exec_path, dep_paths=[], main_dir = None, verb
             # if str(libs_hash_linked[k][i]).startswith('@rpath'):
             #     continue
             if get_library_name(libs_hash_linked[k][i]) == get_library_name(v_tmp.name):
+                prefix = "@rpath" if args.use_rpath else "@loader_path"
                 if v_tmp.stem == exec_path.stem:
-                    actions.append(['-id', f"@loader_path/{v_tmp.name}", str(exec_dir / v_tmp.name)])
+                    actions.append(['-id', f"{prefix}/{v_tmp.name}", str(exec_dir / v_tmp.name)])
                 else:
-                    actions.append(['-id', f"@loader_path/{v_tmp.name}", str(main_dir / v_tmp.name)])
+                    actions.append(['-id', f"{prefix}/{v_tmp.name}", str(main_dir / v_tmp.name)])
             else:
                 current_dep = str(libs_hash_linked[k][i]) 
                 dep_key = get_library_name(current_dep)
                 if dep_key not in libs_paths or libs_paths[dep_key] is None:
                     continue
-                # new_dep = f"@loader_path/{libs_paths[dep_key].name}"
-                if v_tmp.stem == exec_path.stem:
-                    new_dep = f"@loader_path/{lib_from_exc_path(exec_path, main_dir / libs_paths[dep_key].name)}"
-                    actions.append(['-change', current_dep, new_dep, str(exec_dir / v_tmp.name)])
+                if args.use_rpath:
+                    new_dep = f"@rpath/{libs_paths[dep_key].name}"
+                    if v_tmp.stem == exec_path.stem:
+                        actions.append(['-change', current_dep, new_dep, str(exec_dir / v_tmp.name)])
+                    else:
+                        actions.append(['-change', current_dep, new_dep, str(main_dir / v_tmp.name)])
                 else:
-                    new_dep = f"@loader_path/{libs_paths[dep_key].name}"
-                    actions.append(['-change', current_dep, new_dep, str(main_dir / v_tmp.name)])
+                    if v_tmp.stem == exec_path.stem:
+                        new_dep = f"@loader_path/{lib_from_exc_path(exec_path, main_dir / libs_paths[dep_key].name)}"
+                        actions.append(['-change', current_dep, new_dep, str(exec_dir / v_tmp.name)])
+                    else:
+                        new_dep = f"@loader_path/{libs_paths[dep_key].name}"
+                        actions.append(['-change', current_dep, new_dep, str(main_dir / v_tmp.name)])
     return actions
 
 
@@ -407,16 +416,21 @@ def perform_action(action, main_dir):
                                     capture_outpu=False)
         elif action[0] == "clean_rpath":
             rpaths = extract_rpaths(action[1], replace_dynamic_paths=False)
+            keep_set = set(args.keep_rpaths or [])
             if rpaths:
                 cmd = ['install_name_tool']
                 for r in rpaths:
-                    cmd.extend(['-delete_rpath', str(r)])
-                cmd.append(action[1])
-                try:
-                    subprocess.run(cmd, check=True, text=True, capture_output=True)
-                except subprocess.SubprocessError as e: 
-                    print("problem with clean_rpath : %s"%e)
-                    pass
+                    r_str = str(r)
+                    if r_str.startswith('@loader_path') or r_str in keep_set:
+                        continue
+                    cmd.extend(['-delete_rpath', r_str])
+                if len(cmd) > 1:
+                    cmd.append(action[1])
+                    try:
+                        subprocess.run(cmd, check=True, text=True, capture_output=True)
+                    except subprocess.SubprocessError as e: 
+                        print("problem with clean_rpath : %s"%e)
+                        pass
 
         else:
             print('[Warning] not known action : %s'%action) 
