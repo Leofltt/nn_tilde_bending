@@ -173,6 +173,42 @@ public:
     // Latent bending hook (applied during autoencode mode)
     void setLatentHook(Backend::LatentHook hook) { m_latentHook = hook; }
 
+    enum class LatentMode
+    {
+        FourierOrbit = 0, // 2D XY mapped via Random Fourier Features into multidimensional latent space
+        LatentSlew,       // Temporal inertia / lowpass filter on latent activations
+        Quantize          // Latent space bitcrushing / discretization
+    };
+
+    void setLatentMode(LatentMode mode) { m_latentMode.store(mode); }
+    LatentMode getLatentMode() const { return m_latentMode.load(); }
+
+    void setLatentEnabled(bool enabled) { m_latentEnabled.store(enabled); }
+    bool isLatentEnabled() const { return m_latentEnabled.load(); }
+
+    void setLatentCoords(float x, float y)
+    {
+        m_latentX.store(juce::jlimit(-1.0f, 1.0f, x));
+        m_latentY.store(juce::jlimit(-1.0f, 1.0f, y));
+        if (m_latentXParam) *m_latentXParam = m_latentX.load();
+        if (m_latentYParam) *m_latentYParam = m_latentY.load();
+    }
+    float getLatentX() const { return m_latentXParam ? m_latentXParam->get() : m_latentX.load(); }
+    float getLatentY() const { return m_latentYParam ? m_latentYParam->get() : m_latentY.load(); }
+
+    void setLatentDepth(float depth)
+    {
+        float d = juce::jlimit(0.0f, 2.0f, depth);
+        m_latentDepth.store(d);
+        if (m_latentDepthParam) *m_latentDepthParam = d;
+    }
+    float getLatentDepth() const { return m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load(); }
+
+    void setLatentSlew(float slew) { m_latentSlew.store(juce::jlimit(0.0f, 0.999f, slew)); }
+    float getLatentSlew() const { return m_latentSlew.load(); }
+
+    bool hasAutoencode() { return m_backend.has_autoencode(); }
+
     // Thread communication
     void runInference();
 
@@ -399,6 +435,10 @@ public:
     juce::AudioParameterFloat* getMemoryParam() const { return m_memoryParam; }
     juce::AudioParameterBool*  getShortCircuitParam() const { return m_shortCircuitParam; }
 
+    juce::AudioParameterFloat* getLatentXParam() const { return m_latentXParam; }
+    juce::AudioParameterFloat* getLatentYParam() const { return m_latentYParam; }
+    juce::AudioParameterFloat* getLatentDepthParam() const { return m_latentDepthParam; }
+
 private:
     friend class ModelThread;
 
@@ -412,6 +452,17 @@ private:
     int m_model_out { 0 };
 
     std::atomic<float> m_dryWet { 1.0f }; // 0.0 = Dry, 1.0 = Wet
+
+    // Latent Terrain State
+    std::atomic<bool>        m_latentEnabled { false };
+    std::atomic<LatentMode>  m_latentMode { LatentMode::FourierOrbit };
+    std::atomic<float>       m_latentX { 0.0f };
+    std::atomic<float>       m_latentY { 0.0f };
+    std::atomic<float>       m_latentDepth { 0.5f };
+    std::atomic<float>       m_latentSlew { 0.0f };
+    at::Tensor               m_prevLatentTensor;
+    at::Tensor               m_rffMatrix; // Random Fourier Feature projection matrix B [D/2, 2]
+    int                      m_cachedLatentDim { 0 };
 
     // Safety Sentry state
     std::atomic<bool> m_blownFuse { false };
@@ -435,6 +486,9 @@ private:
     juce::AudioParameterFloat* m_heatParam { nullptr };
     juce::AudioParameterFloat* m_memoryParam { nullptr };
     juce::AudioParameterBool*  m_shortCircuitParam { nullptr };
+    juce::AudioParameterFloat* m_latentXParam { nullptr };
+    juce::AudioParameterFloat* m_latentYParam { nullptr };
+    juce::AudioParameterFloat* m_latentDepthParam { nullptr };
 
     // Per-layer states & threading
     juce::String m_activeLayerName;

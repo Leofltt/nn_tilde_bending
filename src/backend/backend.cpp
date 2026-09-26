@@ -281,6 +281,10 @@ bool Backend::has_prior_decode() {
   return (has_method("prior") || has_method("generate")) && has_method("decode");
 }
 
+bool Backend::has_autoencode() {
+  return has_method("encode") && has_method("decode");
+}
+
 std::vector<std::string> Backend::get_plugin_modes() {
   std::vector<std::string> modes;
   if (!is_loaded())

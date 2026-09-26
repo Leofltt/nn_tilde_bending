@@ -85,6 +85,21 @@ NNBendingAudioProcessor::NNBendingAudioProcessor()
     addParameter (m_shortCircuitParam = new juce::AudioParameterBool (
         juce::ParameterID ("short_circuit", 1), "Momentary Short Circuit", false
     ));
+
+    addParameter (m_latentXParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("latent_x", 1), "Latent Terrain X",
+        juce::NormalisableRange<float> (-1.0f, 1.0f, 0.001f), 0.0f
+    ));
+
+    addParameter (m_latentYParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("latent_y", 1), "Latent Terrain Y",
+        juce::NormalisableRange<float> (-1.0f, 1.0f, 0.001f), 0.0f
+    ));
+
+    addParameter (m_latentDepthParam = new juce::AudioParameterFloat (
+        juce::ParameterID ("latent_depth", 1), "Latent Depth",
+        juce::NormalisableRange<float> (0.0f, 2.0f, 0.01f), 0.5f
+    ));
 }
 
 NNBendingAudioProcessor::~NNBendingAudioProcessor()
@@ -368,6 +383,11 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
             reqSize <<= 1;
         m_bufferSize = std::max(2048, reqSize);
         
+        // Reset latent terrain cached matrices on new model load
+        m_rffMatrix = at::Tensor();
+        m_prevLatentTensor = at::Tensor();
+        m_cachedLatentDim = 0;
+
         m_modelLoaded.store(true);
         initBuffers();
         return true;
@@ -683,7 +703,77 @@ void NNBendingAudioProcessor::runInference()
     std::string modeStr = m_currentMethod.toStdString();
     if (modeStr == "forward")
     {
-        m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, m_latentHook);
+        // Compose latent hook: if user hook is set, use it; otherwise if latent terrain is enabled, execute it!
+        Backend::LatentHook activeHook = m_latentHook;
+        if (!activeHook && m_latentEnabled.load())
+        {
+            activeHook = [this](at::Tensor z) -> at::Tensor {
+                if (!z.defined()) return z;
+
+                // Sync automatable parameters
+                float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
+                float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
+                float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
+                auto mode = m_latentMode.load();
+
+                // Latent dimension (channel dimension is typically dimension 1)
+                int64_t latentDim = (z.dim() >= 2) ? z.size(1) : z.size(0);
+
+                if (mode == LatentMode::FourierOrbit)
+                {
+                    // Generate or reuse deterministic Random Fourier Feature projection matrix B: [latentDim / 2, 2]
+                    int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
+                    if (!m_rffMatrix.defined() || m_cachedLatentDim != (int)latentDim)
+                    {
+                        // Deterministic seed for reproducible timbral coordinates
+                        torch::manual_seed(42);
+                        m_rffMatrix = torch::randn({numHarmonics, 2}, z.options()) * 2.5f; // Spatial frequency scaling
+                        m_cachedLatentDim = (int)latentDim;
+                    }
+
+                    auto coords = torch::tensor({lx, ly}, z.options()).reshape({2, 1});
+                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), coords); // [numHarmonics, 1]
+
+                    // Compute sin and cos components for smooth, infinite-resolution harmonic orbits
+                    auto cosFeat = torch::cos(proj);
+                    auto sinFeat = torch::sin(proj);
+                    auto rffVec = torch::cat({cosFeat, sinFeat}, 0).reshape({1, -1, 1}); // [1, latentDim, 1]
+
+                    // If latentDim is odd, pad 0
+                    if (rffVec.size(1) < latentDim)
+                    {
+                        auto pad = torch::zeros({1, latentDim - rffVec.size(1), 1}, z.options());
+                        rffVec = torch::cat({rffVec, pad}, 1);
+                    }
+                    else if (rffVec.size(1) > latentDim)
+                    {
+                        rffVec = rffVec.slice(1, 0, latentDim);
+                    }
+
+                    // Additive injection of Fourier timbral orbit
+                    z = z + depth * rffVec;
+                }
+                else if (mode == LatentMode::LatentSlew)
+                {
+                    float slew = m_latentSlew.load();
+                    if (m_prevLatentTensor.defined() && m_prevLatentTensor.sizes() == z.sizes())
+                    {
+                        z = (1.0f - slew) * z + slew * m_prevLatentTensor;
+                    }
+                    m_prevLatentTensor = z.clone();
+                }
+                else if (mode == LatentMode::Quantize)
+                {
+                    // Latent bitcrush / quantization step
+                    float qStep = std::max(0.01f, depth * 0.5f);
+                    z = torch::round(z / qStep) * qStep;
+                }
+
+                return z;
+            };
+        }
+
+        m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
     }
     else if (modeStr == "prior" || modeStr == "generate")
     {

@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include <JuceHeader.h>
 #include "WeightBendingComponent.h"
+#include "LatentTerrainComponent.h"
 #include <vector>
 
 class NNBendingAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -21,6 +22,8 @@ public:
     void sliderValueChanged (juce::Slider* slider) override;
     void buttonClicked (juce::Button* button) override;
 
+    enum class ViewMode { Weights, Latent };
+
 private:
     void timerCallback() override;
     void updateModelInfo();
@@ -30,6 +33,7 @@ private:
     void resetAllLayerWeights();
     void saveModelToFile();
     void updateKnobContextLabels (NNBendingAudioProcessor::LayerCategory category);
+    void setViewMode (ViewMode newMode);
 
     NNBendingAudioProcessor& audioProcessor;
 
@@ -50,6 +54,11 @@ private:
 
     juce::TextButton saveModelButton { "Save Model (.ts)" };
 
+    // View Switcher: "weights" and "latent"
+    ViewMode currentViewMode { ViewMode::Weights };
+    juce::TextButton viewWeightsButton { "weights" };
+    juce::TextButton viewLatentButton { "latent" };
+
     // Bending Section
     juce::GroupComponent bendingGroup { "Bending", "Interactive Weight Bending" };
     
@@ -59,8 +68,18 @@ private:
     juce::TextButton resetLayerButton { "Reset Layer" };
     juce::TextButton resetAllButton { "Reset All Layers" };
 
-    // Interactive canvas
+    // Interactive canvases
     WeightBendingComponent weightCanvas;
+    LatentTerrainComponent latentPad;
+
+    // Latent Hook Controls (visible in latent view)
+    juce::Label latentDepthLabel { {}, "Latent Depth" };
+    juce::Slider latentDepthSlider;
+    juce::Label latentModeLabel { {}, "Orbit Mode:" };
+    juce::ComboBox latentModeCombo;
+    juce::Label latentSlewLabel { {}, "Slew Speed" };
+    juce::Slider latentSlewSlider;
+    juce::ToggleButton latentEnableButton { "Enable Latent Hook" };
 
     // Category Filter for Trace Isolation
     juce::Label categoryLabel { {}, "Trace:" };

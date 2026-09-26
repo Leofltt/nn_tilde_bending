@@ -71,6 +71,7 @@ public:
                             int n_batches, int n_out_channels, int n_vec);
   bool has_method(std::string method_name);
   bool has_prior_decode();
+  bool has_autoencode();
   std::vector<std::string> get_plugin_modes();
   std::vector<int> get_mode_params(std::string mode);
   bool has_settable_attribute(std::string attribute);

@@ -322,6 +322,72 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     harmonicApplyButton.addListener (this);
     addAndMakeVisible (harmonicApplyButton);
 
+    // View Switcher Buttons: "weights" and "latent"
+    viewWeightsButton.addListener (this);
+    viewLatentButton.addListener (this);
+    addAndMakeVisible (viewWeightsButton);
+    addAndMakeVisible (viewLatentButton);
+
+    // Latent Terrain Pad
+    addChildComponent (latentPad);
+    latentPad.onCoordsChanged = [this] (float x, float y)
+    {
+        audioProcessor.setLatentCoords (x, y);
+        if (auto* px = audioProcessor.getLatentXParam())
+            px->setValueNotifyingHost (px->convertTo0to1 (x));
+        if (auto* py = audioProcessor.getLatentYParam())
+            py->setValueNotifyingHost (py->convertTo0to1 (y));
+    };
+
+    // Latent Hook Parameter Controls (Visible in latent view)
+    latentEnableButton.setButtonText ("Enable Latent Hook");
+    latentEnableButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+    latentEnableButton.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffd946ef"));
+    latentEnableButton.addListener (this);
+    addChildComponent (latentEnableButton);
+
+    latentDepthLabel.setText ("Latent Depth", juce::dontSendNotification);
+    latentDepthLabel.setJustificationType (juce::Justification::centred);
+    latentDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addChildComponent (latentDepthLabel);
+
+    latentDepthSlider.setRange (0.0, 2.0, 0.01);
+    latentDepthSlider.setValue (audioProcessor.getLatentDepth());
+    latentDepthSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    latentDepthSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
+    latentDepthSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffd946ef"));
+    latentDepthSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    latentDepthSlider.addListener (this);
+    addChildComponent (latentDepthSlider);
+
+    latentModeLabel.setText ("Orbit Mode:", juce::dontSendNotification);
+    latentModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addChildComponent (latentModeLabel);
+
+    latentModeCombo.addItem ("Fourier Orbit", 1);
+    latentModeCombo.addItem ("Latent Slew", 2);
+    latentModeCombo.addItem ("Quantize", 3);
+    latentModeCombo.setSelectedId ((int)audioProcessor.getLatentMode() + 1, juce::dontSendNotification);
+    latentModeCombo.addListener (this);
+    addChildComponent (latentModeCombo);
+
+    latentSlewLabel.setText ("Slew Speed", juce::dontSendNotification);
+    latentSlewLabel.setJustificationType (juce::Justification::centred);
+    latentSlewLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addChildComponent (latentSlewLabel);
+
+    latentSlewSlider.setRange (0.001, 1.0, 0.001);
+    latentSlewSlider.setValue (audioProcessor.getLatentSlew());
+    latentSlewSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    latentSlewSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
+    latentSlewSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ff38bdf8"));
+    latentSlewSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    latentSlewSlider.addListener (this);
+    addChildComponent (latentSlewSlider);
+
+    // Initial View Mode: weights
+    setViewMode (ViewMode::Weights);
+
     // Info Label
     infoBendingLabel.setText ("Select a layer to bend weights.", juce::dontSendNotification);
     infoBendingLabel.setJustificationType (juce::Justification::centredLeft);
@@ -408,8 +474,15 @@ void NNBendingAudioProcessorEditor::resized()
     auto groupArea = bendingGroup.getBounds().reduced (14);
     groupArea.removeFromTop (12); // Group title offset
 
-    // Layer Selection & Action Row (Category filter + Layer Combo + Reset buttons)
+    // Layer Selection & Action Row (View buttons + Category filter + Layer Combo + Reset buttons)
     auto layerRow = groupArea.removeFromTop (32);
+
+    // View Switcher Buttons on far left: [weights] [latent]
+    viewWeightsButton.setBounds (layerRow.removeFromLeft (68));
+    layerRow.removeFromLeft (4);
+    viewLatentButton.setBounds (layerRow.removeFromLeft (64));
+    layerRow.removeFromLeft (12);
+
     categoryLabel.setBounds (layerRow.removeFromLeft (42));
     categoryCombo.setBounds (layerRow.removeFromLeft (120));
     layerRow.removeFromLeft (10);
@@ -425,7 +498,7 @@ void NNBendingAudioProcessorEditor::resized()
 
     groupArea.removeFromTop (8); // Spacer
 
-    // Harmonic Synthesizer Toolbar Row (above weightCanvas)
+    // Harmonic Synthesizer Toolbar Row (above canvas)
     auto harmonicRow = groupArea.removeFromTop (26);
     harmonicTitleLabel.setBounds (harmonicRow.removeFromLeft (74));
     harmonicRow.removeFromLeft (4);
@@ -464,13 +537,14 @@ void NNBendingAudioProcessorEditor::resized()
     groupArea.removeFromRight (12); // Gap between canvas and side knobs
 
     weightCanvas.setBounds (groupArea);
+    latentPad.setBounds (groupArea);
 
     // Split sideControls into Column 1 (Static & Drift: 92px) and Column 2 (Bridge: 92px)
     auto col1 = sideControls.removeFromLeft (92);
     sideControls.removeFromLeft (8); // Column gutter
     auto col2 = sideControls;
 
-    // Column 1: Scale, Offset, Heat, Memory, Drift Mode, Freeze
+    // Column 1: Scale, Offset, Heat, Memory, Drift Mode, Freeze (Weight view)
     scaleLabel.setBounds (col1.removeFromTop (14));
     scaleSlider.setBounds (col1.removeFromTop (64));
     col1.removeFromTop (4);
@@ -491,13 +565,35 @@ void NNBendingAudioProcessorEditor::resized()
     col1.removeFromTop (4);
     freezeButton.setBounds (col1.removeFromTop (22));
 
-    // Column 2: Bridge Wire source selector & Cross-Talk depth
+    // Column 2: Bridge Wire source selector & Cross-Talk depth (Weight view)
     bridgeLabel.setBounds (col2.removeFromTop (14));
     bridgeCombo.setBounds (col2.removeFromTop (26));
     col2.removeFromTop (8);
 
     bridgeDepthLabel.setBounds (col2.removeFromTop (14));
     bridgeDepthSlider.setBounds (col2.removeFromTop (64));
+
+    // Latent Hook Controls placement in sideControls area (visible in latent view)
+    auto latentArea = sideControls; // Reuse sideControls width for latent controls
+    latentArea = sideControls;
+    latentArea.setX (weightCanvas.getRight() + 12);
+    latentArea.setWidth (controlsWidth);
+    latentArea.setY (groupArea.getY());
+    latentArea.setHeight (groupArea.getHeight());
+
+    latentEnableButton.setBounds (latentArea.removeFromTop (28));
+    latentArea.removeFromTop (12);
+
+    latentDepthLabel.setBounds (latentArea.removeFromTop (14));
+    latentDepthSlider.setBounds (latentArea.removeFromTop (64));
+    latentArea.removeFromTop (12);
+
+    latentModeLabel.setBounds (latentArea.removeFromTop (14));
+    latentModeCombo.setBounds (latentArea.removeFromTop (26));
+    latentArea.removeFromTop (12);
+
+    latentSlewLabel.setBounds (latentArea.removeFromTop (14));
+    latentSlewSlider.setBounds (latentArea.removeFromTop (64));
 }
 
 //==============================================================================
@@ -569,6 +665,11 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
     {
         updateHarmonicGhostPreview();
     }
+    else if (comboBoxThatHasChanged == &latentModeCombo)
+    {
+        int modeIdx = latentModeCombo.getSelectedId() - 1;
+        audioProcessor.setLatentMode ((NNBendingAudioProcessor::LatentMode)modeIdx);
+    }
 }
 
 void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
@@ -626,6 +727,18 @@ void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
             audioProcessor.setLayerBridgeDepth (currentBendingLayer.toStdString(), val);
             applyKnobBending();
         }
+    }
+    else if (slider == &latentDepthSlider)
+    {
+        float val = (float)latentDepthSlider.getValue();
+        audioProcessor.setLatentDepth (val);
+        if (auto* param = audioProcessor.getLatentDepthParam())
+            param->setValueNotifyingHost (param->convertTo0to1 (val));
+    }
+    else if (slider == &latentSlewSlider)
+    {
+        float val = (float)latentSlewSlider.getValue();
+        audioProcessor.setLatentSlew (val);
     }
     else
     {
@@ -729,6 +842,20 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     {
         applyHarmonicWeights();
     }
+    else if (button == &viewWeightsButton)
+    {
+        setViewMode (ViewMode::Weights);
+    }
+    else if (button == &viewLatentButton)
+    {
+        setViewMode (ViewMode::Latent);
+    }
+    else if (button == &latentEnableButton)
+    {
+        bool en = latentEnableButton.getToggleState();
+        audioProcessor.setLatentEnabled (en);
+        latentPad.setEnabledState (en, audioProcessor.hasAutoencode());
+    }
 }
 
 //==============================================================================
@@ -791,6 +918,28 @@ void NNBendingAudioProcessorEditor::timerCallback()
             dryWetSlider.setValue (pVal, juce::dontSendNotification);
             audioProcessor.setDryWet (pVal);
         }
+    }
+
+    // Sync Latent XY and Depth parameters
+    if (auto* p = audioProcessor.getLatentDepthParam())
+    {
+        float pVal = p->get();
+        if (std::abs (pVal - (float)latentDepthSlider.getValue()) > 0.005f && !latentDepthSlider.isMouseButtonDown())
+        {
+            latentDepthSlider.setValue (pVal, juce::dontSendNotification);
+            audioProcessor.setLatentDepth (pVal);
+        }
+    }
+
+    // Sync Latent Pad coordinates and enabled state
+    if (!latentPad.isMouseButtonDownAnywhere())
+    {
+        latentPad.setCoords (audioProcessor.getLatentX(), audioProcessor.getLatentY());
+    }
+    latentPad.setEnabledState (audioProcessor.isLatentEnabled(), audioProcessor.hasAutoencode());
+    if (latentEnableButton.getToggleState() != audioProcessor.isLatentEnabled())
+    {
+        latentEnableButton.setToggleState (audioProcessor.isLatentEnabled(), juce::dontSendNotification);
     }
 
     // Update Fuse Button State visually
@@ -1123,7 +1272,7 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     else if (category == NNBendingAudioProcessor::LayerCategory::Linear) catName = "Linear / Dense";
     else if (category == NNBendingAudioProcessor::LayerCategory::Bias) catName = "Bias";
 
-    infoBendingLabel.setText ("Trace: [" + catName + "]  |  Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " params", juce::dontSendNotification);
+    infoBendingLabel.setText ("Trace: [" + catName + "]  |  Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " params" + (audioProcessor.hasAutoencode() ? "  |  [Latent Hook Ready]" : ""), juce::dontSendNotification);
 
     // Update contextual knob labels (Gamma / Beta for Norm, Scale / Offset for other traces)
     updateKnobContextLabels (category);
@@ -1462,5 +1611,90 @@ void NNBendingAudioProcessorEditor::applyHarmonicWeights()
     applyKnobBending();
 
     infoBendingLabel.setText ("Harmonic wave stamped to " + currentBendingLayer, juce::dontSendNotification);
+}
+
+void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
+{
+    currentViewMode = newMode;
+
+    bool isWeights = (currentViewMode == ViewMode::Weights);
+    bool isLatent = (currentViewMode == ViewMode::Latent);
+
+    // Style the toggle buttons
+    juce::Colour activeBg = juce::Colour::fromString ("#ff4a1d72"); // Vivid violet
+    juce::Colour inactiveBg = juce::Colour::fromString ("#ff1c1926"); // Dark charcoal
+    juce::Colour activeText = juce::Colours::white;
+    juce::Colour inactiveText = juce::Colours::darkgrey;
+
+    viewWeightsButton.setColour (juce::TextButton::buttonColourId, isWeights ? activeBg : inactiveBg);
+    viewWeightsButton.setColour (juce::TextButton::textColourOffId, isWeights ? activeText : inactiveText);
+
+    viewLatentButton.setColour (juce::TextButton::buttonColourId, isLatent ? activeBg : inactiveBg);
+    viewLatentButton.setColour (juce::TextButton::textColourOffId, isLatent ? activeText : inactiveText);
+
+    // Switch main canvas visibility
+    weightCanvas.setVisible (isWeights);
+    latentPad.setVisible (isLatent);
+
+    // Toggle weight-domain header controls visibility
+    categoryLabel.setVisible (isWeights);
+    categoryCombo.setVisible (isWeights);
+    layerLabel.setVisible (isWeights);
+    layerCombo.setVisible (isWeights);
+    resetLayerButton.setVisible (isWeights);
+    resetAllButton.setVisible (isWeights);
+
+    // Toggle harmonic toolbar visibility
+    harmonicTitleLabel.setVisible (isWeights);
+    harmonicFreqLabel.setVisible (isWeights);
+    harmonicFreqSlider.setVisible (isWeights);
+    harmonicPartialsLabel.setVisible (isWeights);
+    harmonicPartialsSlider.setVisible (isWeights);
+    harmonicMorphLabel.setVisible (isWeights);
+    harmonicMorphSlider.setVisible (isWeights);
+    harmonicDepthLabel.setVisible (isWeights);
+    harmonicDepthSlider.setVisible (isWeights);
+    harmonicModeCombo.setVisible (isWeights);
+    harmonicApplyButton.setVisible (isWeights);
+
+    // Toggle side knobs (Scale, Offset, Heat, Memory, Bridge)
+    scaleLabel.setVisible (isWeights);
+    scaleSlider.setVisible (isWeights);
+    offsetLabel.setVisible (isWeights);
+    offsetSlider.setVisible (isWeights);
+    heatLabel.setVisible (isWeights);
+    heatSlider.setVisible (isWeights);
+    memoryLabel.setVisible (isWeights);
+    memorySlider.setVisible (isWeights);
+    driftModeCombo.setVisible (isWeights);
+    freezeButton.setVisible (isWeights);
+    bridgeLabel.setVisible (isWeights);
+    bridgeCombo.setVisible (isWeights);
+    bridgeDepthLabel.setVisible (isWeights);
+    bridgeDepthSlider.setVisible (isWeights);
+
+    // Toggle latent-domain controls
+    latentEnableButton.setVisible (isLatent);
+    latentDepthLabel.setVisible (isLatent);
+    latentDepthSlider.setVisible (isLatent);
+    latentModeLabel.setVisible (isLatent);
+    latentModeCombo.setVisible (isLatent);
+    latentSlewLabel.setVisible (isLatent);
+    latentSlewSlider.setVisible (isLatent);
+
+    // Update bottom readout status
+    if (isLatent)
+    {
+        if (audioProcessor.hasAutoencode())
+            infoBendingLabel.setText ("Latent Topographic Vector Pad: Drag cursor to modulate autoencoder bottleneck.", juce::dontSendNotification);
+        else
+            infoBendingLabel.setText ("Latent View: Standby. Loaded model does not expose paired encode + decode methods.", juce::dontSendNotification);
+    }
+    else
+    {
+        infoBendingLabel.setText (currentBendingLayer.isNotEmpty() ? ("Layer: " + currentBendingLayer) : "Select a layer to bend weights.", juce::dontSendNotification);
+    }
+
+    repaint();
 }
 
