@@ -138,22 +138,30 @@ function(configure_nn_bending_target target_name)
                     )
                 endif()
 
-                # For VST3 plugin, copy bundle to the system VST3 directory
+                # For VST3 plugin, install bundle to system and/or user VST3 directory
                 if (sub_target MATCHES ".*_VST3$")
                     set(SRC_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/${target_name}_artefacts/$<CONFIG>/VST3/nn~ Bending.vst3")
+                    file(TO_CMAKE_PATH "$ENV{CommonProgramFiles}" CPF_DIR)
+                    set(SYS_DEST "${CPF_DIR}/VST3/nn~ Bending.vst3")
+
+                    file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}" LAPPDATA_DIR)
+                    set(USER_DEST "${LAPPDATA_DIR}/Programs/Common/VST3/nn~ Bending.vst3")
+
+                    set(CUSTOM_DEST "")
                     if (DEFINED ENV{VST3_INSTALL_PATH})
                         file(TO_CMAKE_PATH "$ENV{VST3_INSTALL_PATH}" VST3_DIR)
-                        set(COPY_DEST "${VST3_DIR}/nn~ Bending.vst3")
-                    else()
-                        file(TO_CMAKE_PATH "$ENV{CommonProgramFiles}" CPF_DIR)
-                        set(COPY_DEST "${CPF_DIR}/VST3/nn~ Bending.vst3")
+                        set(CUSTOM_DEST "${VST3_DIR}/nn~ Bending.vst3")
                     endif()
 
                     add_custom_command(
                         TARGET ${sub_target} POST_BUILD
-                        COMMAND ${CMAKE_COMMAND} -E rm -rf "${COPY_DEST}"
-                        COMMAND ${CMAKE_COMMAND} -E copy_directory "${SRC_BUNDLE}" "${COPY_DEST}"
-                        COMMENT "Installing VST3 plugin to ${COPY_DEST}"
+                        COMMAND ${CMAKE_COMMAND}
+                            -D "SRC_BUNDLE=${SRC_BUNDLE}"
+                            -D "SYS_DEST=${SYS_DEST}"
+                            -D "USER_DEST=${USER_DEST}"
+                            -D "CUSTOM_DEST=${CUSTOM_DEST}"
+                            -P "${CMAKE_SOURCE_DIR}/../install/install_vst3_windows.cmake"
+                        COMMENT "Installing VST3 plugin bundle..."
                         VERBATIM
                     )
                 endif()
