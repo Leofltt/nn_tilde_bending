@@ -96,6 +96,22 @@ private:
     juce::Label bridgeDepthLabel { {}, "Cross-Talk" };
     juce::Slider bridgeDepthSlider;
 
+    // Harmonic Weight Synthesizer (Fourier Generator)
+    juce::Label harmonicTitleLabel { {}, "Harmonics:" };
+    juce::Label harmonicFreqLabel { {}, "Freq" };
+    juce::Slider harmonicFreqSlider;
+    juce::Label harmonicPartialsLabel { {}, "Partials" };
+    juce::Slider harmonicPartialsSlider;
+    juce::Label harmonicMorphLabel { {}, "Morph" };
+    juce::Slider harmonicMorphSlider;
+    juce::Label harmonicDepthLabel { {}, "Gain" };
+    juce::Slider harmonicDepthSlider;
+    juce::ComboBox harmonicModeCombo;
+    juce::TextButton harmonicApplyButton { "Stamp" };
+
+    void updateHarmonicGhostPreview();
+    void applyHarmonicWeights();
+
     juce::Label infoBendingLabel;
 
     // File Chooser

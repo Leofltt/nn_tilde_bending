@@ -50,6 +50,13 @@ public:
         repaint();
     }
 
+    void setHarmonicGhostWeights(const std::vector<float>& ghostWeights, bool showGhost)
+    {
+        m_harmonicGhostWeights = ghostWeights;
+        m_showHarmonicGhost = showGhost;
+        repaint();
+    }
+
     const std::vector<float>& getCurrentWeights() const { return m_currentWeights; }
     const std::vector<float>& getOriginalWeights() const { return m_originalWeights; }
     bool isCurrentlyDrawing() const { return m_dragMode == DragMode::Drawing; }
@@ -194,7 +201,19 @@ public:
                 g.strokePath(targetPath, juce::PathStrokeType(1.4f));
             }
 
-            // 5. Render current live weights (Neon purple/violet with gradient fill)
+            // 5. Render harmonic synthesizer ghost preview (Glowing gold/amber dashed line)
+            if (m_showHarmonicGhost && !m_harmonicGhostWeights.empty())
+            {
+                juce::Path ghostPath;
+                buildPathForWeights(ghostPath, m_harmonicGhostWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#fffbbf24").withAlpha(0.95f)); // Luminous amber gold
+                const float dashLengths[2] = { 6.0f, 3.0f };
+                juce::Path dashedGhostStroke;
+                juce::PathStrokeType(1.8f).createDashedStroke(dashedGhostStroke, ghostPath, dashLengths, 2);
+                g.fillPath(dashedGhostStroke);
+            }
+
+            // 6. Render current live weights (Neon purple/violet with gradient fill)
             juce::Path bentPath;
             buildPathForWeights(bentPath, m_currentWeights, pw, ph);
 
@@ -226,8 +245,9 @@ public:
                 // Calculate required width based on active curves
                 bool showBridge = (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty());
                 bool showTarget = (!m_targetBentWeights.empty());
+                bool showHarmonic = (m_showHarmonicGhost && !m_harmonicGhostWeights.empty());
 
-                int totalItems = 2 + (showBridge ? 2 : 0) + (showTarget ? 1 : 0);
+                int totalItems = 2 + (showBridge ? 2 : 0) + (showTarget ? 1 : 0) + (showHarmonic ? 1 : 0);
                 int itemW = 78;
                 int legendW = totalItems * itemW;
                 int legendX = (int)pw - legendW - 8;
@@ -261,6 +281,15 @@ public:
                     g.setColour(juce::Colour::fromString("#ffec4899"));
                     g.fillRect(curX, legendY + 3, 10, 3);
                     g.drawText("Target Bent", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
+                    curX += itemW;
+                }
+
+                // Gold: Harmonic Preview (when present)
+                if (showHarmonic)
+                {
+                    g.setColour(juce::Colour::fromString("#fffbbf24"));
+                    g.fillRect(curX, legendY + 3, 10, 3);
+                    g.drawText("Harmonic (·)", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
                     curX += itemW;
                 }
 
@@ -562,6 +591,8 @@ private:
     std::vector<float> m_targetBentWeights;
     std::vector<float> m_bridgeSourceWeights;
     std::vector<float> m_bridgeMixWeights;
+    std::vector<float> m_harmonicGhostWeights;
+    bool m_showHarmonicGhost { false };
     float m_bridgeDepth { 0.0f };
     bool m_isContinuousMode { true };
 

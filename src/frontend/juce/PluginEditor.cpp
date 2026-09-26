@@ -248,6 +248,80 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     bridgeDepthSlider.addListener (this);
     addAndMakeVisible (bridgeDepthSlider);
 
+    // Harmonic Weight Synthesizer (Fourier Generator) Controls
+    harmonicTitleLabel.setText ("Harmonics:", juce::dontSendNotification);
+    harmonicTitleLabel.setJustificationType (juce::Justification::centredLeft);
+    harmonicTitleLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#fffbbf24")); // Luminous amber gold
+    addAndMakeVisible (harmonicTitleLabel);
+
+    harmonicFreqLabel.setText ("Freq", juce::dontSendNotification);
+    harmonicFreqLabel.setJustificationType (juce::Justification::centred);
+    harmonicFreqLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (harmonicFreqLabel);
+
+    harmonicFreqSlider.setRange (0.5, 32.0, 0.1);
+    harmonicFreqSlider.setValue (2.0);
+    harmonicFreqSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    harmonicFreqSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 18);
+    harmonicFreqSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
+    harmonicFreqSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicFreqSlider.addListener (this);
+    addAndMakeVisible (harmonicFreqSlider);
+
+    harmonicPartialsLabel.setText ("Partials", juce::dontSendNotification);
+    harmonicPartialsLabel.setJustificationType (juce::Justification::centred);
+    harmonicPartialsLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (harmonicPartialsLabel);
+
+    harmonicPartialsSlider.setRange (1.0, 8.0, 1.0);
+    harmonicPartialsSlider.setValue (1.0);
+    harmonicPartialsSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    harmonicPartialsSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 28, 18);
+    harmonicPartialsSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
+    harmonicPartialsSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicPartialsSlider.addListener (this);
+    addAndMakeVisible (harmonicPartialsSlider);
+
+    harmonicMorphLabel.setText ("Morph", juce::dontSendNotification);
+    harmonicMorphLabel.setJustificationType (juce::Justification::centred);
+    harmonicMorphLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (harmonicMorphLabel);
+
+    harmonicMorphSlider.setRange (0.0, 6.2831853, 0.01);
+    harmonicMorphSlider.setValue (0.0);
+    harmonicMorphSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    harmonicMorphSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 18);
+    harmonicMorphSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
+    harmonicMorphSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicMorphSlider.addListener (this);
+    addAndMakeVisible (harmonicMorphSlider);
+
+    harmonicDepthLabel.setText ("Gain", juce::dontSendNotification);
+    harmonicDepthLabel.setJustificationType (juce::Justification::centred);
+    harmonicDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (harmonicDepthLabel);
+
+    harmonicDepthSlider.setRange (0.0, 2.0, 0.01);
+    harmonicDepthSlider.setValue (0.5);
+    harmonicDepthSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    harmonicDepthSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 18);
+    harmonicDepthSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
+    harmonicDepthSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicDepthSlider.addListener (this);
+    addAndMakeVisible (harmonicDepthSlider);
+
+    harmonicModeCombo.addItem ("Add (+)", 1);
+    harmonicModeCombo.addItem ("Ring (*)", 2);
+    harmonicModeCombo.addItem ("Replace", 3);
+    harmonicModeCombo.setSelectedId (1, juce::dontSendNotification);
+    harmonicModeCombo.addListener (this);
+    addAndMakeVisible (harmonicModeCombo);
+
+    harmonicApplyButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a3712"));
+    harmonicApplyButton.setColour (juce::TextButton::textColourOffId, juce::Colour::fromString ("#fffde047"));
+    harmonicApplyButton.addListener (this);
+    addAndMakeVisible (harmonicApplyButton);
+
     // Info Label
     infoBendingLabel.setText ("Select a layer to bend weights.", juce::dontSendNotification);
     infoBendingLabel.setJustificationType (juce::Justification::centredLeft);
@@ -349,7 +423,34 @@ void NNBendingAudioProcessorEditor::resized()
     
     layerCombo.setBounds (layerRow); // Takes remaining center width
 
-    groupArea.removeFromTop (10); // Spacer
+    groupArea.removeFromTop (8); // Spacer
+
+    // Harmonic Synthesizer Toolbar Row (above weightCanvas)
+    auto harmonicRow = groupArea.removeFromTop (26);
+    harmonicTitleLabel.setBounds (harmonicRow.removeFromLeft (74));
+    harmonicRow.removeFromLeft (4);
+
+    harmonicFreqLabel.setBounds (harmonicRow.removeFromLeft (32));
+    harmonicFreqSlider.setBounds (harmonicRow.removeFromLeft (110));
+    harmonicRow.removeFromLeft (8);
+
+    harmonicPartialsLabel.setBounds (harmonicRow.removeFromLeft (46));
+    harmonicPartialsSlider.setBounds (harmonicRow.removeFromLeft (95));
+    harmonicRow.removeFromLeft (8);
+
+    harmonicMorphLabel.setBounds (harmonicRow.removeFromLeft (40));
+    harmonicMorphSlider.setBounds (harmonicRow.removeFromLeft (105));
+    harmonicRow.removeFromLeft (8);
+
+    harmonicDepthLabel.setBounds (harmonicRow.removeFromLeft (32));
+    harmonicDepthSlider.setBounds (harmonicRow.removeFromLeft (95));
+    harmonicRow.removeFromLeft (8);
+
+    harmonicApplyButton.setBounds (harmonicRow.removeFromRight (64));
+    harmonicRow.removeFromRight (6);
+    harmonicModeCombo.setBounds (harmonicRow.removeFromRight (95));
+
+    groupArea.removeFromTop (8); // Spacer between toolbar and canvas
 
     // Bottom info readout row
     auto bottomRow = groupArea.removeFromBottom (20);
@@ -464,11 +565,20 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
             applyKnobBending();
         }
     }
+    else if (comboBoxThatHasChanged == &harmonicModeCombo)
+    {
+        updateHarmonicGhostPreview();
+    }
 }
 
 void NNBendingAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 {
-    if (slider == &dryWetSlider)
+    if (slider == &harmonicFreqSlider || slider == &harmonicPartialsSlider
+        || slider == &harmonicMorphSlider || slider == &harmonicDepthSlider)
+    {
+        updateHarmonicGhostPreview();
+    }
+    else if (slider == &dryWetSlider)
     {
         float val = (float)dryWetSlider.getValue();
         audioProcessor.setDryWet (val);
@@ -614,6 +724,10 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     else if (button == &saveModelButton)
     {
         saveModelToFile();
+    }
+    else if (button == &harmonicApplyButton)
+    {
+        applyHarmonicWeights();
     }
 }
 
@@ -1026,6 +1140,9 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     lastKnownOffset = state.offset;
     lastKnownHeat = state.heat;
     lastKnownMemory = state.memory;
+
+    // Refresh harmonic preview for the newly selected layer
+    updateHarmonicGhostPreview();
 }
 
 void NNBendingAudioProcessorEditor::applyKnobBending()
@@ -1135,6 +1252,7 @@ void NNBendingAudioProcessorEditor::resetLayerWeights()
     weightCanvas.setWeights (originalWeights, currentWeights);
     weightCanvas.setTargetBentWeights ({});
     weightCanvas.setBridgeWeights ({}, {}, 0.0f, audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Continuous);
+    updateHarmonicGhostPreview();
 }
 
 void NNBendingAudioProcessorEditor::resetAllLayerWeights()
@@ -1186,6 +1304,7 @@ void NNBendingAudioProcessorEditor::resetAllLayerWeights()
         weightCanvas.setWeights (originalWeights, currentWeights);
         weightCanvas.setTargetBentWeights ({});
         weightCanvas.setBridgeWeights ({}, {}, 0.0f, audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Continuous);
+        updateHarmonicGhostPreview();
     }
 }
 
@@ -1245,5 +1364,103 @@ void NNBendingAudioProcessorEditor::updateKnobContextLabels (NNBendingAudioProce
         offsetLabel.setText ("Offset", juce::dontSendNotification);
         offsetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     }
+}
+
+void NNBendingAudioProcessorEditor::updateHarmonicGhostPreview()
+{
+    if (currentBendingLayer.isEmpty() || baseDrawnWeights.empty())
+    {
+        weightCanvas.setHarmonicGhostWeights ({}, false);
+        return;
+    }
+
+    size_t N = baseDrawnWeights.size();
+    std::vector<float> ghost (N);
+
+    float f = (float)harmonicFreqSlider.getValue();
+    int partials = (int)harmonicPartialsSlider.getValue();
+    float morph = (float)harmonicMorphSlider.getValue();
+    float gain = (float)harmonicDepthSlider.getValue();
+    int mode = harmonicModeCombo.getSelectedId(); // 1 = Add, 2 = Ring, 3 = Replace
+
+    // TwoPi constant
+    const float twoPi = 6.28318530717958647692f;
+
+    for (size_t i = 0; i < N; ++i)
+    {
+        float x = (N > 1) ? (float)i / (float)(N - 1) : 0.0f;
+        float synthVal = 0.0f;
+
+        for (int k = 1; k <= partials; ++k)
+        {
+            float harmonicAmp = 1.0f / std::sqrt ((float)k); // Soft 1/sqrt(k) harmonic decay
+            synthVal += harmonicAmp * std::sin (twoPi * (float)k * f * x + morph);
+        }
+        synthVal *= gain;
+
+        if (mode == 1) // Add
+        {
+            ghost[i] = baseDrawnWeights[i] + synthVal;
+        }
+        else if (mode == 2) // Ring (multiply)
+        {
+            ghost[i] = baseDrawnWeights[i] * (1.0f + synthVal);
+        }
+        else // Replace
+        {
+            ghost[i] = synthVal;
+        }
+    }
+
+    weightCanvas.setHarmonicGhostWeights (ghost, true);
+}
+
+void NNBendingAudioProcessorEditor::applyHarmonicWeights()
+{
+    if (currentBendingLayer.isEmpty() || baseDrawnWeights.empty())
+        return;
+
+    size_t N = baseDrawnWeights.size();
+    std::vector<float> stamped (N);
+
+    float f = (float)harmonicFreqSlider.getValue();
+    int partials = (int)harmonicPartialsSlider.getValue();
+    float morph = (float)harmonicMorphSlider.getValue();
+    float gain = (float)harmonicDepthSlider.getValue();
+    int mode = harmonicModeCombo.getSelectedId();
+
+    const float twoPi = 6.28318530717958647692f;
+
+    for (size_t i = 0; i < N; ++i)
+    {
+        float x = (N > 1) ? (float)i / (float)(N - 1) : 0.0f;
+        float synthVal = 0.0f;
+
+        for (int k = 1; k <= partials; ++k)
+        {
+            float harmonicAmp = 1.0f / std::sqrt ((float)k);
+            synthVal += harmonicAmp * std::sin (twoPi * (float)k * f * x + morph);
+        }
+        synthVal *= gain;
+
+        if (mode == 1)
+            stamped[i] = baseDrawnWeights[i] + synthVal;
+        else if (mode == 2)
+            stamped[i] = baseDrawnWeights[i] * (1.0f + synthVal);
+        else
+            stamped[i] = synthVal;
+    }
+
+    // Persist as new baseDrawnWeights
+    baseDrawnWeights = stamped;
+    audioProcessor.setLayerDrawnWeights (currentBendingLayer.toStdString(), baseDrawnWeights);
+
+    // Hide ghost preview once stamped
+    weightCanvas.setHarmonicGhostWeights ({}, false);
+
+    // Apply via existing knob bending pipeline
+    applyKnobBending();
+
+    infoBendingLabel.setText ("Harmonic wave stamped to " + currentBendingLayer, juce::dontSendNotification);
 }
 
