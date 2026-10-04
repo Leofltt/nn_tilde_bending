@@ -328,6 +328,16 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (viewWeightsButton);
     addAndMakeVisible (viewLatentButton);
 
+    // Weight Canvas Display Mode Switcher (1D Curve vs 2D Matrix)
+    displayCurveButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a1d72"));
+    displayCurveButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    displayCurveButton.addListener (this);
+    displayMatrixButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1c1926"));
+    displayMatrixButton.setColour (juce::TextButton::textColourOffId, juce::Colours::darkgrey);
+    displayMatrixButton.addListener (this);
+    addAndMakeVisible (displayCurveButton);
+    addAndMakeVisible (displayMatrixButton);
+
     // Latent Terrain Pad
     addChildComponent (latentPad);
     latentPad.onCoordsChanged = [this] (float x, float y)
@@ -500,6 +510,13 @@ void NNBendingAudioProcessorEditor::resized()
 
     // Harmonic Synthesizer Toolbar Row (above canvas)
     auto harmonicRow = groupArea.removeFromTop (26);
+
+    // Display mode buttons [1D] [2D] on far left of harmonic row
+    displayCurveButton.setBounds (harmonicRow.removeFromLeft (32));
+    harmonicRow.removeFromLeft (2);
+    displayMatrixButton.setBounds (harmonicRow.removeFromLeft (32));
+    harmonicRow.removeFromLeft (12);
+
     harmonicTitleLabel.setBounds (harmonicRow.removeFromLeft (74));
     harmonicRow.removeFromLeft (4);
 
@@ -855,6 +872,22 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
         bool en = latentEnableButton.getToggleState();
         audioProcessor.setLatentEnabled (en);
         latentPad.setEnabledState (en, audioProcessor.hasAutoencode());
+    }
+    else if (button == &displayCurveButton)
+    {
+        weightCanvas.setRenderMode (WeightBendingComponent::RenderMode::Curve);
+        displayCurveButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a1d72"));
+        displayCurveButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        displayMatrixButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1c1926"));
+        displayMatrixButton.setColour (juce::TextButton::textColourOffId, juce::Colours::darkgrey);
+    }
+    else if (button == &displayMatrixButton)
+    {
+        weightCanvas.setRenderMode (WeightBendingComponent::RenderMode::Matrix);
+        displayMatrixButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a1d72"));
+        displayMatrixButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        displayCurveButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1c1926"));
+        displayCurveButton.setColour (juce::TextButton::textColourOffId, juce::Colours::darkgrey);
     }
 }
 
@@ -1228,6 +1261,8 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     bridgeCombo.addListener (this);
     bridgeDepthSlider.addListener (this);
 
+    auto shape = audioProcessor.getBackend().get_layer_shape (layerName.toStdString());
+    weightCanvas.setLayerShape (shape);
     weightCanvas.setWeights (originalWeights, currentWeights);
 
     // Compute and send bridge source & mix curves to canvas
@@ -1643,6 +1678,8 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     layerCombo.setVisible (isWeights);
     resetLayerButton.setVisible (isWeights);
     resetAllButton.setVisible (isWeights);
+    displayCurveButton.setVisible (isWeights);
+    displayMatrixButton.setVisible (isWeights);
 
     // Toggle harmonic toolbar visibility
     harmonicTitleLabel.setVisible (isWeights);

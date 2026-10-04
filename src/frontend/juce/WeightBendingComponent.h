@@ -18,10 +18,31 @@ public:
 
     std::function<void(const std::vector<float>&)> onWeightsModified;
 
+    enum class RenderMode { Curve, Matrix };
+
+    void setRenderMode(RenderMode mode)
+    {
+        if (m_renderMode != mode)
+        {
+            m_renderMode = mode;
+            repaint();
+        }
+    }
+
+    RenderMode getRenderMode() const { return m_renderMode; }
+
+    void setLayerShape(const std::vector<int64_t>& shape)
+    {
+        m_layerShape = shape;
+        calculateMatrixDimensions();
+        repaint();
+    }
+
     void setWeights(const std::vector<float>& original, const std::vector<float>& current)
     {
         m_originalWeights = original;
         m_currentWeights = current;
+        calculateMatrixDimensions();
         recalculateStats();
         // Reset zoom on loading a new layer
         resetView();
@@ -31,6 +52,7 @@ public:
     void updateCurrentWeights(const std::vector<float>& current)
     {
         m_currentWeights = current;
+        calculateMatrixDimensions();
         recalculateStats();
         repaint();
     }
@@ -58,6 +80,7 @@ public:
     }
 
     const std::vector<float>& getCurrentWeights() const { return m_currentWeights; }
+    const std::vector<int64_t>& getLayerShape() const { return m_layerShape; }
     const std::vector<float>& getOriginalWeights() const { return m_originalWeights; }
     bool isCurrentlyDrawing() const { return m_dragMode == DragMode::Drawing; }
 
@@ -131,6 +154,29 @@ public:
         // Draw plot area background & border
         g.setColour(juce::Colour::fromString("#ff110f17"));
         g.fillRect(plotArea);
+
+        if (m_renderMode == RenderMode::Matrix)
+        {
+            paintMatrixView(g, plotArea);
+        }
+        else
+        {
+            paintCurveView(g, plotArea);
+        }
+
+        // Frame around plot area
+        g.setColour(juce::Colour::fromString("#ff3a344d"));
+        g.drawRect(plotArea, 1.0f);
+
+        // Edge scroll and zoom bars (only relevant for Curve view)
+        if (m_renderMode == RenderMode::Curve)
+            drawEdgeScrollBars(g);
+    }
+
+    void paintCurveView(juce::Graphics& g, juce::Rectangle<float> plotArea)
+    {
+        float pw = plotArea.getWidth();
+        float ph = plotArea.getHeight();
 
         // Clip drawing to plot area so curves and grid don't spill into scrollbars
         {
@@ -317,13 +363,179 @@ public:
             juce::String hint = "Draw: Left Drag | Pan: 2-finger scroll / Right Drag | Zoom: Pinch / Cmd+Scroll | Double-Click: Reset";
             g.drawText(hint, plotArea.reduced(8, 4).toNearestInt(), juce::Justification::topLeft, true);
         }
+    }
 
-        // Frame around plot area
-        g.setColour(juce::Colour::fromString("#ff3a344d"));
-        g.drawRect(plotArea, 1.0f);
+    juce::Colour getHeatmapColour(float val) const
+    {
+        // Perceptual diverging palette:
+        // Deep Indigo/Purple (#ff4338ca) <--> Neutral Charcoal (#ff16131f) <--> Cyan/Emerald (#ff06b6d4 / #ff10b981)
+        float maxAbs = std::max(0.001f, m_displayRange);
+        float norm = juce::jlimit(-1.0f, 1.0f, val / maxAbs);
 
-        // Edge scroll and zoom bars
-        drawEdgeScrollBars(g);
+        if (norm < 0.0f)
+        {
+            // Negative: interpolate from charcoal to deep violet/indigo
+            float t = -norm; // 0 to 1
+            auto cMid = juce::Colour::fromString("#ff16131f");
+            auto cNeg = juce::Colour::fromString("#ff6366f1"); // Electric indigo
+            return cMid.interpolatedWith(cNeg, t);
+        }
+        else
+        {
+            // Positive: interpolate from charcoal to vibrant cyan/emerald
+            float t = norm; // 0 to 1
+            auto cMid = juce::Colour::fromString("#ff16131f");
+            auto cPos = juce::Colour::fromString("#ff06b6d4"); // Bright neon cyan
+            return cMid.interpolatedWith(cPos, t);
+        }
+    }
+
+    void paintMatrixView(juce::Graphics& g, juce::Rectangle<float> plotArea)
+    {
+        float pw = plotArea.getWidth();
+        float ph = plotArea.getHeight();
+
+        juce::Graphics::ScopedSaveState sss(g);
+        g.reduceClipRegion(plotArea.toNearestInt());
+
+        int rows = m_matrixRows;
+        int cols = m_matrixCols;
+        if (rows <= 0 || cols <= 0 || m_currentWeights.empty())
+            return;
+
+        // Leave margin for channel indices and status
+        float marginTop = 26.0f;
+        float marginBottom = 24.0f;
+        float marginLeft = 40.0f;
+        float marginRight = 16.0f;
+
+        float gridW = std::max(10.0f, pw - marginLeft - marginRight);
+        float gridH = std::max(10.0f, ph - marginTop - marginBottom);
+
+        float cellW = gridW / (float)cols;
+        float cellH = gridH / (float)rows;
+
+        // Draw cells
+        size_t totalWeights = m_currentWeights.size();
+        for (int r = 0; r < rows; ++r)
+        {
+            for (int c = 0; c < cols; ++c)
+            {
+                size_t idx = (size_t)(r * cols + c);
+                if (idx >= totalWeights)
+                    break;
+
+                float val = m_currentWeights[idx];
+                auto cellRect = juce::Rectangle<float>(
+                    plotArea.getX() + marginLeft + c * cellW,
+                    plotArea.getY() + marginTop + r * cellH,
+                    cellW, cellH
+                );
+
+                g.setColour(getHeatmapColour(val));
+                g.fillRect(cellRect);
+
+                // Subtle grid separator if cells are large enough
+                if (cellW > 4.0f && cellH > 4.0f)
+                {
+                    g.setColour(juce::Colour::fromString("#ff0e0d13").withAlpha(0.6f));
+                    g.drawRect(cellRect, 0.5f);
+                }
+
+                // If hovered, highlight cell
+                if (r == m_hoveredRow && c == m_hoveredCol)
+                {
+                    g.setColour(juce::Colours::white.withAlpha(0.9f));
+                    g.drawRect(cellRect, 1.5f);
+                }
+            }
+        }
+
+        // Bridge Wire cross-talk glowing indicator
+        if (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
+        {
+            g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(0.7f)); // Warm golden amber
+            float bridgeBarX = plotArea.getX() + marginLeft - 8.0f;
+            g.fillRect(bridgeBarX, plotArea.getY() + marginTop, 4.0f, gridH);
+        }
+
+        // Axis Channel Labels
+        g.setColour(juce::Colours::white.withAlpha(0.4f));
+        g.setFont(juce::FontOptions(10.0f));
+
+        // Row indices (C_out)
+        int rowStep = std::max(1, rows / 8);
+        for (int r = 0; r < rows; r += rowStep)
+        {
+            float y = plotArea.getY() + marginTop + r * cellH;
+            g.drawText(juce::String(r), (int)plotArea.getX() + 2, (int)y, (int)marginLeft - 6, (int)cellH, juce::Justification::centredRight);
+        }
+
+        // Col indices (C_in * K)
+        int colStep = std::max(1, cols / 8);
+        for (int c = 0; c < cols; c += colStep)
+        {
+            float x = plotArea.getX() + marginLeft + c * cellW;
+            g.drawText(juce::String(c), (int)x, (int)(plotArea.getY() + marginTop - 16.0f), (int)cellW, 14, juce::Justification::centred);
+        }
+
+        // Header Title / Shape readout
+        juce::String shapeStr = "Shape: [";
+        for (size_t i = 0; i < m_layerShape.size(); ++i)
+        {
+            shapeStr += juce::String(m_layerShape[i]);
+            if (i + 1 < m_layerShape.size()) shapeStr += ", ";
+        }
+        shapeStr += juce::String::formatted("] -> Matrix: %d x %d (%d weights)", rows, cols, (int)totalWeights);
+
+        g.setColour(juce::Colours::lightcyan.withAlpha(0.85f));
+        g.setFont(juce::FontOptions(11.0f));
+        g.drawText(shapeStr, (int)(plotArea.getX() + marginLeft), (int)plotArea.getY() + 4, (int)gridW, 16, juce::Justification::topLeft);
+
+        // Hovered cell readout in bottom status bar
+        if (m_hoveredRow >= 0 && m_hoveredRow < rows && m_hoveredCol >= 0 && m_hoveredCol < cols)
+        {
+            size_t idx = (size_t)(m_hoveredRow * cols + m_hoveredCol);
+            if (idx < totalWeights)
+            {
+                float val = m_currentWeights[idx];
+                float origVal = (idx < m_originalWeights.size()) ? m_originalWeights[idx] : val;
+                juce::String cellInfo = juce::String::formatted(
+                    "Cell [%d, %d] (Idx %d)  |  Current: %+.5f  |  Original: %+.5f  |  Diff: %+.5f",
+                    m_hoveredRow, m_hoveredCol, (int)idx, val, origVal, (val - origVal)
+                );
+
+                g.setColour(juce::Colour::fromString("#ff06b6d4"));
+                g.drawText(cellInfo, (int)(plotArea.getX() + marginLeft), (int)(plotArea.getBottom() - marginBottom + 4), (int)gridW, 16, juce::Justification::topLeft);
+            }
+        }
+        else
+        {
+            g.setColour(juce::Colours::lightgrey.withAlpha(0.5f));
+            juce::String hint = "Hover to inspect weights | Left Click & Drag: Paint / Bend weight values on 2D matrix";
+            g.drawText(hint, (int)(plotArea.getX() + marginLeft), (int)(plotArea.getBottom() - marginBottom + 4), (int)gridW, 16, juce::Justification::topLeft);
+        }
+
+        // Diverging Colorbar Legend in top right
+        float legW = 90.0f;
+        float legH = 10.0f;
+        float legX = plotArea.getRight() - marginRight - legW;
+        float legY = plotArea.getY() + 6.0f;
+
+        juce::ColourGradient legGrad(
+            juce::Colour::fromString("#ff6366f1"), legX, legY,
+            juce::Colour::fromString("#ff06b6d4"), legX + legW, legY, false
+        );
+        legGrad.addColour(0.5, juce::Colour::fromString("#ff16131f"));
+        g.setGradientFill(legGrad);
+        g.fillRect(legX, legY, legW, legH);
+        g.setColour(juce::Colour::fromString("#ff4c4363"));
+        g.drawRect(legX, legY, legW, legH, 1.0f);
+
+        g.setFont(juce::FontOptions(9.0f));
+        g.setColour(juce::Colours::white.withAlpha(0.7f));
+        g.drawText(juce::String(-m_displayRange, 1), (int)(legX - 24), (int)legY - 1, 22, (int)legH, juce::Justification::centredRight);
+        g.drawText(juce::String(+m_displayRange, 1), (int)(legX + legW + 3), (int)legY - 1, 24, (int)legH, juce::Justification::centredLeft);
     }
 
     void drawEdgeScrollBars(juce::Graphics& g)
@@ -450,8 +662,34 @@ public:
         resetView();
     }
 
+    void mouseMove(const juce::MouseEvent& e) override
+    {
+        if (m_renderMode == RenderMode::Matrix)
+        {
+            updateHoveredMatrixCell(e.position);
+        }
+    }
+
+    void mouseExit(const juce::MouseEvent& /*e*/) override
+    {
+        if (m_renderMode == RenderMode::Matrix)
+        {
+            m_hoveredRow = -1;
+            m_hoveredCol = -1;
+            repaint();
+        }
+    }
+
     void mouseDown(const juce::MouseEvent& e) override
     {
+        if (m_renderMode == RenderMode::Matrix)
+        {
+            m_dragMode = DragMode::Drawing;
+            m_lastMousePos = e.position;
+            applyMatrixDrawing(e.position, e.mods.isShiftDown() || e.mods.isRightButtonDown());
+            return;
+        }
+
         auto cornerArea = getCornerButtonArea();
         if (cornerArea.contains(e.position))
         {
@@ -491,6 +729,14 @@ public:
 
     void mouseDrag(const juce::MouseEvent& e) override
     {
+        if (m_renderMode == RenderMode::Matrix)
+        {
+            updateHoveredMatrixCell(e.position);
+            applyMatrixDrawing(e.position, e.mods.isShiftDown() || e.mods.isRightButtonDown());
+            m_lastMousePos = e.position;
+            return;
+        }
+
         if (m_dragMode == DragMode::PanCanvas)
         {
             auto delta = e.position - m_lastMousePos;
@@ -564,6 +810,64 @@ public:
         repaint();
     }
 
+    void updateHoveredMatrixCell(juce::Point<float> pos)
+    {
+        auto plotArea = getPlotArea();
+        float marginTop = 26.0f;
+        float marginBottom = 24.0f;
+        float marginLeft = 40.0f;
+        float marginRight = 16.0f;
+
+        float gridX = plotArea.getX() + marginLeft;
+        float gridY = plotArea.getY() + marginTop;
+        float gridW = std::max(10.0f, plotArea.getWidth() - marginLeft - marginRight);
+        float gridH = std::max(10.0f, plotArea.getHeight() - marginTop - marginBottom);
+
+        if (pos.x >= gridX && pos.x <= gridX + gridW && pos.y >= gridY && pos.y <= gridY + gridH && m_matrixCols > 0 && m_matrixRows > 0)
+        {
+            int col = (int)((pos.x - gridX) / (gridW / (float)m_matrixCols));
+            int row = (int)((pos.y - gridY) / (gridH / (float)m_matrixRows));
+
+            col = juce::jlimit(0, m_matrixCols - 1, col);
+            row = juce::jlimit(0, m_matrixRows - 1, row);
+
+            if (col != m_hoveredCol || row != m_hoveredRow)
+            {
+                m_hoveredCol = col;
+                m_hoveredRow = row;
+                repaint();
+            }
+        }
+        else
+        {
+            if (m_hoveredCol != -1 || m_hoveredRow != -1)
+            {
+                m_hoveredCol = -1;
+                m_hoveredRow = -1;
+                repaint();
+            }
+        }
+    }
+
+    void applyMatrixDrawing(juce::Point<float> pos, bool invertOrErase)
+    {
+        updateHoveredMatrixCell(pos);
+        if (m_hoveredRow >= 0 && m_hoveredRow < m_matrixRows && m_hoveredCol >= 0 && m_hoveredCol < m_matrixCols)
+        {
+            size_t idx = (size_t)(m_hoveredRow * m_matrixCols + m_hoveredCol);
+            if (idx < m_currentWeights.size())
+            {
+                float delta = invertOrErase ? -0.1f * m_displayRange : 0.1f * m_displayRange;
+                m_currentWeights[idx] = juce::jlimit(-10.0f, 10.0f, m_currentWeights[idx] + delta);
+                recalculateStats();
+                repaint();
+
+                if (onWeightsModified)
+                    onWeightsModified(m_currentWeights);
+            }
+        }
+    }
+
 private:
     enum class DragMode
     {
@@ -595,6 +899,54 @@ private:
     bool m_showHarmonicGhost { false };
     float m_bridgeDepth { 0.0f };
     bool m_isContinuousMode { true };
+
+    RenderMode m_renderMode { RenderMode::Curve };
+    std::vector<int64_t> m_layerShape;
+    int m_matrixRows { 1 };
+    int m_matrixCols { 1 };
+    int m_hoveredRow { -1 };
+    int m_hoveredCol { -1 };
+
+    void calculateMatrixDimensions()
+    {
+        int N = (int)m_currentWeights.size();
+        if (N <= 0)
+        {
+            m_matrixRows = 1;
+            m_matrixCols = 1;
+            return;
+        }
+
+        if (m_layerShape.size() >= 2)
+        {
+            m_matrixRows = (int)m_layerShape[0];
+            int64_t cols = 1;
+            for (size_t i = 1; i < m_layerShape.size(); ++i)
+                cols *= m_layerShape[i];
+            m_matrixCols = (int)cols;
+        }
+        else if (m_layerShape.size() == 1)
+        {
+            // 1D tensor (e.g., Bias): pick aspect ratio close to 1:1 or 1:4
+            int r = (int)std::floor(std::sqrt((float)N));
+            while (r > 1 && (N % r != 0))
+                --r;
+            m_matrixRows = r;
+            m_matrixCols = N / r;
+        }
+        else
+        {
+            // Fallback factorization
+            int r = (int)std::floor(std::sqrt((float)N));
+            while (r > 1 && (N % r != 0))
+                --r;
+            m_matrixRows = r;
+            m_matrixCols = N / r;
+        }
+
+        m_matrixRows = std::max(1, m_matrixRows);
+        m_matrixCols = std::max(1, m_matrixCols);
+    }
 
     // Viewport transform
     float m_viewStartX { 0.0f }; // 0.0 to 1.0 (start index fraction)

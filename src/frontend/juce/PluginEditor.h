@@ -72,6 +72,10 @@ private:
     WeightBendingComponent weightCanvas;
     LatentTerrainComponent latentPad;
 
+    // Weight canvas display mode toggle: "curve" vs "matrix"
+    juce::TextButton displayCurveButton { "1D" };
+    juce::TextButton displayMatrixButton { "2D" };
+
     // Latent Hook Controls (visible in latent view)
     juce::Label latentDepthLabel { {}, "Latent Depth" };
     juce::Slider latentDepthSlider;

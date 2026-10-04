@@ -111,6 +111,7 @@ public:
   std::vector<std::string> get_available_layers();
   std::vector<float> get_layer_weights(std::string layer_name);
   std::vector<float> get_original_layer_weights(std::string layer_name);
+  std::vector<int64_t> get_layer_shape(std::string layer_name);
   void set_layer_weights(std::string layer_name, const std::vector<float>& weights);
   void reset_layer_weights(std::string layer_name);
   void reset_all_layer_weights();

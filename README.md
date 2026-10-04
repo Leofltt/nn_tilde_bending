@@ -9,7 +9,7 @@
 The project provides multiple frontends tailored for modern music production workflows, live performance, and modular patch environments:
 
 | Target | Description | Output / Installation |
-|---|---|---|
+| --- | --- | --- |
 | `plugin` | **JUCE VST3 & AudioUnit (AU)** plugins (`nn_bending_plugin`) | Bundled dylibs, signed with `SIGN_ID` & entitlements, copied to `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/Components` (macOS). |
 | `standalone` | **JUCE Standalone Application** (`nn_bending_standalone`) | Standalone desktop executable with direct audio/MIDI I/O, embedded interactive UI, and LibTorch backend. |
 | `maxmsp` | **Max/MSP Externals** (`nn~`, `mc.nn~`, `mcs.nn~`, `nn.info`) | Bundles externals into `src/frontend/maxmsp` for Max 8+. |
@@ -33,6 +33,10 @@ The project provides multiple frontends tailored for modern music production wor
    - Simulates physical circuit warm-up, component aging, and battery brownout via bounded Brownian / Ornstein-Uhlenbeck drift.
 5. **Safety Fuse & DC Breaker**:
    - Automatic protection circuitry (hard limiter, soft clipper, and DC blocker) preventing ear/speaker damage from runaway weight blowouts.
+6. **Triple-Display Visual Architecture (1D / 2D / Latents)**:
+   - **1D Multi-Trace Oscilloscope**: Real-time multi-curve rendering of original baseline, bridged layers, pink targets, harmonic ghosts, and live model weights.
+   - **2D Filter Matrix Heatmap**: Perceptually mapped grid visualizing convolution filters and dense projection tensors with channel coordinates and trace bridge rails.
+   - **Latent Topographic Vector Pad**: 2D tactile radar pad driving Random Fourier Feature bottleneck projections in audio autoencoders (e.g. RAVE).
 
 ---
 
@@ -42,6 +46,7 @@ The project provides multiple frontends tailored for modern music production wor
 > **Source Directory Note**: The primary CMake configuration file (`CMakeLists.txt`) is located in the **`src/`** directory, not at the root of the repository. When configuring CMake, always point the source directory to `src` (e.g., `-S src -B build`).
 
 ### Prerequisites
+
 - **CMake** (v3.15 or newer recommended)
 - **LibTorch** (C++ PyTorch library, CPU version matching your OS/architecture). Download it from [pytorch.org](https://pytorch.org/get-started/locally/) and extract it into the repository root as `libtorch/`, or pass `-DCMAKE_PREFIX_PATH` pointing to your LibTorch folder.
 - Modern C++ compiler (Clang on macOS with Xcode Command Line Tools, GCC 9+ on Linux, or Visual Studio 2022 on Windows).
@@ -56,6 +61,7 @@ cmake -S src -B build -DCMAKE_PREFIX_PATH="$(pwd)/libtorch" -DCMAKE_BUILD_TYPE=R
 ```
 
 *Or traditional out-of-source directory approach:*
+
 ```bash
 mkdir -p build && cd build
 cmake ../src -DCMAKE_PREFIX_PATH=../libtorch -DCMAKE_BUILD_TYPE=Release
@@ -81,6 +87,7 @@ cmake --build build --target puredata
 # Build all enabled targets:
 cmake --build build --target all
 ```
+
 *(If you are already inside the `build/` directory, replace `build` with `.` : `cmake --build . --target <target>`)*
 
 ### CMake Configuration Options
@@ -95,6 +102,7 @@ The build system can be customized with the following flags during configuration
 - `-DCMAKE_POLICY_VERSION_MINIMUM=3.15`: Ensures compatibility with modern CMake policies.
 
 #### Environment Variables & `.env`
+
 You can create a `.env` file at the root of the repository to set build variables automatically (e.g., `SIGN_ID`):
 
 ```bash
@@ -115,7 +123,7 @@ Grab the [latest release of nn~](https://github.com/acids-ircam/nn_tilde/release
 
 Uncompress the `.tar.gz` file in the Package folder of your Max installation, i.e. in `Documents/Max [your version]/Packages/`. You can then instantiate an `nn~` object! Alt-click the `nn~` object to open the help patch, or access the nn~ Overview patch in the Extras menu.
 
-##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so, please launch in the terminal:
+##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so, please launch in the terminal
 
 ```bash
 cd "~/Max X/Packages/nn_tilde"
@@ -195,6 +203,7 @@ Using Max/MSP and PureData graphical objects, this provides an intuitive way to 
 </table>
 
 **Since v1.6.0:**
+
 - Buffers (Max) / Array (Pd) attribute setting allows the `.ts` model to access internal buffers / arrays.
 - `torch.Tensor` attributes can be set through Max/MSP `[array]`, allowing attributes of unlimited size.
 
@@ -288,6 +297,7 @@ export CXX=$(brew --prefix llvm)/bin/clang++
 cmake ../src -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_PREFIX_PATH=../env/lib/python3.12/site-packages/torch -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../puredata_include -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake --build . --config Release
 ```
+
 </details>
 
 <details>
@@ -316,6 +326,7 @@ curl -L https://raw.githubusercontent.com/pure-data/pure-data/master/src/m_pd.h 
 cmake ../src -G "Visual Studio 17 2022" -DTorch_DIR=../libtorch/share/cmake/Torch -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../pd/src -DPUREDATA_BIN_DIR=../pd/bin -A x64
 cmake --build . --config Release
 ```
+
 </details>
 
 <details>
@@ -324,4 +335,5 @@ cmake --build . --config Release
 ```bash
 curl -s https://raw.githubusercontent.com/acids-ircam/nn_tilde/master/install/raspberrypi.sh | bash
 ```
+
 </details>

@@ -870,6 +870,19 @@ std::vector<float> Backend::get_layer_weights(std::string layer_name) {
   return m_weights;
 }
 
+std::vector<int64_t> Backend::get_layer_shape(std::string layer_name) {
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+  std::vector<int64_t> shape;
+  for (const auto &layer : m_model.named_parameters()) {
+    if (layer.name == layer_name) {
+      auto sizes = layer.value.sizes();
+      shape.assign(sizes.begin(), sizes.end());
+      break;
+    }
+  }
+  return shape;
+}
+
 void Backend::set_layer_weights(std::string layer_name,
                                 const std::vector<float>& weights) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
