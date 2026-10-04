@@ -244,66 +244,66 @@ public:
                 fillPath.closeSubPath();
 
                 juce::ColourGradient grad(
-                    juce::Colour::fromString("#44c084fc"), 0, 0,
-                    juce::Colour::fromString("#089333ea"), 0, ph, false
+                    juce::Colour::fromString("#2ec084fc"), 0, 0,
+                    juce::Colour::fromString("#069333ea"), 0, ph, false
                 );
                 g.setGradientFill(grad);
                 g.fillPath(fillPath);
             }
 
-            // 2. Render original weights baseline curve (vivid emerald green, sleek 1.0f crisp stroke)
+            // 2. Render original weights baseline curve (refined muted sage/mint green, fine 0.75f stroke, see-through)
             if (!m_originalWeights.empty())
             {
                 juce::Path origPath;
                 buildPathForWeights(origPath, m_originalWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ff4ade80").withAlpha(0.85f)); // Vivid emerald green baseline
-                g.strokePath(origPath, juce::PathStrokeType(1.0f));
+                g.setColour(juce::Colour::fromString("#ff10b981").withAlpha(0.55f)); // Refined translucent sage/mint baseline
+                g.strokePath(origPath, juce::PathStrokeType(0.75f));
             }
 
-            // 3. Render bridged source layer curve (muted copper/terracotta reference if bridge active and enabled)
+            // 3. Render bridged source layer curve (muted copper/terracotta reference, see-through)
             if (m_showBridgeVisuals && m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
             {
                 juce::Path srcPath;
                 buildPathForWeights(srcPath, m_bridgeSourceWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.55f)); // Muted copper
-                g.strokePath(srcPath, juce::PathStrokeType(1.0f));
+                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.45f)); // Translucent muted copper
+                g.strokePath(srcPath, juce::PathStrokeType(0.80f));
             }
 
-            // 4. Render Cross-Talk composite blend curve (Warm golden amber: intermediate between emerald and copper)
+            // 4. Render Cross-Talk composite blend curve (Warm golden amber, see-through)
             if (m_showBridgeVisuals && m_bridgeDepth > 0.001f && !m_bridgeMixWeights.empty())
             {
                 juce::Path mixPath;
                 buildPathForWeights(mixPath, m_bridgeMixWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(m_isContinuousMode ? 0.90f : 0.70f));
-                g.strokePath(mixPath, juce::PathStrokeType(1.0f));
+                g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(m_isContinuousMode ? 0.65f : 0.50f));
+                g.strokePath(mixPath, juce::PathStrokeType(0.80f));
             }
 
-            // 5. Render target bent curve (neon pink / magenta overlay showing target state in momentary)
+            // 5. Render target bent curve (neon pink / magenta overlay, see-through)
             if (!m_targetBentWeights.empty())
             {
                 juce::Path targetPath;
                 buildPathForWeights(targetPath, m_targetBentWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffec4899").withAlpha(0.85f)); // Vivid neon pink/magenta
-                g.strokePath(targetPath, juce::PathStrokeType(1.0f));
+                g.setColour(juce::Colour::fromString("#ffec4899").withAlpha(0.65f)); // Translucent neon pink/magenta
+                g.strokePath(targetPath, juce::PathStrokeType(0.80f));
             }
 
-            // 6. Render harmonic synthesizer ghost preview (Glowing gold/amber dashed line)
+            // 6. Render harmonic synthesizer ghost preview (Glowing gold/amber dashed line, see-through)
             if (m_showHarmonics && m_showHarmonicGhost && !m_harmonicGhostWeights.empty())
             {
                 juce::Path ghostPath;
                 buildPathForWeights(ghostPath, m_harmonicGhostWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#fffbbf24").withAlpha(0.95f)); // Luminous amber gold
+                g.setColour(juce::Colour::fromString("#fffbbf24").withAlpha(0.65f)); // Translucent amber gold
                 const float dashLengths[2] = { 5.0f, 3.0f };
                 juce::Path dashedGhostStroke;
-                juce::PathStrokeType(1.0f).createDashedStroke(dashedGhostStroke, ghostPath, dashLengths, 2);
+                juce::PathStrokeType(0.80f).createDashedStroke(dashedGhostStroke, ghostPath, dashLengths, 2);
                 g.fillPath(dashedGhostStroke);
             }
 
-            // 7. Render current live weights stroke (Neon purple/violet with crisp modern 1.2f line)
+            // 7. Render current live weights stroke (Neon purple/violet with cohesive 0.75f alpha line)
             if (!bentPath.isEmpty())
             {
-                g.setColour(juce::Colour::fromString("#ffc084fc"));
-                g.strokePath(bentPath, juce::PathStrokeType(1.2f));
+                g.setColour(juce::Colour::fromString("#ffc084fc").withAlpha(0.75f));
+                g.strokePath(bentPath, juce::PathStrokeType(0.95f));
             }
 
             // Dynamic Legend / Color key overlay in top right corner
@@ -324,7 +324,7 @@ public:
                 int curX = legendX;
 
                 // Green: Baseline
-                g.setColour(juce::Colour::fromString("#ff4ade80"));
+                g.setColour(juce::Colour::fromString("#ff10b981").withAlpha(0.85f));
                 g.fillRect(curX, legendY + 3, 10, 3);
                 g.drawText("Baseline W0", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
                 curX += itemW;

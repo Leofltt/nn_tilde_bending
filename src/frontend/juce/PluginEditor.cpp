@@ -155,15 +155,16 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
         }
     };
 
-    // Right-Side Tab Switcher Buttons
+    // Right-Side Tab Switcher Buttons (Weights View)
     tabMutateButton.addListener (this);
     tabHarmonicsButton.addListener (this);
     tabBridgeButton.addListener (this);
-    tabLatentButton.addListener (this);
+    tabMutateButton.setLookAndFeel (&flatTabLf);
+    tabHarmonicsButton.setLookAndFeel (&flatTabLf);
+    tabBridgeButton.setLookAndFeel (&flatTabLf);
     addAndMakeVisible (tabMutateButton);
     addAndMakeVisible (tabHarmonicsButton);
     addAndMakeVisible (tabBridgeButton);
-    addAndMakeVisible (tabLatentButton);
 
     // =========================================================================
     // Tab 1: Mutate Controls (Modern LinearBar Sliders + Enable Toggles)
@@ -409,6 +410,8 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     // View Switcher Buttons: "weights" and "latent"
     viewWeightsButton.addListener (this);
     viewLatentButton.addListener (this);
+    viewWeightsButton.setLookAndFeel (&flatTabLf);
+    viewLatentButton.setLookAndFeel (&flatTabLf);
     addAndMakeVisible (viewWeightsButton);
     addAndMakeVisible (viewLatentButton);
 
@@ -416,9 +419,11 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     displayCurveButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a1d72"));
     displayCurveButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     displayCurveButton.addListener (this);
+    displayCurveButton.setLookAndFeel (&flatTabLf);
     displayMatrixButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1c1926"));
     displayMatrixButton.setColour (juce::TextButton::textColourOffId, juce::Colours::darkgrey);
     displayMatrixButton.addListener (this);
+    displayMatrixButton.setLookAndFeel (&flatTabLf);
     addAndMakeVisible (displayCurveButton);
     addAndMakeVisible (displayMatrixButton);
 
@@ -455,6 +460,13 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
 NNBendingAudioProcessorEditor::~NNBendingAudioProcessorEditor()
 {
     stopTimer();
+    tabMutateButton.setLookAndFeel (nullptr);
+    tabHarmonicsButton.setLookAndFeel (nullptr);
+    tabBridgeButton.setLookAndFeel (nullptr);
+    viewWeightsButton.setLookAndFeel (nullptr);
+    viewLatentButton.setLookAndFeel (nullptr);
+    displayCurveButton.setLookAndFeel (nullptr);
+    displayMatrixButton.setLookAndFeel (nullptr);
 }
 
 //==============================================================================
@@ -529,24 +541,24 @@ void NNBendingAudioProcessorEditor::resized()
     viewWeightsButton.setBounds (layerRow.removeFromLeft (68));
     layerRow.removeFromLeft (4);
     viewLatentButton.setBounds (layerRow.removeFromLeft (64));
+    layerRow.removeFromLeft (8);
+
+    // Display mode buttons [1D] [2D] directly adjacent to view buttons (generous 44px so text never clips to '...')
+    displayCurveButton.setBounds (layerRow.removeFromLeft (44));
+    layerRow.removeFromLeft (3);
+    displayMatrixButton.setBounds (layerRow.removeFromLeft (44));
     layerRow.removeFromLeft (10);
 
-    // Display mode buttons [1D] [2D] directly adjacent to view buttons
-    displayCurveButton.setBounds (layerRow.removeFromLeft (32));
-    layerRow.removeFromLeft (2);
-    displayMatrixButton.setBounds (layerRow.removeFromLeft (32));
-    layerRow.removeFromLeft (12);
+    categoryLabel.setBounds (layerRow.removeFromLeft (40));
+    categoryCombo.setBounds (layerRow.removeFromLeft (110));
+    layerRow.removeFromLeft (8);
 
-    categoryLabel.setBounds (layerRow.removeFromLeft (42));
-    categoryCombo.setBounds (layerRow.removeFromLeft (120));
-    layerRow.removeFromLeft (10);
-
-    layerLabel.setBounds (layerRow.removeFromLeft (42));
+    layerLabel.setBounds (layerRow.removeFromLeft (40));
     
     resetAllButton.setBounds (layerRow.removeFromRight (125));
     layerRow.removeFromRight (6);
     resetLayerButton.setBounds (layerRow.removeFromRight (105));
-    layerRow.removeFromRight (10);
+    layerRow.removeFromRight (8);
     
     layerCombo.setBounds (layerRow); // Takes remaining center width
 
@@ -558,7 +570,7 @@ void NNBendingAudioProcessorEditor::resized()
 
     groupArea.removeFromBottom (6); // Spacer above readout
 
-    // Main Bending Area: Center Canvas + Right Tabbed Controls Deck
+    // Main Bending Area: Center Canvas + Right Controls Deck
     auto controlsWidth = 240;
     auto sideArea = groupArea.removeFromRight (controlsWidth);
     groupArea.removeFromRight (12); // Gap between canvas and side deck
@@ -566,16 +578,14 @@ void NNBendingAudioProcessorEditor::resized()
     weightCanvas.setBounds (groupArea);
     latentPad.setBounds (groupArea);
 
-    // Tab Header Row at the top of the side controls area (Height: 26px)
+    // Weights View: 3-Tab Header (Mutate, Harmonics, Bridge) (Height: 26px)
     auto tabHeader = sideArea.removeFromTop (26);
-    int tabW = (sideArea.getWidth() - 9) / 4;
+    int tabW = (sideArea.getWidth() - 6) / 3;
     tabMutateButton.setBounds (tabHeader.removeFromLeft (tabW));
     tabHeader.removeFromLeft (3);
     tabHarmonicsButton.setBounds (tabHeader.removeFromLeft (tabW));
     tabHeader.removeFromLeft (3);
-    tabBridgeButton.setBounds (tabHeader.removeFromLeft (tabW));
-    tabHeader.removeFromLeft (3);
-    tabLatentButton.setBounds (tabHeader); // Takes remainder
+    tabBridgeButton.setBounds (tabHeader); // Takes remainder
 
     sideArea.removeFromTop (10); // Spacer under tab header
 
@@ -654,7 +664,7 @@ void NNBendingAudioProcessorEditor::resized()
         bridgeDepthSlider.setBounds (area3.removeFromTop (24));
     }
 
-    // Layout Tab 4: Latent Hook Parameter Controls
+    // Layout Latent View Controls (Active in Latent view)
     {
         auto area4 = sideArea;
         latentEnableButton.setBounds (area4.removeFromTop (24));
@@ -944,10 +954,6 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     else if (button == &tabBridgeButton)
     {
         setSideTab (SideTab::Bridge);
-    }
-    else if (button == &tabLatentButton)
-    {
-        setSideTab (SideTab::Latent);
     }
     else if (button == &mutateEnableToggle)
     {
@@ -1768,10 +1774,10 @@ void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
 {
     currentSideTab = newTab;
 
-    bool isMutate = (currentSideTab == SideTab::Mutate);
-    bool isHarmonics = (currentSideTab == SideTab::Harmonics);
-    bool isBridge = (currentSideTab == SideTab::Bridge);
-    bool isLatent = (currentSideTab == SideTab::Latent);
+    bool isWeights = (currentViewMode == ViewMode::Weights);
+    bool isMutate = isWeights && (currentSideTab == SideTab::Mutate);
+    bool isHarmonics = isWeights && (currentSideTab == SideTab::Harmonics);
+    bool isBridge = isWeights && (currentSideTab == SideTab::Bridge);
 
     juce::Colour activeBg = juce::Colour::fromString ("#ff4a1d72"); // Vivid violet
     juce::Colour inactiveBg = juce::Colour::fromString ("#ff1c1926"); // Dark charcoal
@@ -1786,9 +1792,6 @@ void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
 
     tabBridgeButton.setColour (juce::TextButton::buttonColourId, isBridge ? activeBg : inactiveBg);
     tabBridgeButton.setColour (juce::TextButton::textColourOffId, isBridge ? activeText : inactiveText);
-
-    tabLatentButton.setColour (juce::TextButton::buttonColourId, isLatent ? activeBg : inactiveBg);
-    tabLatentButton.setColour (juce::TextButton::textColourOffId, isLatent ? activeText : inactiveText);
 
     // Tab 1: Mutate Visibility
     mutateEnableToggle.setVisible (isMutate);
@@ -1826,15 +1829,6 @@ void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
     bridgeDepthLabel.setVisible (isBridge);
     bridgeDepthSlider.setVisible (isBridge);
 
-    // Tab 4: Latent Visibility
-    latentEnableButton.setVisible (isLatent);
-    latentDepthLabel.setVisible (isLatent);
-    latentDepthSlider.setVisible (isLatent);
-    latentModeLabel.setVisible (isLatent);
-    latentModeCombo.setVisible (isLatent);
-    latentSlewLabel.setVisible (isLatent);
-    latentSlewSlider.setVisible (isLatent);
-
     repaint();
 }
 
@@ -1871,19 +1865,22 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     displayCurveButton.setVisible (isWeights);
     displayMatrixButton.setVisible (isWeights);
 
-    // If switching to Latent view, auto-activate the Latent tab on the right
-    if (isLatent)
-    {
-        setSideTab (SideTab::Latent);
-    }
-    else if (currentSideTab == SideTab::Latent)
-    {
-        setSideTab (SideTab::Mutate);
-    }
-    else
-    {
-        setSideTab (currentSideTab);
-    }
+    // Toggle weight-domain side tabs visibility
+    tabMutateButton.setVisible (isWeights);
+    tabHarmonicsButton.setVisible (isWeights);
+    tabBridgeButton.setVisible (isWeights);
+
+    // Toggle latent-domain controls visibility on right side
+    latentEnableButton.setVisible (isLatent);
+    latentDepthLabel.setVisible (isLatent);
+    latentDepthSlider.setVisible (isLatent);
+    latentModeLabel.setVisible (isLatent);
+    latentModeCombo.setVisible (isLatent);
+    latentSlewLabel.setVisible (isLatent);
+    latentSlewSlider.setVisible (isLatent);
+
+    // Refresh active weights tab visibility
+    setSideTab (currentSideTab);
 
     // Update bottom readout status
     if (isLatent)

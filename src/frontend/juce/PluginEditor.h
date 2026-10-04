@@ -23,7 +23,35 @@ public:
     void buttonClicked (juce::Button* button) override;
 
     enum class ViewMode { Weights, Latent };
-    enum class SideTab { Mutate, Harmonics, Bridge, Latent };
+    enum class SideTab { Mutate, Harmonics, Bridge };
+
+    struct FlatTabLookAndFeel : public juce::LookAndFeel_V4
+    {
+        void drawButtonBackground (juce::Graphics& g, juce::Button& button,
+                                    const juce::Colour& backgroundColour,
+                                    bool shouldDrawButtonAsHighlighted,
+                                    bool shouldDrawButtonAsDown) override
+        {
+            auto bounds = button.getLocalBounds().toFloat();
+            g.setColour (backgroundColour);
+            g.fillRect (bounds);
+
+            if (shouldDrawButtonAsDown)
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.12f));
+                g.fillRect (bounds);
+            }
+            else if (shouldDrawButtonAsHighlighted)
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.06f));
+                g.fillRect (bounds);
+            }
+
+            // Crisp 1px outline
+            g.setColour (backgroundColour.brighter (0.18f).withAlpha (0.45f));
+            g.drawRect (bounds, 1.0f);
+        }
+    };
 
 private:
     void timerCallback() override;
@@ -90,12 +118,12 @@ private:
     juce::Label triggerModeLabel { {}, "Trigger:" };
     juce::ComboBox triggerModeCombo;
 
-    // Right Side Tab System
+    // Right Side Tab System (Weights View)
     SideTab currentSideTab { SideTab::Mutate };
     juce::TextButton tabMutateButton { "Mutate" };
     juce::TextButton tabHarmonicsButton { "Harmonics" };
     juce::TextButton tabBridgeButton { "Bridge" };
-    juce::TextButton tabLatentButton { "Latent" };
+    FlatTabLookAndFeel flatTabLf;
 
     // Tab 1: Mutate Controls (Modern LinearBar Sliders + Enable Toggles)
     juce::ToggleButton mutateEnableToggle { "Enable Transform" };
