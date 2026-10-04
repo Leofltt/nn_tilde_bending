@@ -23,6 +23,7 @@ public:
     void buttonClicked (juce::Button* button) override;
 
     enum class ViewMode { Weights, Latent };
+    enum class SideTab { Mutate, Harmonics, Bridge, Latent };
 
 private:
     void timerCallback() override;
@@ -34,6 +35,7 @@ private:
     void saveModelToFile();
     void updateKnobContextLabels (NNBendingAudioProcessor::LayerCategory category);
     void setViewMode (ViewMode newMode);
+    void setSideTab (SideTab newTab);
 
     NNBendingAudioProcessor& audioProcessor;
 
@@ -76,15 +78,6 @@ private:
     juce::TextButton displayCurveButton { "1D" };
     juce::TextButton displayMatrixButton { "2D" };
 
-    // Latent Hook Controls (visible in latent view)
-    juce::Label latentDepthLabel { {}, "Latent Depth" };
-    juce::Slider latentDepthSlider;
-    juce::Label latentModeLabel { {}, "Orbit Mode:" };
-    juce::ComboBox latentModeCombo;
-    juce::Label latentSlewLabel { {}, "Slew Speed" };
-    juce::Slider latentSlewSlider;
-    juce::ToggleButton latentEnableButton { "Enable Latent Hook" };
-
     // Category Filter for Trace Isolation
     juce::Label categoryLabel { {}, "Trace:" };
     juce::ComboBox categoryCombo;
@@ -97,31 +90,32 @@ private:
     juce::Label triggerModeLabel { {}, "Trigger:" };
     juce::ComboBox triggerModeCombo;
 
-    // Side Controls
+    // Right Side Tab System
+    SideTab currentSideTab { SideTab::Mutate };
+    juce::TextButton tabMutateButton { "Mutate" };
+    juce::TextButton tabHarmonicsButton { "Harmonics" };
+    juce::TextButton tabBridgeButton { "Bridge" };
+    juce::TextButton tabLatentButton { "Latent" };
+
+    // Tab 1: Mutate Controls (Modern LinearBar Sliders + Enable Toggles)
+    juce::ToggleButton mutateEnableToggle { "Enable Transform" };
     juce::Label scaleLabel { {}, "Scale" };
     juce::Slider scaleSlider;
-    
     juce::Label offsetLabel { {}, "Offset" };
     juce::Slider offsetSlider;
 
+    juce::ToggleButton driftEnableToggle { "Enable Thermal Drift" };
     juce::Label heatLabel { {}, "Heat" };
     juce::Slider heatSlider;
-
     juce::Label memoryLabel { {}, "Memory" };
     juce::Slider memorySlider;
-
+    juce::Label driftModeLabel { {}, "Drift Algorithm:" };
     juce::ComboBox driftModeCombo;
-    juce::ToggleButton freezeButton { "Freeze" };
-    
-    // Trace Bridging (Cross-Talk)
-    juce::Label bridgeLabel { {}, "Bridge Wire:" };
-    juce::ComboBox bridgeCombo;
-    juce::Label bridgeDepthLabel { {}, "Cross-Talk" };
-    juce::Slider bridgeDepthSlider;
+    juce::ToggleButton freezeButton { "Freeze Drift" };
 
-    // Harmonic Weight Synthesizer (Fourier Generator)
-    juce::Label harmonicTitleLabel { {}, "Harmonics:" };
-    juce::Label harmonicFreqLabel { {}, "Freq" };
+    // Tab 2: Harmonics Controls
+    juce::ToggleButton harmonicEnableToggle { "Enable Harmonics" };
+    juce::Label harmonicFreqLabel { {}, "Frequency" };
     juce::Slider harmonicFreqSlider;
     juce::Label harmonicPartialsLabel { {}, "Partials" };
     juce::Slider harmonicPartialsSlider;
@@ -129,8 +123,25 @@ private:
     juce::Slider harmonicMorphSlider;
     juce::Label harmonicDepthLabel { {}, "Gain" };
     juce::Slider harmonicDepthSlider;
+    juce::Label harmonicModeLabel { {}, "Combine Mode:" };
     juce::ComboBox harmonicModeCombo;
-    juce::TextButton harmonicApplyButton { "Stamp" };
+    juce::TextButton harmonicApplyButton { "Stamp Wave" };
+
+    // Tab 3: Trace Bridging (Cross-Talk)
+    juce::ToggleButton bridgeEnableToggle { "Enable Cross-Talk" };
+    juce::Label bridgeLabel { {}, "Bridge Wire Source:" };
+    juce::ComboBox bridgeCombo;
+    juce::Label bridgeDepthLabel { {}, "Cross-Talk Depth" };
+    juce::Slider bridgeDepthSlider;
+
+    // Tab 4: Latent Hook Controls
+    juce::ToggleButton latentEnableButton { "Enable Latent Hook" };
+    juce::Label latentDepthLabel { {}, "Latent Depth" };
+    juce::Slider latentDepthSlider;
+    juce::Label latentModeLabel { {}, "Orbit Mode:" };
+    juce::ComboBox latentModeCombo;
+    juce::Label latentSlewLabel { {}, "Slew Speed" };
+    juce::Slider latentSlewSlider;
 
     void updateHarmonicGhostPreview();
     void applyHarmonicWeights();

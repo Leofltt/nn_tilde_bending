@@ -155,62 +155,86 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
         }
     };
 
-    // Compact Side Knobs (Scale & Offset)
+    // Right-Side Tab Switcher Buttons
+    tabMutateButton.addListener (this);
+    tabHarmonicsButton.addListener (this);
+    tabBridgeButton.addListener (this);
+    tabLatentButton.addListener (this);
+    addAndMakeVisible (tabMutateButton);
+    addAndMakeVisible (tabHarmonicsButton);
+    addAndMakeVisible (tabBridgeButton);
+    addAndMakeVisible (tabLatentButton);
+
+    // =========================================================================
+    // Tab 1: Mutate Controls (Modern LinearBar Sliders + Enable Toggles)
+    // =========================================================================
+    mutateEnableToggle.setToggleState (true, juce::dontSendNotification);
+    mutateEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffc084fc"));
+    mutateEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffc084fc"));
+    mutateEnableToggle.addListener (this);
+    addAndMakeVisible (mutateEnableToggle);
+
     scaleLabel.setText ("Scale", juce::dontSendNotification);
-    scaleLabel.setJustificationType (juce::Justification::centred);
+    scaleLabel.setJustificationType (juce::Justification::centredLeft);
     scaleLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (scaleLabel);
 
     scaleSlider.setRange (0.0, 5.0, 0.01);
     scaleSlider.setValue (1.0);
-    scaleSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    scaleSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    scaleSlider.setColour (juce::Slider::thumbColourId, juce::Colours::violet);
-    scaleSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    scaleSlider.setSliderStyle (juce::Slider::LinearBar);
+    scaleSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    scaleSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff7c3aed")); // Vibrant violet
     scaleSlider.addListener (this);
     addAndMakeVisible (scaleSlider);
 
     offsetLabel.setText ("Offset", juce::dontSendNotification);
-    offsetLabel.setJustificationType (juce::Justification::centred);
+    offsetLabel.setJustificationType (juce::Justification::centredLeft);
     offsetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (offsetLabel);
 
     offsetSlider.setRange (-2.0, 2.0, 0.001);
     offsetSlider.setValue (0.0);
-    offsetSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    offsetSlider.setColour (juce::Slider::thumbColourId, juce::Colours::turquoise);
-    offsetSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    offsetSlider.setSliderStyle (juce::Slider::LinearBar);
+    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    offsetSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff06b6d4")); // Bright cyan
     offsetSlider.addListener (this);
     addAndMakeVisible (offsetSlider);
 
-    heatLabel.setText ("Heat", juce::dontSendNotification);
-    heatLabel.setJustificationType (juce::Justification::centred);
+    driftEnableToggle.setToggleState (true, juce::dontSendNotification);
+    driftEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffff9933"));
+    driftEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffff9933"));
+    driftEnableToggle.addListener (this);
+    addAndMakeVisible (driftEnableToggle);
+
+    heatLabel.setText ("Heat (Jitter)", juce::dontSendNotification);
+    heatLabel.setJustificationType (juce::Justification::centredLeft);
     heatLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (heatLabel);
 
     heatSlider.setRange (0.0, 1.0, 0.001);
     heatSlider.setValue (0.0);
-    heatSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    heatSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    heatSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffff9933"));
-    heatSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    heatSlider.setSliderStyle (juce::Slider::LinearBar);
+    heatSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    heatSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffea580c")); // Flame orange
     heatSlider.addListener (this);
     addAndMakeVisible (heatSlider);
 
-    memoryLabel.setText ("Memory", juce::dontSendNotification);
-    memoryLabel.setJustificationType (juce::Justification::centred);
+    memoryLabel.setText ("Memory (Drag)", juce::dontSendNotification);
+    memoryLabel.setJustificationType (juce::Justification::centredLeft);
     memoryLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (memoryLabel);
 
     memorySlider.setRange (0.0, 1.0, 0.001);
     memorySlider.setValue (0.8);
-    memorySlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    memorySlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    memorySlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ff38bdf8"));
-    memorySlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
+    memorySlider.setSliderStyle (juce::Slider::LinearBar);
+    memorySlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    memorySlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff0284c7")); // Deep sky blue
     memorySlider.addListener (this);
     addAndMakeVisible (memorySlider);
+
+    driftModeLabel.setText ("Drift Algorithm:", juce::dontSendNotification);
+    driftModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (driftModeLabel);
 
     driftModeCombo.addItem ("Thermal OU", 1);
     driftModeCombo.addItem ("Random Walk", 2);
@@ -219,96 +243,76 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     driftModeCombo.addListener (this);
     addAndMakeVisible (driftModeCombo);
 
-    freezeButton.setButtonText ("Freeze");
+    freezeButton.setButtonText ("Freeze Drift");
     freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
     freezeButton.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffff9933"));
     freezeButton.addListener (this);
     addAndMakeVisible (freezeButton);
 
-    // Trace Bridging (Cross-Talk) Controls
-    bridgeLabel.setText ("Bridge Wire", juce::dontSendNotification);
-    bridgeLabel.setJustificationType (juce::Justification::centred);
-    bridgeLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#ffc26a38")); // Warm copper
-    addAndMakeVisible (bridgeLabel);
+    // =========================================================================
+    // Tab 2: Harmonics Controls (LinearBar Sliders + Enable Toggle + Mode)
+    // =========================================================================
+    harmonicEnableToggle.setToggleState (true, juce::dontSendNotification);
+    harmonicEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#fffbbf24"));
+    harmonicEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#fffbbf24"));
+    harmonicEnableToggle.addListener (this);
+    addAndMakeVisible (harmonicEnableToggle);
 
-    bridgeCombo.addListener (this);
-    addAndMakeVisible (bridgeCombo);
-
-    bridgeDepthLabel.setText ("Cross-Talk", juce::dontSendNotification);
-    bridgeDepthLabel.setJustificationType (juce::Justification::centred);
-    bridgeDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    addAndMakeVisible (bridgeDepthLabel);
-
-    bridgeDepthSlider.setRange (0.0, 1.0, 0.01);
-    bridgeDepthSlider.setValue (0.0);
-    bridgeDepthSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    bridgeDepthSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    bridgeDepthSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffd99b26")); // Warm golden ochre
-    bridgeDepthSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
-    bridgeDepthSlider.addListener (this);
-    addAndMakeVisible (bridgeDepthSlider);
-
-    // Harmonic Weight Synthesizer (Fourier Generator) Controls
-    harmonicTitleLabel.setText ("Harmonics:", juce::dontSendNotification);
-    harmonicTitleLabel.setJustificationType (juce::Justification::centredLeft);
-    harmonicTitleLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#fffbbf24")); // Luminous amber gold
-    addAndMakeVisible (harmonicTitleLabel);
-
-    harmonicFreqLabel.setText ("Freq", juce::dontSendNotification);
-    harmonicFreqLabel.setJustificationType (juce::Justification::centred);
+    harmonicFreqLabel.setText ("Frequency", juce::dontSendNotification);
+    harmonicFreqLabel.setJustificationType (juce::Justification::centredLeft);
     harmonicFreqLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (harmonicFreqLabel);
 
     harmonicFreqSlider.setRange (0.5, 32.0, 0.1);
     harmonicFreqSlider.setValue (2.0);
-    harmonicFreqSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    harmonicFreqSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 18);
-    harmonicFreqSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
-    harmonicFreqSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicFreqSlider.setSliderStyle (juce::Slider::LinearBar);
+    harmonicFreqSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    harmonicFreqSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffd97706")); // Warm amber
     harmonicFreqSlider.addListener (this);
     addAndMakeVisible (harmonicFreqSlider);
 
     harmonicPartialsLabel.setText ("Partials", juce::dontSendNotification);
-    harmonicPartialsLabel.setJustificationType (juce::Justification::centred);
+    harmonicPartialsLabel.setJustificationType (juce::Justification::centredLeft);
     harmonicPartialsLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (harmonicPartialsLabel);
 
     harmonicPartialsSlider.setRange (1.0, 8.0, 1.0);
     harmonicPartialsSlider.setValue (1.0);
-    harmonicPartialsSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    harmonicPartialsSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 28, 18);
-    harmonicPartialsSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
-    harmonicPartialsSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicPartialsSlider.setSliderStyle (juce::Slider::LinearBar);
+    harmonicPartialsSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    harmonicPartialsSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffd97706"));
     harmonicPartialsSlider.addListener (this);
     addAndMakeVisible (harmonicPartialsSlider);
 
-    harmonicMorphLabel.setText ("Morph", juce::dontSendNotification);
-    harmonicMorphLabel.setJustificationType (juce::Justification::centred);
+    harmonicMorphLabel.setText ("Morph Phase", juce::dontSendNotification);
+    harmonicMorphLabel.setJustificationType (juce::Justification::centredLeft);
     harmonicMorphLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (harmonicMorphLabel);
 
     harmonicMorphSlider.setRange (0.0, 6.2831853, 0.01);
     harmonicMorphSlider.setValue (0.0);
-    harmonicMorphSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    harmonicMorphSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 18);
-    harmonicMorphSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
-    harmonicMorphSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicMorphSlider.setSliderStyle (juce::Slider::LinearBar);
+    harmonicMorphSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    harmonicMorphSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffd97706"));
     harmonicMorphSlider.addListener (this);
     addAndMakeVisible (harmonicMorphSlider);
 
-    harmonicDepthLabel.setText ("Gain", juce::dontSendNotification);
-    harmonicDepthLabel.setJustificationType (juce::Justification::centred);
+    harmonicDepthLabel.setText ("Wave Gain", juce::dontSendNotification);
+    harmonicDepthLabel.setJustificationType (juce::Justification::centredLeft);
     harmonicDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (harmonicDepthLabel);
 
     harmonicDepthSlider.setRange (0.0, 2.0, 0.01);
     harmonicDepthSlider.setValue (0.5);
-    harmonicDepthSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    harmonicDepthSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 18);
-    harmonicDepthSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#fffbbf24"));
-    harmonicDepthSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff524019"));
+    harmonicDepthSlider.setSliderStyle (juce::Slider::LinearBar);
+    harmonicDepthSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    harmonicDepthSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffd97706"));
     harmonicDepthSlider.addListener (this);
     addAndMakeVisible (harmonicDepthSlider);
+
+    harmonicModeLabel.setText ("Combine Mode:", juce::dontSendNotification);
+    harmonicModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (harmonicModeLabel);
 
     harmonicModeCombo.addItem ("Add (+)", 1);
     harmonicModeCombo.addItem ("Ring (*)", 2);
@@ -317,10 +321,90 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     harmonicModeCombo.addListener (this);
     addAndMakeVisible (harmonicModeCombo);
 
+    harmonicApplyButton.setButtonText ("Stamp Wave");
     harmonicApplyButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff4a3712"));
     harmonicApplyButton.setColour (juce::TextButton::textColourOffId, juce::Colour::fromString ("#fffde047"));
     harmonicApplyButton.addListener (this);
     addAndMakeVisible (harmonicApplyButton);
+
+    // =========================================================================
+    // Tab 3: Trace Bridging (Cross-Talk) Controls
+    // =========================================================================
+    bridgeEnableToggle.setToggleState (true, juce::dontSendNotification);
+    bridgeEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffc26a38"));
+    bridgeEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffc26a38"));
+    bridgeEnableToggle.addListener (this);
+    addAndMakeVisible (bridgeEnableToggle);
+
+    bridgeLabel.setText ("Bridge Wire Source:", juce::dontSendNotification);
+    bridgeLabel.setJustificationType (juce::Justification::centredLeft);
+    bridgeLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#ffc26a38")); // Warm copper
+    addAndMakeVisible (bridgeLabel);
+
+    bridgeCombo.addListener (this);
+    addAndMakeVisible (bridgeCombo);
+
+    bridgeDepthLabel.setText ("Cross-Talk Depth", juce::dontSendNotification);
+    bridgeDepthLabel.setJustificationType (juce::Justification::centredLeft);
+    bridgeDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (bridgeDepthLabel);
+
+    bridgeDepthSlider.setRange (0.0, 1.0, 0.01);
+    bridgeDepthSlider.setValue (0.0);
+    bridgeDepthSlider.setSliderStyle (juce::Slider::LinearBar);
+    bridgeDepthSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    bridgeDepthSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffd99b26")); // Warm golden ochre
+    bridgeDepthSlider.addListener (this);
+    addAndMakeVisible (bridgeDepthSlider);
+
+    // =========================================================================
+    // Tab 4: Latent Hook Parameter Controls
+    // =========================================================================
+    latentEnableButton.setButtonText ("Enable Latent Hook");
+    latentEnableButton.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffd946ef"));
+    latentEnableButton.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffd946ef"));
+    latentEnableButton.addListener (this);
+    addAndMakeVisible (latentEnableButton);
+
+    latentDepthLabel.setText ("Latent Depth", juce::dontSendNotification);
+    latentDepthLabel.setJustificationType (juce::Justification::centredLeft);
+    latentDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (latentDepthLabel);
+
+    latentDepthSlider.setRange (0.0, 2.0, 0.01);
+    latentDepthSlider.setValue (audioProcessor.getLatentDepth());
+    latentDepthSlider.setSliderStyle (juce::Slider::LinearBar);
+    latentDepthSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    latentDepthSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ffd946ef"));
+    latentDepthSlider.addListener (this);
+    addAndMakeVisible (latentDepthSlider);
+
+    latentModeLabel.setText ("Orbit Mode:", juce::dontSendNotification);
+    latentModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (latentModeLabel);
+
+    latentModeCombo.addItem ("Fourier Orbit", 1);
+    latentModeCombo.addItem ("Latent Slew", 2);
+    latentModeCombo.addItem ("Quantize", 3);
+    latentModeCombo.setSelectedId ((int)audioProcessor.getLatentMode() + 1, juce::dontSendNotification);
+    latentModeCombo.addListener (this);
+    addAndMakeVisible (latentModeCombo);
+
+    latentSlewLabel.setText ("Slew Speed", juce::dontSendNotification);
+    latentSlewLabel.setJustificationType (juce::Justification::centredLeft);
+    latentSlewLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (latentSlewLabel);
+
+    latentSlewSlider.setRange (0.001, 1.0, 0.001);
+    latentSlewSlider.setValue (audioProcessor.getLatentSlew());
+    latentSlewSlider.setSliderStyle (juce::Slider::LinearBar);
+    latentSlewSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 55, 18);
+    latentSlewSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromString ("#ff38bdf8"));
+    latentSlewSlider.addListener (this);
+    addAndMakeVisible (latentSlewSlider);
+
+    // Initial Side Tab: Mutate
+    setSideTab (SideTab::Mutate);
 
     // View Switcher Buttons: "weights" and "latent"
     viewWeightsButton.addListener (this);
@@ -348,52 +432,6 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
         if (auto* py = audioProcessor.getLatentYParam())
             py->setValueNotifyingHost (py->convertTo0to1 (y));
     };
-
-    // Latent Hook Parameter Controls (Visible in latent view)
-    latentEnableButton.setButtonText ("Enable Latent Hook");
-    latentEnableButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
-    latentEnableButton.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffd946ef"));
-    latentEnableButton.addListener (this);
-    addChildComponent (latentEnableButton);
-
-    latentDepthLabel.setText ("Latent Depth", juce::dontSendNotification);
-    latentDepthLabel.setJustificationType (juce::Justification::centred);
-    latentDepthLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    addChildComponent (latentDepthLabel);
-
-    latentDepthSlider.setRange (0.0, 2.0, 0.01);
-    latentDepthSlider.setValue (audioProcessor.getLatentDepth());
-    latentDepthSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    latentDepthSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    latentDepthSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ffd946ef"));
-    latentDepthSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
-    latentDepthSlider.addListener (this);
-    addChildComponent (latentDepthSlider);
-
-    latentModeLabel.setText ("Orbit Mode:", juce::dontSendNotification);
-    latentModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    addChildComponent (latentModeLabel);
-
-    latentModeCombo.addItem ("Fourier Orbit", 1);
-    latentModeCombo.addItem ("Latent Slew", 2);
-    latentModeCombo.addItem ("Quantize", 3);
-    latentModeCombo.setSelectedId ((int)audioProcessor.getLatentMode() + 1, juce::dontSendNotification);
-    latentModeCombo.addListener (this);
-    addChildComponent (latentModeCombo);
-
-    latentSlewLabel.setText ("Slew Speed", juce::dontSendNotification);
-    latentSlewLabel.setJustificationType (juce::Justification::centred);
-    latentSlewLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    addChildComponent (latentSlewLabel);
-
-    latentSlewSlider.setRange (0.001, 1.0, 0.001);
-    latentSlewSlider.setValue (audioProcessor.getLatentSlew());
-    latentSlewSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    latentSlewSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
-    latentSlewSlider.setColour (juce::Slider::thumbColourId, juce::Colour::fromString ("#ff38bdf8"));
-    latentSlewSlider.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colours::darkgrey);
-    latentSlewSlider.addListener (this);
-    addChildComponent (latentSlewSlider);
 
     // Initial View Mode: weights
     setViewMode (ViewMode::Weights);
@@ -484,13 +522,19 @@ void NNBendingAudioProcessorEditor::resized()
     auto groupArea = bendingGroup.getBounds().reduced (14);
     groupArea.removeFromTop (12); // Group title offset
 
-    // Layer Selection & Action Row (View buttons + Category filter + Layer Combo + Reset buttons)
+    // Layer Selection & Action Row (View buttons + [1D][2D] + Category filter + Layer Combo + Reset buttons)
     auto layerRow = groupArea.removeFromTop (32);
 
     // View Switcher Buttons on far left: [weights] [latent]
     viewWeightsButton.setBounds (layerRow.removeFromLeft (68));
     layerRow.removeFromLeft (4);
     viewLatentButton.setBounds (layerRow.removeFromLeft (64));
+    layerRow.removeFromLeft (10);
+
+    // Display mode buttons [1D] [2D] directly adjacent to view buttons
+    displayCurveButton.setBounds (layerRow.removeFromLeft (32));
+    layerRow.removeFromLeft (2);
+    displayMatrixButton.setBounds (layerRow.removeFromLeft (32));
     layerRow.removeFromLeft (12);
 
     categoryLabel.setBounds (layerRow.removeFromLeft (42));
@@ -506,111 +550,127 @@ void NNBendingAudioProcessorEditor::resized()
     
     layerCombo.setBounds (layerRow); // Takes remaining center width
 
-    groupArea.removeFromTop (8); // Spacer
-
-    // Harmonic Synthesizer Toolbar Row (above canvas)
-    auto harmonicRow = groupArea.removeFromTop (26);
-
-    // Display mode buttons [1D] [2D] on far left of harmonic row
-    displayCurveButton.setBounds (harmonicRow.removeFromLeft (32));
-    harmonicRow.removeFromLeft (2);
-    displayMatrixButton.setBounds (harmonicRow.removeFromLeft (32));
-    harmonicRow.removeFromLeft (12);
-
-    harmonicTitleLabel.setBounds (harmonicRow.removeFromLeft (74));
-    harmonicRow.removeFromLeft (4);
-
-    harmonicFreqLabel.setBounds (harmonicRow.removeFromLeft (32));
-    harmonicFreqSlider.setBounds (harmonicRow.removeFromLeft (110));
-    harmonicRow.removeFromLeft (8);
-
-    harmonicPartialsLabel.setBounds (harmonicRow.removeFromLeft (46));
-    harmonicPartialsSlider.setBounds (harmonicRow.removeFromLeft (95));
-    harmonicRow.removeFromLeft (8);
-
-    harmonicMorphLabel.setBounds (harmonicRow.removeFromLeft (40));
-    harmonicMorphSlider.setBounds (harmonicRow.removeFromLeft (105));
-    harmonicRow.removeFromLeft (8);
-
-    harmonicDepthLabel.setBounds (harmonicRow.removeFromLeft (32));
-    harmonicDepthSlider.setBounds (harmonicRow.removeFromLeft (95));
-    harmonicRow.removeFromLeft (8);
-
-    harmonicApplyButton.setBounds (harmonicRow.removeFromRight (64));
-    harmonicRow.removeFromRight (6);
-    harmonicModeCombo.setBounds (harmonicRow.removeFromRight (95));
-
-    groupArea.removeFromTop (8); // Spacer between toolbar and canvas
+    groupArea.removeFromTop (8); // Spacer directly above canvas & side panel
 
     // Bottom info readout row
     auto bottomRow = groupArea.removeFromBottom (20);
     infoBendingLabel.setBounds (bottomRow);
 
-    groupArea.removeFromBottom (6); // Spacer
+    groupArea.removeFromBottom (6); // Spacer above readout
 
-    // Main Bending Area: Center Canvas + Right Dual-Column Controls (Mutate / Thermal & Bridge)
-    auto controlsWidth = 195;
-    auto sideControls = groupArea.removeFromRight (controlsWidth);
-    groupArea.removeFromRight (12); // Gap between canvas and side knobs
+    // Main Bending Area: Center Canvas + Right Tabbed Controls Deck
+    auto controlsWidth = 240;
+    auto sideArea = groupArea.removeFromRight (controlsWidth);
+    groupArea.removeFromRight (12); // Gap between canvas and side deck
 
     weightCanvas.setBounds (groupArea);
     latentPad.setBounds (groupArea);
 
-    // Split sideControls into Column 1 (Static & Drift: 92px) and Column 2 (Bridge: 92px)
-    auto col1 = sideControls.removeFromLeft (92);
-    sideControls.removeFromLeft (8); // Column gutter
-    auto col2 = sideControls;
+    // Tab Header Row at the top of the side controls area (Height: 26px)
+    auto tabHeader = sideArea.removeFromTop (26);
+    int tabW = (sideArea.getWidth() - 9) / 4;
+    tabMutateButton.setBounds (tabHeader.removeFromLeft (tabW));
+    tabHeader.removeFromLeft (3);
+    tabHarmonicsButton.setBounds (tabHeader.removeFromLeft (tabW));
+    tabHeader.removeFromLeft (3);
+    tabBridgeButton.setBounds (tabHeader.removeFromLeft (tabW));
+    tabHeader.removeFromLeft (3);
+    tabLatentButton.setBounds (tabHeader); // Takes remainder
 
-    // Column 1: Scale, Offset, Heat, Memory, Drift Mode, Freeze (Weight view)
-    scaleLabel.setBounds (col1.removeFromTop (14));
-    scaleSlider.setBounds (col1.removeFromTop (64));
-    col1.removeFromTop (4);
+    sideArea.removeFromTop (10); // Spacer under tab header
 
-    offsetLabel.setBounds (col1.removeFromTop (14));
-    offsetSlider.setBounds (col1.removeFromTop (64));
-    col1.removeFromTop (4);
+    // Layout Tab 1: Mutate Controls (LinearBar sliders + Toggles)
+    {
+        auto area1 = sideArea;
+        mutateEnableToggle.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (6);
 
-    heatLabel.setBounds (col1.removeFromTop (14));
-    heatSlider.setBounds (col1.removeFromTop (64));
-    col1.removeFromTop (4);
+        scaleLabel.setBounds (area1.removeFromTop (16));
+        scaleSlider.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (8);
 
-    memoryLabel.setBounds (col1.removeFromTop (14));
-    memorySlider.setBounds (col1.removeFromTop (64));
-    col1.removeFromTop (6);
+        offsetLabel.setBounds (area1.removeFromTop (16));
+        offsetSlider.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (14);
 
-    driftModeCombo.setBounds (col1.removeFromTop (24));
-    col1.removeFromTop (4);
-    freezeButton.setBounds (col1.removeFromTop (22));
+        driftEnableToggle.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (6);
 
-    // Column 2: Bridge Wire source selector & Cross-Talk depth (Weight view)
-    bridgeLabel.setBounds (col2.removeFromTop (14));
-    bridgeCombo.setBounds (col2.removeFromTop (26));
-    col2.removeFromTop (8);
+        heatLabel.setBounds (area1.removeFromTop (16));
+        heatSlider.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (8);
 
-    bridgeDepthLabel.setBounds (col2.removeFromTop (14));
-    bridgeDepthSlider.setBounds (col2.removeFromTop (64));
+        memoryLabel.setBounds (area1.removeFromTop (16));
+        memorySlider.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (8);
 
-    // Latent Hook Controls placement in sideControls area (visible in latent view)
-    auto latentArea = sideControls; // Reuse sideControls width for latent controls
-    latentArea = sideControls;
-    latentArea.setX (weightCanvas.getRight() + 12);
-    latentArea.setWidth (controlsWidth);
-    latentArea.setY (groupArea.getY());
-    latentArea.setHeight (groupArea.getHeight());
+        driftModeLabel.setBounds (area1.removeFromTop (16));
+        driftModeCombo.setBounds (area1.removeFromTop (24));
+        area1.removeFromTop (10);
 
-    latentEnableButton.setBounds (latentArea.removeFromTop (28));
-    latentArea.removeFromTop (12);
+        freezeButton.setBounds (area1.removeFromTop (24));
+    }
 
-    latentDepthLabel.setBounds (latentArea.removeFromTop (14));
-    latentDepthSlider.setBounds (latentArea.removeFromTop (64));
-    latentArea.removeFromTop (12);
+    // Layout Tab 2: Harmonics Controls
+    {
+        auto area2 = sideArea;
+        harmonicEnableToggle.setBounds (area2.removeFromTop (24));
+        area2.removeFromTop (6);
 
-    latentModeLabel.setBounds (latentArea.removeFromTop (14));
-    latentModeCombo.setBounds (latentArea.removeFromTop (26));
-    latentArea.removeFromTop (12);
+        harmonicFreqLabel.setBounds (area2.removeFromTop (16));
+        harmonicFreqSlider.setBounds (area2.removeFromTop (24));
+        area2.removeFromTop (8);
 
-    latentSlewLabel.setBounds (latentArea.removeFromTop (14));
-    latentSlewSlider.setBounds (latentArea.removeFromTop (64));
+        harmonicPartialsLabel.setBounds (area2.removeFromTop (16));
+        harmonicPartialsSlider.setBounds (area2.removeFromTop (24));
+        area2.removeFromTop (8);
+
+        harmonicMorphLabel.setBounds (area2.removeFromTop (16));
+        harmonicMorphSlider.setBounds (area2.removeFromTop (24));
+        area2.removeFromTop (8);
+
+        harmonicDepthLabel.setBounds (area2.removeFromTop (16));
+        harmonicDepthSlider.setBounds (area2.removeFromTop (24));
+        area2.removeFromTop (12);
+
+        harmonicModeLabel.setBounds (area2.removeFromTop (16));
+        harmonicModeCombo.setBounds (area2.removeFromTop (24));
+        area2.removeFromTop (14);
+
+        harmonicApplyButton.setBounds (area2.removeFromTop (28));
+    }
+
+    // Layout Tab 3: Trace Bridging (Cross-Talk) Controls
+    {
+        auto area3 = sideArea;
+        bridgeEnableToggle.setBounds (area3.removeFromTop (24));
+        area3.removeFromTop (8);
+
+        bridgeLabel.setBounds (area3.removeFromTop (16));
+        bridgeCombo.setBounds (area3.removeFromTop (26));
+        area3.removeFromTop (12);
+
+        bridgeDepthLabel.setBounds (area3.removeFromTop (16));
+        bridgeDepthSlider.setBounds (area3.removeFromTop (24));
+    }
+
+    // Layout Tab 4: Latent Hook Parameter Controls
+    {
+        auto area4 = sideArea;
+        latentEnableButton.setBounds (area4.removeFromTop (24));
+        area4.removeFromTop (10);
+
+        latentDepthLabel.setBounds (area4.removeFromTop (16));
+        latentDepthSlider.setBounds (area4.removeFromTop (24));
+        area4.removeFromTop (12);
+
+        latentModeLabel.setBounds (area4.removeFromTop (16));
+        latentModeCombo.setBounds (area4.removeFromTop (26));
+        area4.removeFromTop (12);
+
+        latentSlewLabel.setBounds (area4.removeFromTop (16));
+        latentSlewSlider.setBounds (area4.removeFromTop (24));
+    }
 }
 
 //==============================================================================
@@ -873,6 +933,48 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
         audioProcessor.setLatentEnabled (en);
         latentPad.setEnabledState (en, audioProcessor.hasAutoencode());
     }
+    else if (button == &tabMutateButton)
+    {
+        setSideTab (SideTab::Mutate);
+    }
+    else if (button == &tabHarmonicsButton)
+    {
+        setSideTab (SideTab::Harmonics);
+    }
+    else if (button == &tabBridgeButton)
+    {
+        setSideTab (SideTab::Bridge);
+    }
+    else if (button == &tabLatentButton)
+    {
+        setSideTab (SideTab::Latent);
+    }
+    else if (button == &mutateEnableToggle)
+    {
+        applyKnobBending();
+    }
+    else if (button == &driftEnableToggle)
+    {
+        // When drift is disabled, freeze live thermal jitter offsets
+        if (!driftEnableToggle.getToggleState() && currentBendingLayer.isNotEmpty())
+        {
+            auto state = audioProcessor.getLayerState (currentBendingLayer.toStdString());
+            state.driftOffsets.assign (state.driftOffsets.size(), 0.0f);
+            audioProcessor.setLayerState (currentBendingLayer.toStdString(), state);
+        }
+    }
+    else if (button == &bridgeEnableToggle)
+    {
+        bool en = bridgeEnableToggle.getToggleState();
+        weightCanvas.setShowBridgeVisuals (en);
+        applyKnobBending();
+    }
+    else if (button == &harmonicEnableToggle)
+    {
+        bool en = harmonicEnableToggle.getToggleState();
+        weightCanvas.setShowHarmonics (en);
+        updateHarmonicGhostPreview();
+    }
     else if (button == &displayCurveButton)
     {
         weightCanvas.setRenderMode (WeightBendingComponent::RenderMode::Curve);
@@ -1051,7 +1153,8 @@ void NNBendingAudioProcessorEditor::timerCallback()
             {
                 std::vector<float> bridgedBase = state.drawnWeights;
                 std::vector<float> srcTiled;
-                if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != currentBendingLayer.toStdString())
+                bool bridgeEnabled = bridgeEnableToggle.getToggleState();
+                if (bridgeEnabled && state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != currentBendingLayer.toStdString())
                 {
                     auto srcW = audioProcessor.getBackend().get_original_layer_weights (state.bridgeSourceLayer);
                     if (!srcW.empty())
@@ -1066,11 +1169,15 @@ void NNBendingAudioProcessorEditor::timerCallback()
                         }
                     }
                 }
-                weightCanvas.setBridgeWeights (srcTiled, bridgedBase, state.bridgeDepth, false);
+                weightCanvas.setShowBridgeVisuals (bridgeEnabled);
+                weightCanvas.setBridgeWeights (srcTiled, bridgedBase, bridgeEnabled ? state.bridgeDepth : 0.0f, false);
 
                 std::vector<float> targetBent(bridgedBase.size());
+                bool mutateEnabled = mutateEnableToggle.getToggleState();
+                float effScale = mutateEnabled ? state.scale : 1.0f;
+                float effOffset = mutateEnabled ? state.offset : 0.0f;
                 for (size_t i = 0; i < bridgedBase.size(); ++i)
-                    targetBent[i] = bridgedBase[i] * state.scale + state.offset;
+                    targetBent[i] = bridgedBase[i] * effScale + effOffset;
                 weightCanvas.setTargetBentWeights (targetBent);
             }
             else
@@ -1268,7 +1375,8 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     // Compute and send bridge source & mix curves to canvas
     std::vector<float> bridgedBase = baseDrawnWeights;
     std::vector<float> srcTiled;
-    if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != layerName.toStdString())
+    bool bridgeEnabled = bridgeEnableToggle.getToggleState();
+    if (bridgeEnabled && state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != layerName.toStdString())
     {
         auto srcW = audioProcessor.getBackend().get_original_layer_weights (state.bridgeSourceLayer);
         if (!srcW.empty())
@@ -1284,14 +1392,18 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
         }
     }
     bool isContinuous = (audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Continuous);
-    weightCanvas.setBridgeWeights (srcTiled, bridgedBase, state.bridgeDepth, isContinuous);
+    weightCanvas.setShowBridgeVisuals (bridgeEnabled);
+    weightCanvas.setBridgeWeights (srcTiled, bridgedBase, bridgeEnabled ? state.bridgeDepth : 0.0f, isContinuous);
 
     // If in momentary/transient modes, compute target bent overlay
     if (!isContinuous)
     {
         std::vector<float> targetBent(bridgedBase.size());
+        bool mutateEnabled = mutateEnableToggle.getToggleState();
+        float effScale = mutateEnabled ? state.scale : 1.0f;
+        float effOffset = mutateEnabled ? state.offset : 0.0f;
         for (size_t i = 0; i < bridgedBase.size(); ++i)
-            targetBent[i] = bridgedBase[i] * state.scale + state.offset;
+            targetBent[i] = bridgedBase[i] * effScale + effOffset;
         weightCanvas.setTargetBentWeights (targetBent);
     }
     else
@@ -1335,8 +1447,9 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
     if (baseDrawnWeights.empty())
         baseDrawnWeights = audioProcessor.getBackend().get_original_layer_weights (currentBendingLayer.toStdString());
     
-    float scale = (float)scaleSlider.getValue();
-    float offset = (float)offsetSlider.getValue();
+    bool mutateEnabled = mutateEnableToggle.getToggleState();
+    float scale = mutateEnabled ? (float)scaleSlider.getValue() : 1.0f;
+    float offset = mutateEnabled ? (float)offsetSlider.getValue() : 0.0f;
 
     // Store per-layer scale and offset
     audioProcessor.setLayerScale (currentBendingLayer.toStdString(), scale);
@@ -1346,7 +1459,9 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
     auto state = audioProcessor.getLayerState (currentBendingLayer.toStdString());
     std::vector<float> bridgedBase = baseDrawnWeights;
     std::vector<float> srcTiled;
-    if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != currentBendingLayer.toStdString())
+    bool bridgeEnabled = bridgeEnableToggle.getToggleState();
+
+    if (bridgeEnabled && state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != currentBendingLayer.toStdString())
     {
         auto srcW = audioProcessor.getBackend().get_original_layer_weights (state.bridgeSourceLayer);
         if (!srcW.empty())
@@ -1364,7 +1479,8 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
 
     auto mode = audioProcessor.getTriggerMode();
     bool isContinuous = (mode == NNBendingAudioProcessor::TriggerMode::Continuous);
-    weightCanvas.setBridgeWeights (srcTiled, bridgedBase, state.bridgeDepth, isContinuous);
+    weightCanvas.setShowBridgeVisuals (bridgeEnabled);
+    weightCanvas.setBridgeWeights (srcTiled, bridgedBase, bridgeEnabled ? state.bridgeDepth : 0.0f, isContinuous);
 
     std::vector<float> bentTarget(bridgedBase.size());
     for (size_t i = 0; i < bridgedBase.size(); ++i)
@@ -1552,7 +1668,7 @@ void NNBendingAudioProcessorEditor::updateKnobContextLabels (NNBendingAudioProce
 
 void NNBendingAudioProcessorEditor::updateHarmonicGhostPreview()
 {
-    if (currentBendingLayer.isEmpty() || baseDrawnWeights.empty())
+    if (!harmonicEnableToggle.getToggleState() || currentBendingLayer.isEmpty() || baseDrawnWeights.empty())
     {
         weightCanvas.setHarmonicGhostWeights ({}, false);
         return;
@@ -1648,6 +1764,80 @@ void NNBendingAudioProcessorEditor::applyHarmonicWeights()
     infoBendingLabel.setText ("Harmonic wave stamped to " + currentBendingLayer, juce::dontSendNotification);
 }
 
+void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
+{
+    currentSideTab = newTab;
+
+    bool isMutate = (currentSideTab == SideTab::Mutate);
+    bool isHarmonics = (currentSideTab == SideTab::Harmonics);
+    bool isBridge = (currentSideTab == SideTab::Bridge);
+    bool isLatent = (currentSideTab == SideTab::Latent);
+
+    juce::Colour activeBg = juce::Colour::fromString ("#ff4a1d72"); // Vivid violet
+    juce::Colour inactiveBg = juce::Colour::fromString ("#ff1c1926"); // Dark charcoal
+    juce::Colour activeText = juce::Colours::white;
+    juce::Colour inactiveText = juce::Colours::darkgrey;
+
+    tabMutateButton.setColour (juce::TextButton::buttonColourId, isMutate ? activeBg : inactiveBg);
+    tabMutateButton.setColour (juce::TextButton::textColourOffId, isMutate ? activeText : inactiveText);
+
+    tabHarmonicsButton.setColour (juce::TextButton::buttonColourId, isHarmonics ? activeBg : inactiveBg);
+    tabHarmonicsButton.setColour (juce::TextButton::textColourOffId, isHarmonics ? activeText : inactiveText);
+
+    tabBridgeButton.setColour (juce::TextButton::buttonColourId, isBridge ? activeBg : inactiveBg);
+    tabBridgeButton.setColour (juce::TextButton::textColourOffId, isBridge ? activeText : inactiveText);
+
+    tabLatentButton.setColour (juce::TextButton::buttonColourId, isLatent ? activeBg : inactiveBg);
+    tabLatentButton.setColour (juce::TextButton::textColourOffId, isLatent ? activeText : inactiveText);
+
+    // Tab 1: Mutate Visibility
+    mutateEnableToggle.setVisible (isMutate);
+    scaleLabel.setVisible (isMutate);
+    scaleSlider.setVisible (isMutate);
+    offsetLabel.setVisible (isMutate);
+    offsetSlider.setVisible (isMutate);
+    driftEnableToggle.setVisible (isMutate);
+    heatLabel.setVisible (isMutate);
+    heatSlider.setVisible (isMutate);
+    memoryLabel.setVisible (isMutate);
+    memorySlider.setVisible (isMutate);
+    driftModeLabel.setVisible (isMutate);
+    driftModeCombo.setVisible (isMutate);
+    freezeButton.setVisible (isMutate);
+
+    // Tab 2: Harmonics Visibility
+    harmonicEnableToggle.setVisible (isHarmonics);
+    harmonicFreqLabel.setVisible (isHarmonics);
+    harmonicFreqSlider.setVisible (isHarmonics);
+    harmonicPartialsLabel.setVisible (isHarmonics);
+    harmonicPartialsSlider.setVisible (isHarmonics);
+    harmonicMorphLabel.setVisible (isHarmonics);
+    harmonicMorphSlider.setVisible (isHarmonics);
+    harmonicDepthLabel.setVisible (isHarmonics);
+    harmonicDepthSlider.setVisible (isHarmonics);
+    harmonicModeLabel.setVisible (isHarmonics);
+    harmonicModeCombo.setVisible (isHarmonics);
+    harmonicApplyButton.setVisible (isHarmonics);
+
+    // Tab 3: Bridge Visibility
+    bridgeEnableToggle.setVisible (isBridge);
+    bridgeLabel.setVisible (isBridge);
+    bridgeCombo.setVisible (isBridge);
+    bridgeDepthLabel.setVisible (isBridge);
+    bridgeDepthSlider.setVisible (isBridge);
+
+    // Tab 4: Latent Visibility
+    latentEnableButton.setVisible (isLatent);
+    latentDepthLabel.setVisible (isLatent);
+    latentDepthSlider.setVisible (isLatent);
+    latentModeLabel.setVisible (isLatent);
+    latentModeCombo.setVisible (isLatent);
+    latentSlewLabel.setVisible (isLatent);
+    latentSlewSlider.setVisible (isLatent);
+
+    repaint();
+}
+
 void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
 {
     currentViewMode = newMode;
@@ -1681,43 +1871,19 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     displayCurveButton.setVisible (isWeights);
     displayMatrixButton.setVisible (isWeights);
 
-    // Toggle harmonic toolbar visibility
-    harmonicTitleLabel.setVisible (isWeights);
-    harmonicFreqLabel.setVisible (isWeights);
-    harmonicFreqSlider.setVisible (isWeights);
-    harmonicPartialsLabel.setVisible (isWeights);
-    harmonicPartialsSlider.setVisible (isWeights);
-    harmonicMorphLabel.setVisible (isWeights);
-    harmonicMorphSlider.setVisible (isWeights);
-    harmonicDepthLabel.setVisible (isWeights);
-    harmonicDepthSlider.setVisible (isWeights);
-    harmonicModeCombo.setVisible (isWeights);
-    harmonicApplyButton.setVisible (isWeights);
-
-    // Toggle side knobs (Scale, Offset, Heat, Memory, Bridge)
-    scaleLabel.setVisible (isWeights);
-    scaleSlider.setVisible (isWeights);
-    offsetLabel.setVisible (isWeights);
-    offsetSlider.setVisible (isWeights);
-    heatLabel.setVisible (isWeights);
-    heatSlider.setVisible (isWeights);
-    memoryLabel.setVisible (isWeights);
-    memorySlider.setVisible (isWeights);
-    driftModeCombo.setVisible (isWeights);
-    freezeButton.setVisible (isWeights);
-    bridgeLabel.setVisible (isWeights);
-    bridgeCombo.setVisible (isWeights);
-    bridgeDepthLabel.setVisible (isWeights);
-    bridgeDepthSlider.setVisible (isWeights);
-
-    // Toggle latent-domain controls
-    latentEnableButton.setVisible (isLatent);
-    latentDepthLabel.setVisible (isLatent);
-    latentDepthSlider.setVisible (isLatent);
-    latentModeLabel.setVisible (isLatent);
-    latentModeCombo.setVisible (isLatent);
-    latentSlewLabel.setVisible (isLatent);
-    latentSlewSlider.setVisible (isLatent);
+    // If switching to Latent view, auto-activate the Latent tab on the right
+    if (isLatent)
+    {
+        setSideTab (SideTab::Latent);
+    }
+    else if (currentSideTab == SideTab::Latent)
+    {
+        setSideTab (SideTab::Mutate);
+    }
+    else
+    {
+        setSideTab (currentSideTab);
+    }
 
     // Update bottom readout status
     if (isLatent)

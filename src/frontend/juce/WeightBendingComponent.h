@@ -79,6 +79,27 @@ public:
         repaint();
     }
 
+    void setShowBridgeVisuals(bool show)
+    {
+        if (m_showBridgeVisuals != show)
+        {
+            m_showBridgeVisuals = show;
+            repaint();
+        }
+    }
+
+    void setShowHarmonics(bool show)
+    {
+        if (m_showHarmonics != show)
+        {
+            m_showHarmonics = show;
+            repaint();
+        }
+    }
+
+    bool isBridgeVisualsEnabled() const { return m_showBridgeVisuals; }
+    bool isHarmonicsEnabled() const { return m_showHarmonics; }
+
     const std::vector<float>& getCurrentWeights() const { return m_currentWeights; }
     const std::vector<int64_t>& getLayerShape() const { return m_layerShape; }
     const std::vector<float>& getOriginalWeights() const { return m_originalWeights; }
@@ -211,59 +232,10 @@ public:
                 g.drawVerticalLine((int)x, 0.0f, ph);
             }
 
-            // 1. Render original weights curve (faint green/cyan reference)
-            if (!m_originalWeights.empty())
-            {
-                juce::Path origPath;
-                buildPathForWeights(origPath, m_originalWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ff22c55e").withAlpha(0.35f)); // Forest green baseline
-                g.strokePath(origPath, juce::PathStrokeType(1.2f));
-            }
-
-            // 2. Render bridged source layer curve (muted copper/terracotta reference if bridge active)
-            if (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
-            {
-                juce::Path srcPath;
-                buildPathForWeights(srcPath, m_bridgeSourceWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.40f)); // Muted copper
-                g.strokePath(srcPath, juce::PathStrokeType(1.0f));
-            }
-
-            // 3. Render Cross-Talk composite blend curve (Warm golden amber: intermediate between emerald and copper)
-            if (m_bridgeDepth > 0.001f && !m_bridgeMixWeights.empty())
-            {
-                juce::Path mixPath;
-                buildPathForWeights(mixPath, m_bridgeMixWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(m_isContinuousMode ? 1.0f : 0.75f));
-                g.strokePath(mixPath, juce::PathStrokeType(m_isContinuousMode ? 1.5f : 1.2f));
-            }
-
-            // 4. Render target bent curve (neon pink / magenta overlay showing target state in momentary)
-            if (!m_targetBentWeights.empty())
-            {
-                juce::Path targetPath;
-                buildPathForWeights(targetPath, m_targetBentWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#ffec4899").withAlpha(0.85f)); // Vivid neon pink/magenta
-                g.strokePath(targetPath, juce::PathStrokeType(1.4f));
-            }
-
-            // 5. Render harmonic synthesizer ghost preview (Glowing gold/amber dashed line)
-            if (m_showHarmonicGhost && !m_harmonicGhostWeights.empty())
-            {
-                juce::Path ghostPath;
-                buildPathForWeights(ghostPath, m_harmonicGhostWeights, pw, ph);
-                g.setColour(juce::Colour::fromString("#fffbbf24").withAlpha(0.95f)); // Luminous amber gold
-                const float dashLengths[2] = { 6.0f, 3.0f };
-                juce::Path dashedGhostStroke;
-                juce::PathStrokeType(1.8f).createDashedStroke(dashedGhostStroke, ghostPath, dashLengths, 2);
-                g.fillPath(dashedGhostStroke);
-            }
-
-            // 6. Render current live weights (Neon purple/violet with gradient fill)
+            // 1. Render gradient fill under current live weights (drawn early so curves overlay cleanly)
             juce::Path bentPath;
             buildPathForWeights(bentPath, m_currentWeights, pw, ph);
 
-            // Gradient fill under the live curve
             if (!bentPath.isEmpty())
             {
                 juce::Path fillPath = bentPath;
@@ -272,15 +244,66 @@ public:
                 fillPath.closeSubPath();
 
                 juce::ColourGradient grad(
-                    juce::Colour::fromString("#66c084fc"), 0, 0,
-                    juce::Colour::fromString("#0a9333ea"), 0, ph, false
+                    juce::Colour::fromString("#44c084fc"), 0, 0,
+                    juce::Colour::fromString("#089333ea"), 0, ph, false
                 );
                 g.setGradientFill(grad);
                 g.fillPath(fillPath);
+            }
 
-                // Vibrant neon purple/violet stroke for real-time model weights
+            // 2. Render original weights baseline curve (vivid emerald green, sleek 1.0f crisp stroke)
+            if (!m_originalWeights.empty())
+            {
+                juce::Path origPath;
+                buildPathForWeights(origPath, m_originalWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ff4ade80").withAlpha(0.85f)); // Vivid emerald green baseline
+                g.strokePath(origPath, juce::PathStrokeType(1.0f));
+            }
+
+            // 3. Render bridged source layer curve (muted copper/terracotta reference if bridge active and enabled)
+            if (m_showBridgeVisuals && m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
+            {
+                juce::Path srcPath;
+                buildPathForWeights(srcPath, m_bridgeSourceWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ffc26a38").withAlpha(0.55f)); // Muted copper
+                g.strokePath(srcPath, juce::PathStrokeType(1.0f));
+            }
+
+            // 4. Render Cross-Talk composite blend curve (Warm golden amber: intermediate between emerald and copper)
+            if (m_showBridgeVisuals && m_bridgeDepth > 0.001f && !m_bridgeMixWeights.empty())
+            {
+                juce::Path mixPath;
+                buildPathForWeights(mixPath, m_bridgeMixWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(m_isContinuousMode ? 0.90f : 0.70f));
+                g.strokePath(mixPath, juce::PathStrokeType(1.0f));
+            }
+
+            // 5. Render target bent curve (neon pink / magenta overlay showing target state in momentary)
+            if (!m_targetBentWeights.empty())
+            {
+                juce::Path targetPath;
+                buildPathForWeights(targetPath, m_targetBentWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#ffec4899").withAlpha(0.85f)); // Vivid neon pink/magenta
+                g.strokePath(targetPath, juce::PathStrokeType(1.0f));
+            }
+
+            // 6. Render harmonic synthesizer ghost preview (Glowing gold/amber dashed line)
+            if (m_showHarmonics && m_showHarmonicGhost && !m_harmonicGhostWeights.empty())
+            {
+                juce::Path ghostPath;
+                buildPathForWeights(ghostPath, m_harmonicGhostWeights, pw, ph);
+                g.setColour(juce::Colour::fromString("#fffbbf24").withAlpha(0.95f)); // Luminous amber gold
+                const float dashLengths[2] = { 5.0f, 3.0f };
+                juce::Path dashedGhostStroke;
+                juce::PathStrokeType(1.0f).createDashedStroke(dashedGhostStroke, ghostPath, dashLengths, 2);
+                g.fillPath(dashedGhostStroke);
+            }
+
+            // 7. Render current live weights stroke (Neon purple/violet with crisp modern 1.2f line)
+            if (!bentPath.isEmpty())
+            {
                 g.setColour(juce::Colour::fromString("#ffc084fc"));
-                g.strokePath(bentPath, juce::PathStrokeType(2.0f));
+                g.strokePath(bentPath, juce::PathStrokeType(1.2f));
             }
 
             // Dynamic Legend / Color key overlay in top right corner
@@ -289,9 +312,9 @@ public:
                 g.setFont(juce::FontOptions(10.0f));
 
                 // Calculate required width based on active curves
-                bool showBridge = (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty());
+                bool showBridge = (m_showBridgeVisuals && m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty());
                 bool showTarget = (!m_targetBentWeights.empty());
-                bool showHarmonic = (m_showHarmonicGhost && !m_harmonicGhostWeights.empty());
+                bool showHarmonic = (m_showHarmonics && m_showHarmonicGhost && !m_harmonicGhostWeights.empty());
 
                 int totalItems = 2 + (showBridge ? 2 : 0) + (showTarget ? 1 : 0) + (showHarmonic ? 1 : 0);
                 int itemW = 78;
@@ -301,7 +324,7 @@ public:
                 int curX = legendX;
 
                 // Green: Baseline
-                g.setColour(juce::Colour::fromString("#ff22c55e"));
+                g.setColour(juce::Colour::fromString("#ff4ade80"));
                 g.fillRect(curX, legendY + 3, 10, 3);
                 g.drawText("Baseline W0", curX + 13, legendY - 2, 64, 14, juce::Justification::centredLeft);
                 curX += itemW;
@@ -452,7 +475,7 @@ public:
         }
 
         // Bridge Wire cross-talk glowing indicator
-        if (m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
+        if (m_showBridgeVisuals && m_bridgeDepth > 0.001f && !m_bridgeSourceWeights.empty())
         {
             g.setColour(juce::Colour::fromString("#ffd99b26").withAlpha(0.7f)); // Warm golden amber
             float bridgeBarX = plotArea.getX() + marginLeft - 8.0f;
@@ -897,6 +920,8 @@ private:
     std::vector<float> m_bridgeMixWeights;
     std::vector<float> m_harmonicGhostWeights;
     bool m_showHarmonicGhost { false };
+    bool m_showBridgeVisuals { true };
+    bool m_showHarmonics { true };
     float m_bridgeDepth { 0.0f };
     bool m_isContinuousMode { true };
 
