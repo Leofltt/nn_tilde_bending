@@ -72,22 +72,22 @@ echo "=================================================================="
 
 # Check build artifacts (handles both multi-config like Xcode with Release/ and single-config like Ninja/Makefiles)
 CONFIG="${CMAKE_BUILD_TYPE:-Release}"
-if [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/VST3/nn~ Bending.vst3" ]; then
-    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/VST3/nn~ Bending.vst3"
-    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/AU/nn~ Bending.component"
-    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/${CONFIG}/Standalone/nn~ Bending.app"
-elif [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3" ]; then
-    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3"
-    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/nn~ Bending.component"
-    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/nn~ Bending.app"
-elif [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/VST3/nn~ Bending.vst3" ]; then
-    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/VST3/nn~ Bending.vst3"
-    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/AU/nn~ Bending.component"
-    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Standalone/nn~ Bending.app"
+if [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/VST3/NetBender.vst3" ]; then
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/VST3/NetBender.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/${CONFIG}/AU/NetBender.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/${CONFIG}/Standalone/NetBender.app"
+elif [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/NetBender.vst3" ]; then
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/NetBender.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/NetBender.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/NetBender.app"
+elif [ -d "${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/VST3/NetBender.vst3" ]; then
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/VST3/NetBender.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/AU/NetBender.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Standalone/NetBender.app"
 else
-    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/nn~ Bending.vst3"
-    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/nn~ Bending.component"
-    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/nn~ Bending.app"
+    VST3_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/VST3/NetBender.vst3"
+    AU_SRC="${JUCE_BUILD_DIR}/nn_bending_plugin_artefacts/Release/AU/NetBender.component"
+    APP_SRC="${JUCE_BUILD_DIR}/nn_bending_standalone_artefacts/Release/Standalone/NetBender.app"
 fi
 
 for src in "${VST3_SRC}" "${AU_SRC}" "${APP_SRC}"; do
@@ -115,9 +115,9 @@ cp -R "${VST3_SRC}" "${STAGE_DIR}/vst3_root/Library/Audio/Plug-Ins/VST3/"
 cp -R "${AU_SRC}"   "${STAGE_DIR}/au_root/Library/Audio/Plug-Ins/Components/"
 cp -R "${APP_SRC}"  "${STAGE_DIR}/app_root/Applications/"
 
-STAGE_VST3="${STAGE_DIR}/vst3_root/Library/Audio/Plug-Ins/VST3/nn~ Bending.vst3"
-STAGE_AU="${STAGE_DIR}/au_root/Library/Audio/Plug-Ins/Components/nn~ Bending.component"
-STAGE_APP="${STAGE_DIR}/app_root/Applications/nn~ Bending.app"
+STAGE_VST3="${STAGE_DIR}/vst3_root/Library/Audio/Plug-Ins/VST3/NetBender.vst3"
+STAGE_AU="${STAGE_DIR}/au_root/Library/Audio/Plug-Ins/Components/NetBender.component"
+STAGE_APP="${STAGE_DIR}/app_root/Applications/NetBender.app"
 STAGE_SUPPORT_LIB="${STAGE_DIR}/support_root${SHARED_LIB_DEST}"
 
 # ------------------------------------------------------------------------------
@@ -148,7 +148,7 @@ if [ "${BUNDLE_DEPS}" = "1" ]; then
 
         echo "-> Fixing dependencies for VST3 into shared support dir..."
         "${PYTHON_CMD}" "${DYLIB_FIX_SCRIPT}" \
-            -p "${STAGE_VST3}/Contents/MacOS/nn~ Bending" \
+            -p "${STAGE_VST3}/Contents/MacOS/NetBender" \
             -o "${STAGE_SUPPORT_LIB}" \
             -l "${LIB_SEARCH_PATHS[@]}" \
             --use_rpath \
@@ -158,7 +158,7 @@ if [ "${BUNDLE_DEPS}" = "1" ]; then
 
         echo "-> Fixing dependencies for AU into shared support dir..."
         "${PYTHON_CMD}" "${DYLIB_FIX_SCRIPT}" \
-            -p "${STAGE_AU}/Contents/MacOS/nn~ Bending" \
+            -p "${STAGE_AU}/Contents/MacOS/NetBender" \
             -o "${STAGE_SUPPORT_LIB}" \
             -l "${LIB_SEARCH_PATHS[@]}" \
             --use_rpath \
@@ -168,7 +168,7 @@ if [ "${BUNDLE_DEPS}" = "1" ]; then
 
         echo "-> Fixing dependencies for Standalone App into shared support dir..."
         "${PYTHON_CMD}" "${DYLIB_FIX_SCRIPT}" \
-            -p "${STAGE_APP}/Contents/MacOS/nn~ Bending" \
+            -p "${STAGE_APP}/Contents/MacOS/NetBender" \
             -o "${STAGE_SUPPORT_LIB}" \
             -l "${LIB_SEARCH_PATHS[@]}" \
             --use_rpath \
@@ -177,9 +177,9 @@ if [ "${BUNDLE_DEPS}" = "1" ]; then
             --entitlements "${ENTITLEMENTS}"
 
         # Ensure binaries link to @rpath for shared dylibs and have SHARED_LIB_DEST in rpaths
-        for bin in "${STAGE_VST3}/Contents/MacOS/nn~ Bending" \
-                   "${STAGE_AU}/Contents/MacOS/nn~ Bending" \
-                   "${STAGE_APP}/Contents/MacOS/nn~ Bending"; do
+        for bin in "${STAGE_VST3}/Contents/MacOS/NetBender" \
+                   "${STAGE_AU}/Contents/MacOS/NetBender" \
+                   "${STAGE_APP}/Contents/MacOS/NetBender"; do
             # Add shared rpath if not present
             install_name_tool -add_rpath "${SHARED_LIB_DEST}" "${bin}" 2>/dev/null || true
             # Clean any references that pointed to support_root or local files
@@ -291,15 +291,15 @@ cat <<EOF > "${STAGE_DIR}/distribution.xml"
         <pkg-ref id="${BUNDLE_PREFIX}.support"/>
     </choice>
 
-    <choice id="choice_vst3" title="VST3 Plugin" description="Installs nn~ Bending VST3 plugin into /Library/Audio/Plug-Ins/VST3">
+    <choice id="choice_vst3" title="VST3 Plugin" description="Installs NetBender VST3 plugin into /Library/Audio/Plug-Ins/VST3">
         <pkg-ref id="${BUNDLE_PREFIX}.vst3"/>
     </choice>
     
-    <choice id="choice_au" title="Audio Unit (AU) Plugin" description="Installs nn~ Bending Audio Unit into /Library/Audio/Plug-Ins/Components">
+    <choice id="choice_au" title="Audio Unit (AU) Plugin" description="Installs NetBender Audio Unit into /Library/Audio/Plug-Ins/Components">
         <pkg-ref id="${BUNDLE_PREFIX}.au"/>
     </choice>
     
-    <choice id="choice_app" title="Standalone Application" description="Installs nn~ Bending Standalone Application into /Applications">
+    <choice id="choice_app" title="Standalone Application" description="Installs NetBender Standalone Application into /Applications">
         <pkg-ref id="${BUNDLE_PREFIX}.app"/>
     </choice>
     

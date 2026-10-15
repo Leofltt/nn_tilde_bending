@@ -38,16 +38,16 @@ if (-not $Version) {
 $JuceBuildDir = "$BuildDir\frontend\juce"
 
 # Auto-detect Config (Release vs Debug) for local testing, but strictly enforce on CI
-$Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\$Config\VST3\nn~ Bending.vst3"
+$Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\$Config\VST3\NetBender.vst3"
 if (-not (Test-Path $Vst3Src)) {
-    if (-not $env:CI -and $Config -eq "Release" -and (Test-Path "$JuceBuildDir\nn_bending_plugin_artefacts\Debug\VST3\nn~ Bending.vst3")) {
+    if (-not $env:CI -and $Config -eq "Release" -and (Test-Path "$JuceBuildDir\nn_bending_plugin_artefacts\Debug\VST3\NetBender.vst3")) {
         $Config = "Debug"
         Write-Warning "Release build not found; falling back to Debug configuration for local packaging."
-        $Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\$Config\VST3\nn~ Bending.vst3"
+        $Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\$Config\VST3\NetBender.vst3"
     }
 }
 
-$StandaloneSrc  = "$JuceBuildDir\nn_bending_standalone_artefacts\$Config\Standalone\nn~ Bending.exe"
+$StandaloneSrc  = "$JuceBuildDir\nn_bending_standalone_artefacts\$Config\Standalone\NetBender.exe"
 $TorchLibDir    = "$RepoRoot\libtorch\lib"
 
 Write-Host "==================================================================" -ForegroundColor Cyan
@@ -73,10 +73,10 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 # 1. Package VST3
 Write-Host "==> Staging VST3 plugin..." -ForegroundColor Yellow
-Copy-Item -Recurse -Force $Vst3Src "$StageDir\VST3\nn~ Bending.vst3"
+Copy-Item -Recurse -Force $Vst3Src "$StageDir\VST3\NetBender.vst3"
 
 # Ensure all LibTorch DLLs are inside the VST3 bundle (Contents\x86_64-win)
-$Vst3DllDir = "$StageDir\VST3\nn~ Bending.vst3\Contents\x86_64-win"
+$Vst3DllDir = "$StageDir\VST3\NetBender.vst3\Contents\x86_64-win"
 if (Test-Path $TorchLibDir) {
     Get-ChildItem -Path $TorchLibDir -Filter "*.dll" | ForEach-Object {
         Copy-Item -Force $_.FullName $Vst3DllDir
@@ -88,7 +88,7 @@ $hasStandalone = Test-Path $StandaloneSrc
 if ($hasStandalone) {
     New-Item -ItemType Directory -Path "$StageDir\Standalone" -Force | Out-Null
     Write-Host "==> Staging Standalone application..." -ForegroundColor Yellow
-    Copy-Item -Force $StandaloneSrc "$StageDir\Standalone\nn~ Bending.exe"
+    Copy-Item -Force $StandaloneSrc "$StageDir\Standalone\NetBender.exe"
     
     # Copy LibTorch DLLs next to Standalone executable
     if (Test-Path $TorchLibDir) {
@@ -102,12 +102,12 @@ if ($hasStandalone) {
 
 # 3. Create Installation Instructions
 $InstallDoc = @"
-nn~ Bending - Windows Installation
+NetBender - Windows Installation
 ==================================
 Version: $Version
 
 1. VST3 Plugin:
-   Copy the "nn~ Bending.vst3" folder into your VST3 plug-ins directory:
+   Copy the "NetBender.vst3" folder into your VST3 plug-ins directory:
      C:\Program Files\Common Files\VST3\
    (or into your DAW's custom VST3 search folder).
 
@@ -120,7 +120,7 @@ if ($hasStandalone) {
 
 
 2. Standalone Application:
-   Run "nn~ Bending.exe" directly from the Standalone folder.
+   Run "NetBender.exe" directly from the Standalone folder.
    Keep the accompanying .dll files in the same folder as the executable.
 "@
 }

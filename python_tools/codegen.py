@@ -13,11 +13,15 @@ class TmpFileSession(object):
         unique_id = str(uuid.uuid4())
         return self._path / f"{unique_id}.py"
     def close(self):
-        
-        if len(os.listdir(TMP_FILE_OUTPUT)) == 0:
-            shutil.rmtree(TMP_FILE_OUTPUT, True)
-        else:
-            shutil.rmtree(self._path, True)
+        if not TMP_FILE_OUTPUT.exists():
+            return
+        try:
+            if len(os.listdir(TMP_FILE_OUTPUT)) == 0:
+                shutil.rmtree(TMP_FILE_OUTPUT, True)
+            else:
+                shutil.rmtree(self._path, True)
+        except OSError:
+            pass
             
 
 def tmp_file_session(obj):

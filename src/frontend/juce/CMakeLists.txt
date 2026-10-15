@@ -70,9 +70,9 @@ function(configure_nn_bending_target target_name)
                 # Determine destination path for local installation
                 set(COPY_DEST "")
                 if (sub_target MATCHES ".*_AU$")
-                    set(COPY_DEST "$ENV{HOME}/Library/Audio/Plug-Ins/Components/nn~ Bending.component")
+                    set(COPY_DEST "$ENV{HOME}/Library/Audio/Plug-Ins/Components/NetBender.component")
                 elseif (sub_target MATCHES ".*_VST3$")
-                    set(COPY_DEST "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/nn~ Bending.vst3")
+                    set(COPY_DEST "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/NetBender.vst3")
                 endif()
 
                 if (NOT "${COPY_DEST}" STREQUAL "")
@@ -140,17 +140,17 @@ function(configure_nn_bending_target target_name)
 
                 # For VST3 plugin, install bundle to system and/or user VST3 directory
                 if (sub_target MATCHES ".*_VST3$")
-                    set(SRC_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/${target_name}_artefacts/$<CONFIG>/VST3/nn~ Bending.vst3")
+                    set(SRC_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/${target_name}_artefacts/$<CONFIG>/VST3/NetBender.vst3")
                     file(TO_CMAKE_PATH "$ENV{CommonProgramFiles}" CPF_DIR)
-                    set(SYS_DEST "${CPF_DIR}/VST3/nn~ Bending.vst3")
+                    set(SYS_DEST "${CPF_DIR}/VST3/NetBender.vst3")
 
                     file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}" LAPPDATA_DIR)
-                    set(USER_DEST "${LAPPDATA_DIR}/Programs/Common/VST3/nn~ Bending.vst3")
+                    set(USER_DEST "${LAPPDATA_DIR}/Programs/Common/VST3/NetBender.vst3")
 
                     set(CUSTOM_DEST "")
                     if (DEFINED ENV{VST3_INSTALL_PATH})
                         file(TO_CMAKE_PATH "$ENV{VST3_INSTALL_PATH}" VST3_DIR)
-                        set(CUSTOM_DEST "${VST3_DIR}/nn~ Bending.vst3")
+                        set(CUSTOM_DEST "${VST3_DIR}/NetBender.vst3")
                     endif()
 
                     add_custom_command(
@@ -182,7 +182,7 @@ juce_add_plugin(nn_bending_plugin
     PLUGIN_MANUFACTURER_CODE FLTT
     PLUGIN_CODE Nnbd
     FORMATS VST3 AU
-    PRODUCT_NAME "nn~ Bending"
+    PRODUCT_NAME "NetBender"
     COMPANY_NAME "leofltt"
 )
 configure_nn_bending_target(nn_bending_plugin)
@@ -199,7 +199,7 @@ juce_add_plugin(nn_bending_standalone
     PLUGIN_MANUFACTURER_CODE FLTT
     PLUGIN_CODE Nnbs
     FORMATS Standalone
-    PRODUCT_NAME "nn~ Bending"
+    PRODUCT_NAME "NetBender"
     COMPANY_NAME "leofltt"
 )
 configure_nn_bending_target(nn_bending_standalone)

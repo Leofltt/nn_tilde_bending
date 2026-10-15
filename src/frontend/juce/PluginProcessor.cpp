@@ -111,7 +111,14 @@ NNBendingAudioProcessor::~NNBendingAudioProcessor()
 void NNBendingAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     juce::ignoreUnused(samplesPerBlock);
+    m_hostSampleRate.store(sampleRate);
     m_backend.set_sample_rate(sampleRate);
+    if (m_modelLoaded.load())
+    {
+        double modelSr = m_backend.get_sample_rate();
+        m_modelSampleRate.store(modelSr);
+        m_resamplingActive.store(std::abs(sampleRate - modelSr) > 1.0);
+    }
     initBuffers();
 }
 
@@ -217,17 +224,57 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         m_dry_delay_buffers[c].put(inPtr, numSamples);
     }
 
+    bool resampling = m_resamplingActive.load();
+    double hostSr = m_hostSampleRate.load();
+    double modelSr = m_modelSampleRate.load();
+
     if (m_model_in > 0)
     {
-        for (int c = 0; c < m_model_in; ++c)
+        if (resampling && hostSr > 0.0 && modelSr > 0.0)
         {
-            const float* inPtr = nullptr;
-            if (c < totalNumInputChannels)
-                inPtr = buffer.getReadPointer(c);
-            else if (totalNumInputChannels > 0)
-                inPtr = buffer.getReadPointer(0);
+            // Resample host input -> model sample rate
+            double inRatio = hostSr / modelSr;
+            int numModelSamples = (int)std::ceil(numSamples / inRatio);
+            if (numModelSamples > 0)
+            {
+                for (int c = 0; c < m_model_in; ++c)
+                {
+                    const float* inPtr = nullptr;
+                    if (c < totalNumInputChannels)
+                        inPtr = buffer.getReadPointer(c);
+                    else if (totalNumInputChannels > 0)
+                        inPtr = buffer.getReadPointer(0);
 
-            m_in_buffers[c].put(inPtr, numSamples);
+                    if (c < (int)m_input_resamplers.size() && c < (int)m_resampled_in_scratch.size())
+                    {
+                        if (numModelSamples > (int)m_resampled_in_scratch[c].size())
+                            m_resampled_in_scratch[c].resize(numModelSamples * 2);
+
+                        int actualWritten = m_input_resamplers[c].process(
+                            inRatio,
+                            inPtr,
+                            m_resampled_in_scratch[c].data(),
+                            numModelSamples
+                        );
+
+                        m_in_buffers[c].put(m_resampled_in_scratch[c].data(), actualWritten);
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Direct transfer without resampling
+            for (int c = 0; c < m_model_in; ++c)
+            {
+                const float* inPtr = nullptr;
+                if (c < totalNumInputChannels)
+                    inPtr = buffer.getReadPointer(c);
+                else if (totalNumInputChannels > 0)
+                    inPtr = buffer.getReadPointer(0);
+
+                m_in_buffers[c].put(inPtr, numSamples);
+            }
         }
         
         // Check if we have enough samples to trigger inference and thread is idle
@@ -253,11 +300,41 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         }
     }
     
-    // 3. Pull processed samples from output circular buffers
+    // 3. Pull processed samples from output circular buffers (resampling model SR -> host SR if active)
     int n_outs = std::min((int)totalNumOutputChannels, m_model_out);
-    for (int c = 0; c < n_outs; ++c)
+    if (resampling && hostSr > 0.0 && modelSr > 0.0)
     {
-        m_out_buffers[c].get(buffer.getWritePointer(c), numSamples);
+        double outRatio = modelSr / hostSr;
+        int numModelToRead = (int)std::ceil(numSamples * outRatio) + 4;
+
+        for (int c = 0; c < n_outs; ++c)
+        {
+            if (c < (int)m_output_resamplers.size() && c < (int)m_resampled_out_scratch.size())
+            {
+                if (numModelToRead > (int)m_resampled_out_scratch[c].size())
+                    m_resampled_out_scratch[c].resize(numModelToRead * 2);
+
+                m_out_buffers[c].get(m_resampled_out_scratch[c].data(), numModelToRead);
+
+                m_output_resamplers[c].process(
+                    outRatio,
+                    m_resampled_out_scratch[c].data(),
+                    buffer.getWritePointer(c),
+                    numSamples
+                );
+            }
+            else
+            {
+                buffer.clear(c, 0, numSamples);
+            }
+        }
+    }
+    else
+    {
+        for (int c = 0; c < n_outs; ++c)
+        {
+            m_out_buffers[c].get(buffer.getWritePointer(c), numSamples);
+        }
     }
     
     // If model is mono (1 out) and host is stereo (2 out), duplicate Left to Right channel
@@ -376,17 +453,28 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
             }
         }
 
-        // Auto-configure buffer size to model ratio
+        // Auto-configure buffer size to model ratio.
+        // For deep convolutional autoencoders (such as Stable Audio / Oobleck / DAC / RAVE 2048),
+        // each chunk needs multiple latent frames (at least 2 frames, >= 4096 samples)
+        // to satisfy convolutional receptive field and streaming padding.
         int higher_ratio = m_backend.get_higher_ratio();
         int reqSize = 1;
         while (reqSize < higher_ratio)
             reqSize <<= 1;
-        m_bufferSize = std::max(2048, reqSize);
+        int minBufferForRatio = (higher_ratio >= 2048) ? 4096 : 2048;
+        m_bufferSize = std::max(minBufferForRatio, reqSize * 2);
         
         // Reset latent terrain cached matrices on new model load
         m_rffMatrix = at::Tensor();
         m_prevLatentTensor = at::Tensor();
         m_cachedLatentDim = 0;
+
+        // Query model sample rate vs host sample rate
+        double hostSr = getSampleRate();
+        m_hostSampleRate.store(hostSr > 0.0 ? hostSr : 44100.0);
+        double modelSr = m_backend.get_sample_rate();
+        m_modelSampleRate.store(modelSr);
+        m_resamplingActive.store(std::abs(m_hostSampleRate.load() - modelSr) > 1.0);
 
         m_modelLoaded.store(true);
         initBuffers();
@@ -443,11 +531,37 @@ void NNBendingAudioProcessor::initBuffers()
     m_worker_out.resize(n_out);
     
     // In forward mode, delay is 2 * m_bufferSize (1 buffer input accumulation + 1 buffer model inference transfer)
-    int latencySamples = (m_model_in > 0) ? (m_bufferSize * 2) : 0;
+    double hostSr = m_hostSampleRate.load();
+    double modelSr = m_modelSampleRate.load();
+    bool resampling = m_resamplingActive.load() && (hostSr > 0.0) && (modelSr > 0.0);
+    
+    // Scale latency to host sample rate if resampling is active
+    int latencySamples = 0;
+    if (m_model_in > 0)
+    {
+        double latencyModel = m_bufferSize * 2.0;
+        latencySamples = resampling ? (int)std::round(latencyModel * (hostSr / modelSr)) : (m_bufferSize * 2);
+    }
     setLatencySamples(latencySamples);
 
     int n_dry = std::max(2, std::max(n_in, n_out));
     m_dry_delay_buffers.resize(n_dry);
+
+    // Initialize resamplers and scratch storage
+    m_input_resamplers.resize(n_in);
+    for (auto& r : m_input_resamplers) r.reset();
+
+    m_output_resamplers.resize(n_out);
+    for (auto& r : m_output_resamplers) r.reset();
+
+    int maxScratchSize = std::max(8192, m_bufferSize * 4);
+    m_resampled_in_scratch.resize(n_in);
+    for (auto& buf : m_resampled_in_scratch)
+        buf.assign(maxScratchSize, 0.0f);
+
+    m_resampled_out_scratch.resize(n_out);
+    for (auto& buf : m_resampled_out_scratch)
+        buf.assign(maxScratchSize, 0.0f);
 
     for (int i = 0; i < n_in; ++i)
     {
@@ -458,7 +572,8 @@ void NNBendingAudioProcessor::initBuffers()
 
     for (int i = 0; i < n_dry; ++i)
     {
-        m_dry_delay_buffers[i].init(m_bufferSize);
+        int dryCap = std::max(m_bufferSize, latencySamples);
+        m_dry_delay_buffers[i].init(dryCap);
         // Pre-fill dry delay buffer with latency zeros so dry aligns with wet output
         if (latencySamples > 0)
             m_dry_delay_buffers[i].put(nullptr, latencySamples);
@@ -750,8 +865,10 @@ void NNBendingAudioProcessor::runInference()
                         rffVec = rffVec.slice(1, 0, latentDim);
                     }
 
-                    // Additive injection of Fourier timbral orbit
-                    z = z + depth * rffVec;
+                    // Additive injection of Fourier timbral orbit, normalized by sqrt(latentDim)
+                    // so high-dimensional codecs (D=64..128) maintain consistent perceptual sensitivity
+                    float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
+                    z = z + normDepth * rffVec;
                 }
                 else if (mode == LatentMode::LatentSlew)
                 {
@@ -774,6 +891,73 @@ void NNBendingAudioProcessor::runInference()
         }
 
         m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+    }
+    else if (modeStr == "decode gen")
+    {
+        // Autonomous neural synthesis: generate latent trajectory with Pad/Drift/Harmonics and decode
+        Backend::LatentHook activeHook = m_latentHook;
+        if (!activeHook)
+        {
+            activeHook = [this](at::Tensor z) -> at::Tensor {
+                if (!z.defined()) return z;
+
+                float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
+                float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
+                float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
+                auto mode = m_latentMode.load();
+
+                int64_t latentDim = (z.dim() >= 2) ? z.size(1) : z.size(0);
+
+                if (mode == LatentMode::FourierOrbit)
+                {
+                    int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
+                    if (!m_rffMatrix.defined() || m_cachedLatentDim != (int)latentDim)
+                    {
+                        torch::manual_seed(42);
+                        m_rffMatrix = torch::randn({numHarmonics, 2}, z.options()) * 2.5f;
+                        m_cachedLatentDim = (int)latentDim;
+                    }
+
+                    auto coords = torch::tensor({lx, ly}, z.options()).reshape({2, 1});
+                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), coords);
+
+                    auto cosFeat = torch::cos(proj);
+                    auto sinFeat = torch::sin(proj);
+                    auto rffVec = torch::cat({cosFeat, sinFeat}, 0).reshape({1, -1, 1});
+
+                    if (rffVec.size(1) < latentDim)
+                    {
+                        auto pad = torch::zeros({1, latentDim - rffVec.size(1), 1}, z.options());
+                        rffVec = torch::cat({rffVec, pad}, 1);
+                    }
+                    else if (rffVec.size(1) > latentDim)
+                    {
+                        rffVec = rffVec.slice(1, 0, latentDim);
+                    }
+
+                    float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
+                    z = z + normDepth * rffVec;
+                }
+                else if (mode == LatentMode::LatentSlew)
+                {
+                    float slew = m_latentSlew.load();
+                    if (m_prevLatentTensor.defined() && m_prevLatentTensor.sizes() == z.sizes())
+                    {
+                        z = (1.0f - slew) * z + slew * m_prevLatentTensor;
+                    }
+                    m_prevLatentTensor = z.clone();
+                }
+                else if (mode == LatentMode::Quantize)
+                {
+                    float qStep = std::max(0.01f, depth * 0.5f);
+                    z = torch::round(z / qStep) * qStep;
+                }
+
+                return z;
+            };
+        }
+
+        m_backend.perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
     }
     else if (modeStr == "prior" || modeStr == "generate")
     {

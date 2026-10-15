@@ -69,6 +69,9 @@ public:
                        LatentHook latent_hook = nullptr);
   void perform_prior_decode(std::vector<float *> &out_buffer,
                             int n_batches, int n_out_channels, int n_vec);
+  void perform_decode_gen(std::vector<float *> &out_buffer,
+                          int n_batches, int n_out_channels, int n_vec,
+                          LatentHook latent_hook = nullptr);
   bool has_method(std::string method_name);
   bool has_prior_decode();
   bool has_autoencode();
@@ -97,6 +100,7 @@ public:
   int load(std::string path, double sampleRate, const std::string* target_method = nullptr);
   int reload();
   void set_sample_rate(double sampleRate);
+  double get_sample_rate();
   bool is_loaded();
   torch::jit::script::Module get_model() { return m_model; }
   void use_gpu(bool value);

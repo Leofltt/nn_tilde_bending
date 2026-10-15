@@ -197,16 +197,6 @@ class Module(torch.nn.Module):
 
     @torch.jit.export
     def is_buffer_empty(self, buffer_name: str) -> bool:
-        if buffer_name not in self.get_buffer_attributes():
-            return True
-        if torch.jit.is_scripting():
-            for k, v in self._buffer_attributes.items():
-                if k == buffer_name:
-                    return v.has_value
-        else:
-            for k, v in self._buffer_attributes.value.items():
-                if k == buffer_name:
-                    return v.has_value
         return True
 
     @torch.jit.export
@@ -240,6 +230,9 @@ class Module(torch.nn.Module):
         self._ready = True
     
     def _build_buffer_attribute_methods(self):
+        if len(self._buffer_attributes.value) == 0:
+            return
+
         self.set_buffer_attribute = MethodType(
             method_from_template(
                 self.tmp_file_session, 

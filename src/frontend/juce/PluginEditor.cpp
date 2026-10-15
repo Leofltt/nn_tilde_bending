@@ -5,33 +5,28 @@
 NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    // Configure Title
-    titleLabel.setText ("nn~ bending", juce::dontSendNotification);
+    titleLabel.setText ("NetBender", juce::dontSendNotification);
     titleLabel.setFont (juce::FontOptions (18.0f, juce::Font::bold));
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setColour (juce::Label::textColourId, juce::Colours::lightcyan);
     addAndMakeVisible (titleLabel);
 
-    // Configure Load Button
     loadButton.setButtonText ("Load Model (.ts)");
     loadButton.addListener (this);
     loadButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff581c87"));
     loadButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     addAndMakeVisible (loadButton);
 
-    // Configure Status Label
     statusLabel.setText ("No model loaded.", juce::dontSendNotification);
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     statusLabel.setColour (juce::Label::textColourId, juce::Colours::darkgrey);
     addAndMakeVisible (statusLabel);
 
-    // Mode Selector
     methodLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (methodLabel);
     methodCombo.addListener (this);
     addAndMakeVisible (methodCombo);
 
-    // Buffer Readout Badge
     bufferLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (bufferLabel);
     bufferStatusLabel.setText (juce::String (audioProcessor.getBufferSize()), juce::dontSendNotification);
@@ -41,7 +36,6 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     bufferStatusLabel.setColour (juce::Label::textColourId, juce::Colours::cyan);
     addAndMakeVisible (bufferStatusLabel);
 
-    // Dry / Wet Slider
     dryWetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (dryWetLabel);
 
@@ -53,27 +47,23 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     dryWetSlider.addListener (this);
     addAndMakeVisible (dryWetSlider);
 
-    // Save Model Button
     saveModelButton.addListener (this);
     saveModelButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1e3a5f"));
     saveModelButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     addAndMakeVisible (saveModelButton);
 
-    // Configure Fuse Button
     fuseButton.setButtonText ("FUSE: OK");
     fuseButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff1b3a2a"));
     fuseButton.setColour (juce::TextButton::textColourOffId, juce::Colours::lightgreen);
     fuseButton.addListener (this);
     addAndMakeVisible (fuseButton);
 
-    // Configure Momentary Short Circuit Button
     shortCircuitButton.setButtonText ("SHORT [!]");
     shortCircuitButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff8b2500"));
     shortCircuitButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     shortCircuitButton.addListener (this);
     addAndMakeVisible (shortCircuitButton);
 
-    // Trigger Mode Selector
     triggerModeLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (triggerModeLabel);
     triggerModeCombo.addItem ("Continuous", 1);
@@ -84,17 +74,18 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (triggerModeCombo);
     shortCircuitButton.setVisible (audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Momentary);
 
-    // Bending Group
     addAndMakeVisible (bendingGroup);
 
-    // Category Filter
     categoryLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (categoryLabel);
     categoryCombo.addItem ("All Traces", 1);
     categoryCombo.addItem ("Norm / Dynamics", 2);
     categoryCombo.addItem ("Conv Kernels", 3);
-    categoryCombo.addItem ("Linear / Dense", 4);
-    categoryCombo.addItem ("Biases", 5);
+    categoryCombo.addItem ("Attention", 4);
+    categoryCombo.addItem ("Linear / Dense", 5);
+    categoryCombo.addItem ("Activation (Snake)", 6);
+    categoryCombo.addItem ("Recurrent (LSTM)", 7);
+    categoryCombo.addItem ("Biases", 8);
     categoryCombo.setSelectedId (1, juce::dontSendNotification);
     categoryCombo.addListener (this);
     addAndMakeVisible (categoryCombo);
@@ -114,7 +105,6 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     resetAllButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     addAndMakeVisible (resetAllButton);
 
-    // Weight Canvas & Drawing Hook
     addAndMakeVisible (weightCanvas);
     weightCanvas.onWeightsModified = [this] (const std::vector<float>& modifiedWeights)
     {
@@ -149,13 +139,12 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
             else
             {
                 // In momentary / midi / transient modes:
-                // Keep live model at whatever backend is currently playing, and update pink target preview
+                // Keep live model at whatever backend is currently playing, update target preview
                 weightCanvas.setTargetBentWeights (modifiedWeights);
             }
         }
     };
 
-    // Right-Side Tab Switcher Buttons (Weights View)
     tabMutateButton.addListener (this);
     tabHarmonicsButton.addListener (this);
     tabBridgeButton.addListener (this);
@@ -167,7 +156,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (tabBridgeButton);
 
     // =========================================================================
-    // Tab 1: Mutate Controls (Modern LinearBar Sliders + Enable Toggles)
+    // Tab: Mutate Controls
     // =========================================================================
     mutateEnableToggle.setToggleState (true, juce::dontSendNotification);
     mutateEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffc084fc"));
@@ -201,7 +190,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     offsetSlider.addListener (this);
     addAndMakeVisible (offsetSlider);
 
-    driftEnableToggle.setToggleState (true, juce::dontSendNotification);
+    driftEnableToggle.setToggleState (false, juce::dontSendNotification);
     driftEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffff9933"));
     driftEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffff9933"));
     driftEnableToggle.addListener (this);
@@ -251,9 +240,9 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (freezeButton);
 
     // =========================================================================
-    // Tab 2: Harmonics Controls (LinearBar Sliders + Enable Toggle + Mode)
+    // Tab: Harmonics Controls
     // =========================================================================
-    harmonicEnableToggle.setToggleState (true, juce::dontSendNotification);
+    harmonicEnableToggle.setToggleState (false, juce::dontSendNotification);
     harmonicEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#fffbbf24"));
     harmonicEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#fffbbf24"));
     harmonicEnableToggle.addListener (this);
@@ -329,9 +318,9 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (harmonicApplyButton);
 
     // =========================================================================
-    // Tab 3: Trace Bridging (Cross-Talk) Controls
+    // Tab: Trace Bridging Controls
     // =========================================================================
-    bridgeEnableToggle.setToggleState (true, juce::dontSendNotification);
+    bridgeEnableToggle.setToggleState (false, juce::dontSendNotification);
     bridgeEnableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffc26a38"));
     bridgeEnableToggle.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffc26a38"));
     bridgeEnableToggle.addListener (this);
@@ -359,9 +348,10 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (bridgeDepthSlider);
 
     // =========================================================================
-    // Tab 4: Latent Hook Parameter Controls
+    // Tab: Latent Hook Parameter Controls
     // =========================================================================
     latentEnableButton.setButtonText ("Enable Latent Hook");
+    latentEnableButton.setToggleState (true, juce::dontSendNotification);
     latentEnableButton.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffd946ef"));
     latentEnableButton.setColour (juce::ToggleButton::tickColourId, juce::Colour::fromString ("#ffd946ef"));
     latentEnableButton.addListener (this);
@@ -404,7 +394,6 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     latentSlewSlider.addListener (this);
     addAndMakeVisible (latentSlewSlider);
 
-    // Initial Side Tab: Mutate
     setSideTab (SideTab::Mutate);
 
     // View Switcher Buttons: "weights" and "latent"
@@ -427,7 +416,6 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     addAndMakeVisible (displayCurveButton);
     addAndMakeVisible (displayMatrixButton);
 
-    // Latent Terrain Pad
     addChildComponent (latentPad);
     latentPad.onCoordsChanged = [this] (float x, float y)
     {
@@ -438,23 +426,19 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
             py->setValueNotifyingHost (py->convertTo0to1 (y));
     };
 
-    // Initial View Mode: weights
     setViewMode (ViewMode::Weights);
 
-    // Info Label
     infoBendingLabel.setText ("Select a layer to bend weights.", juce::dontSendNotification);
     infoBendingLabel.setJustificationType (juce::Justification::centredLeft);
     infoBendingLabel.setColour (juce::Label::textColourId, juce::Colours::silver);
     addAndMakeVisible (infoBendingLabel);
 
-    // Expanded window size (1100 x 640)
     setSize (1100, 640);
     setResizable (true, true);
     setResizeLimits (1060, 600, 1600, 1000);
 
-    // Initial load
     updateModelInfo();
-    startTimer (60); // 16 FPS for responsive live bending and jitter animation
+    startTimer (60);
 }
 
 NNBendingAudioProcessorEditor::~NNBendingAudioProcessorEditor()
@@ -472,14 +456,12 @@ NNBendingAudioProcessorEditor::~NNBendingAudioProcessorEditor()
 //==============================================================================
 void NNBendingAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // Sleek dark gradient background
     juce::Colour color1 = juce::Colour::fromString ("#ff0f0e13");
     juce::Colour color2 = juce::Colour::fromString ("#ff1a1724");
     juce::ColourGradient gradient (color1, 0, 0, color2, 0, (float)getHeight(), false);
     g.setGradientFill (gradient);
     g.fillAll();
 
-    // Subtle divider under header
     g.setColour (juce::Colour::fromString ("#ff382f4c"));
     g.drawHorizontalLine (52, 0.0f, (float)getWidth());
 }
@@ -488,10 +470,8 @@ void NNBendingAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (12);
 
-    // Header Controls Row (Height: 34px)
     auto headerRow = area.removeFromTop (34);
 
-    // Pin critical action buttons from right first so they never get truncated
     saveModelButton.setBounds (headerRow.removeFromRight (125));
     headerRow.removeFromRight (10);
 
@@ -516,7 +496,6 @@ void NNBendingAudioProcessorEditor::resized()
     bufferLabel.setBounds (headerRow.removeFromRight (40));
     headerRow.removeFromRight (10);
 
-    // Now fill remaining left side
     loadButton.setBounds (headerRow.removeFromLeft (90));
     headerRow.removeFromLeft (8);
 
@@ -524,26 +503,21 @@ void NNBendingAudioProcessorEditor::resized()
     methodCombo.setBounds (headerRow.removeFromLeft (90));
     headerRow.removeFromLeft (8);
 
-    // statusLabel takes all remaining middle space
     statusLabel.setBounds (headerRow);
 
-    area.removeFromTop (10); // Spacer clearing the divider line
+    area.removeFromTop (10);
 
-    // Bending Group Section
     bendingGroup.setBounds (area);
     auto groupArea = bendingGroup.getBounds().reduced (14);
-    groupArea.removeFromTop (12); // Group title offset
+    groupArea.removeFromTop (12);
 
-    // Layer Selection & Action Row (View buttons + [1D][2D] + Category filter + Layer Combo + Reset buttons)
     auto layerRow = groupArea.removeFromTop (32);
 
-    // View Switcher Buttons on far left: [weights] [latent]
     viewWeightsButton.setBounds (layerRow.removeFromLeft (68));
     layerRow.removeFromLeft (4);
     viewLatentButton.setBounds (layerRow.removeFromLeft (64));
     layerRow.removeFromLeft (8);
 
-    // Display mode buttons [1D] [2D] directly adjacent to view buttons (generous 44px so text never clips to '...')
     displayCurveButton.setBounds (layerRow.removeFromLeft (44));
     layerRow.removeFromLeft (3);
     displayMatrixButton.setBounds (layerRow.removeFromLeft (44));
@@ -560,36 +534,32 @@ void NNBendingAudioProcessorEditor::resized()
     resetLayerButton.setBounds (layerRow.removeFromRight (105));
     layerRow.removeFromRight (8);
     
-    layerCombo.setBounds (layerRow); // Takes remaining center width
+    layerCombo.setBounds (layerRow);
 
-    groupArea.removeFromTop (8); // Spacer directly above canvas & side panel
+    groupArea.removeFromTop (8);
 
-    // Bottom info readout row
     auto bottomRow = groupArea.removeFromBottom (20);
     infoBendingLabel.setBounds (bottomRow);
 
-    groupArea.removeFromBottom (6); // Spacer above readout
+    groupArea.removeFromBottom (6);
 
-    // Main Bending Area: Center Canvas + Right Controls Deck
     auto controlsWidth = 240;
     auto sideArea = groupArea.removeFromRight (controlsWidth);
-    groupArea.removeFromRight (12); // Gap between canvas and side deck
+    groupArea.removeFromRight (12);
 
     weightCanvas.setBounds (groupArea);
     latentPad.setBounds (groupArea);
 
-    // Weights View: 3-Tab Header (Mutate, Harmonics, Bridge) (Height: 26px)
     auto tabHeader = sideArea.removeFromTop (26);
     int tabW = (sideArea.getWidth() - 6) / 3;
     tabMutateButton.setBounds (tabHeader.removeFromLeft (tabW));
     tabHeader.removeFromLeft (3);
     tabHarmonicsButton.setBounds (tabHeader.removeFromLeft (tabW));
     tabHeader.removeFromLeft (3);
-    tabBridgeButton.setBounds (tabHeader); // Takes remainder
+    tabBridgeButton.setBounds (tabHeader);
 
-    sideArea.removeFromTop (10); // Spacer under tab header
+    sideArea.removeFromTop (10);
 
-    // Layout Tab 1: Mutate Controls (LinearBar sliders + Toggles)
     {
         auto area1 = sideArea;
         mutateEnableToggle.setBounds (area1.removeFromTop (24));
@@ -621,7 +591,6 @@ void NNBendingAudioProcessorEditor::resized()
         freezeButton.setBounds (area1.removeFromTop (24));
     }
 
-    // Layout Tab 2: Harmonics Controls
     {
         auto area2 = sideArea;
         harmonicEnableToggle.setBounds (area2.removeFromTop (24));
@@ -650,7 +619,6 @@ void NNBendingAudioProcessorEditor::resized()
         harmonicApplyButton.setBounds (area2.removeFromTop (28));
     }
 
-    // Layout Tab 3: Trace Bridging (Cross-Talk) Controls
     {
         auto area3 = sideArea;
         bridgeEnableToggle.setBounds (area3.removeFromTop (24));
@@ -664,7 +632,6 @@ void NNBendingAudioProcessorEditor::resized()
         bridgeDepthSlider.setBounds (area3.removeFromTop (24));
     }
 
-    // Layout Latent View Controls (Active in Latent view)
     {
         auto area4 = sideArea;
         latentEnableButton.setBounds (area4.removeFromTop (24));
@@ -697,7 +664,6 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
     }
     else if (comboBoxThatHasChanged == &categoryCombo)
     {
-        // Filter layerCombo based on selected trace category
         int catId = categoryCombo.getSelectedId();
         layerCombo.clear (juce::dontSendNotification);
         auto layers = audioProcessor.getBackend().get_available_layers();
@@ -709,8 +675,11 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
             if (catId == 1) include = true; // All
             else if (catId == 2 && cat == NNBendingAudioProcessor::LayerCategory::Norm) include = true;
             else if (catId == 3 && cat == NNBendingAudioProcessor::LayerCategory::Conv) include = true;
-            else if (catId == 4 && cat == NNBendingAudioProcessor::LayerCategory::Linear) include = true;
-            else if (catId == 5 && cat == NNBendingAudioProcessor::LayerCategory::Bias) include = true;
+            else if (catId == 4 && cat == NNBendingAudioProcessor::LayerCategory::Attention) include = true;
+            else if (catId == 5 && cat == NNBendingAudioProcessor::LayerCategory::Linear) include = true;
+            else if (catId == 6 && cat == NNBendingAudioProcessor::LayerCategory::Activation) include = true;
+            else if (catId == 7 && cat == NNBendingAudioProcessor::LayerCategory::Recurrent) include = true;
+            else if (catId == 8 && cat == NNBendingAudioProcessor::LayerCategory::Bias) include = true;
 
             if (include)
                 layerCombo.addItem (l, id++);
@@ -729,7 +698,6 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
         shortCircuitButton.setVisible (mode == NNBendingAudioProcessor::TriggerMode::Momentary);
         resized();
 
-        // Update target overlay and bridge line style (dotted vs solid) immediately on mode change
         if (currentBendingLayer.isNotEmpty())
             applyKnobBending();
     }
@@ -861,7 +829,6 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
         if (frozen)
         {
             freezeButton.setColour (juce::ToggleButton::textColourId, juce::Colour::fromString ("#ffff9933"));
-            // When freezing, update currentWeights and baseDrawnWeights with the frozen snapshot
             if (currentBendingLayer.isNotEmpty())
             {
                 currentWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
@@ -961,7 +928,6 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     }
     else if (button == &driftEnableToggle)
     {
-        // When drift is disabled, freeze live thermal jitter offsets
         if (!driftEnableToggle.getToggleState() && currentBendingLayer.isNotEmpty())
         {
             auto state = audioProcessor.getLayerState (currentBendingLayer.toStdString());
@@ -1007,7 +973,7 @@ void NNBendingAudioProcessorEditor::timerCallback()
         updateModelInfo();
     }
 
-    // If DAW host is automating parameters, reflect changes into UI knobs (without feedback loops)
+    // If DAW host is automating parameters, reflect changes into UI knobs
     if (auto* p = audioProcessor.getScaleParam())
     {
         float pVal = p->get();
@@ -1061,7 +1027,6 @@ void NNBendingAudioProcessorEditor::timerCallback()
         }
     }
 
-    // Sync Latent XY and Depth parameters
     if (auto* p = audioProcessor.getLatentDepthParam())
     {
         float pVal = p->get();
@@ -1072,7 +1037,6 @@ void NNBendingAudioProcessorEditor::timerCallback()
         }
     }
 
-    // Sync Latent Pad coordinates and enabled state
     if (!latentPad.isMouseButtonDownAnywhere())
     {
         latentPad.setCoords (audioProcessor.getLatentX(), audioProcessor.getLatentY());
@@ -1083,7 +1047,6 @@ void NNBendingAudioProcessorEditor::timerCallback()
         latentEnableButton.setToggleState (audioProcessor.isLatentEnabled(), juce::dontSendNotification);
     }
 
-    // Update Fuse Button State visually
     if (audioProcessor.isFuseBlown())
     {
         fuseButton.setButtonText ("FUSE: BLOWN!");
@@ -1092,7 +1055,6 @@ void NNBendingAudioProcessorEditor::timerCallback()
     }
     else
     {
-        // Live bending status: in Continuous mode with bends active, or momentary/midi/transient active
         float env = audioProcessor.getMomentaryEnvelope();
         bool bendingActive = false;
         if (audioProcessor.getTriggerMode() == NNBendingAudioProcessor::TriggerMode::Continuous)
@@ -1118,7 +1080,6 @@ void NNBendingAudioProcessorEditor::timerCallback()
         }
     }
 
-    // Update Short Button glow based on live momentary envelope
     float env = audioProcessor.getMomentaryEnvelope();
     if (env > 0.05f)
     {
@@ -1140,10 +1101,8 @@ void NNBendingAudioProcessorEditor::timerCallback()
 
         if (triggerMode == NNBendingAudioProcessor::TriggerMode::Continuous)
         {
-            // In continuous mode, target is identical to current live state, so no separate dashed ghost needed
             weightCanvas.setTargetBentWeights ({});
             
-            // If heat/jitter is oscillating or parameters change, stream live weights to canvas
             if (state.heat > 0.0001f && !state.frozen)
             {
                 auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
@@ -1191,7 +1150,6 @@ void NNBendingAudioProcessorEditor::timerCallback()
                 weightCanvas.setTargetBentWeights ({});
             }
 
-            // Always update live curve to show real-time model weights transitioning between baseline and bent
             auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
             if (!liveWeights.empty())
             {
@@ -1206,7 +1164,12 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
     if (audioProcessor.isModelLoaded())
     {
         juce::File file (audioProcessor.getModelPath());
-        statusLabel.setText ("Loaded: " + file.getFileName(), juce::dontSendNotification);
+        double modelSr = audioProcessor.getModelSampleRate();
+        juce::String srStr = (modelSr > 0) ? (" @ " + juce::String ((int)modelSr) + "Hz") : "";
+        if (audioProcessor.isResamplingActive())
+            srStr += " [Resampled -> " + juce::String ((int)audioProcessor.getSampleRate()) + "Hz]";
+
+        statusLabel.setText ("Loaded: " + file.getFileName() + srStr, juce::dontSendNotification);
         statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
 
         // Update Buffer readout badge
@@ -1234,8 +1197,11 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
             if (catId <= 1) include = true;
             else if (catId == 2 && cat == NNBendingAudioProcessor::LayerCategory::Norm) include = true;
             else if (catId == 3 && cat == NNBendingAudioProcessor::LayerCategory::Conv) include = true;
-            else if (catId == 4 && cat == NNBendingAudioProcessor::LayerCategory::Linear) include = true;
-            else if (catId == 5 && cat == NNBendingAudioProcessor::LayerCategory::Bias) include = true;
+            else if (catId == 4 && cat == NNBendingAudioProcessor::LayerCategory::Attention) include = true;
+            else if (catId == 5 && cat == NNBendingAudioProcessor::LayerCategory::Linear) include = true;
+            else if (catId == 6 && cat == NNBendingAudioProcessor::LayerCategory::Activation) include = true;
+            else if (catId == 7 && cat == NNBendingAudioProcessor::LayerCategory::Recurrent) include = true;
+            else if (catId == 8 && cat == NNBendingAudioProcessor::LayerCategory::Bias) include = true;
 
             if (include)
                 layerCombo.addItem (l, id++);
@@ -1306,7 +1272,6 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     originalWeights = audioProcessor.getBackend().get_original_layer_weights (layerName.toStdString());
     currentWeights = audioProcessor.getBackend().get_layer_weights (layerName.toStdString());
 
-    // Fetch this layer's stored state
     auto state = audioProcessor.getLayerState (layerName.toStdString());
     if (state.originalWeights.empty())
     {
@@ -1325,7 +1290,6 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
         baseDrawnWeights = state.drawnWeights;
     }
 
-    // Set knobs to this layer's saved values without triggering recursive listeners
     scaleSlider.removeListener (this);
     offsetSlider.removeListener (this);
     heatSlider.removeListener (this);
@@ -1378,7 +1342,6 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     weightCanvas.setLayerShape (shape);
     weightCanvas.setWeights (originalWeights, currentWeights);
 
-    // Compute and send bridge source & mix curves to canvas
     std::vector<float> bridgedBase = baseDrawnWeights;
     std::vector<float> srcTiled;
     bool bridgeEnabled = bridgeEnableToggle.getToggleState();
@@ -1401,7 +1364,6 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     weightCanvas.setShowBridgeVisuals (bridgeEnabled);
     weightCanvas.setBridgeWeights (srcTiled, bridgedBase, bridgeEnabled ? state.bridgeDepth : 0.0f, isContinuous);
 
-    // If in momentary/transient modes, compute target bent overlay
     if (!isContinuous)
     {
         std::vector<float> targetBent(bridgedBase.size());
@@ -1417,12 +1379,14 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
         weightCanvas.setTargetBentWeights ({});
     }
     
-    // Display layer shape / category info
     auto category = NNBendingAudioProcessor::classifyLayer (currentBendingLayer.toStdString());
     juce::String catName = "Other";
     if (category == NNBendingAudioProcessor::LayerCategory::Norm) catName = "Norm / Dynamics";
     else if (category == NNBendingAudioProcessor::LayerCategory::Conv) catName = "Conv Kernel";
+    else if (category == NNBendingAudioProcessor::LayerCategory::Attention) catName = "Attention";
     else if (category == NNBendingAudioProcessor::LayerCategory::Linear) catName = "Linear / Dense";
+    else if (category == NNBendingAudioProcessor::LayerCategory::Activation) catName = "Activation (Snake)";
+    else if (category == NNBendingAudioProcessor::LayerCategory::Recurrent) catName = "Recurrent (LSTM)";
     else if (category == NNBendingAudioProcessor::LayerCategory::Bias) catName = "Bias";
 
     infoBendingLabel.setText ("Trace: [" + catName + "]  |  Layer: " + currentBendingLayer + "  |  " + juce::String (originalWeights.size()) + " params" + (audioProcessor.hasAutoencode() ? "  |  [Latent Hook Ready]" : ""), juce::dontSendNotification);
@@ -1430,20 +1394,17 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     // Update contextual knob labels (Gamma / Beta for Norm, Scale / Offset for other traces)
     updateKnobContextLabels (category);
 
-    // Re-enable listeners so user interactions are captured
     scaleSlider.addListener (this);
     offsetSlider.addListener (this);
     heatSlider.addListener (this);
     memorySlider.addListener (this);
     driftModeCombo.addListener (this);
 
-    // Update last known parameters to current layer's state so timer doesn't snap them back
     lastKnownScale = state.scale;
     lastKnownOffset = state.offset;
     lastKnownHeat = state.heat;
     lastKnownMemory = state.memory;
 
-    // Refresh harmonic preview for the newly selected layer
     updateHarmonicGhostPreview();
 }
 
@@ -1503,7 +1464,6 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
     }
     else
     {
-        // In momentary/transient mode, knobs & bridge shape the neon pink target bent curve!
         weightCanvas.setTargetBentWeights (bentTarget);
     }
 }
@@ -1661,6 +1621,15 @@ void NNBendingAudioProcessorEditor::updateKnobContextLabels (NNBendingAudioProce
         offsetLabel.setText (juce::CharPointer_UTF8 ("Beta (\xce\xb2)"), juce::dontSendNotification);
         offsetLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#ff38bdf8")); // Sky blue
     }
+    else if (category == NNBendingAudioProcessor::LayerCategory::Activation)
+    {
+        // Snake / periodic activation context: Alpha (Freq scaling) & Offset
+        scaleLabel.setText (juce::CharPointer_UTF8 ("Alpha (\xce\xb1)"), juce::dontSendNotification);
+        scaleLabel.setColour (juce::Label::textColourId, juce::Colour::fromString ("#fff59e0b")); // Amber
+
+        offsetLabel.setText ("Offset", juce::dontSendNotification);
+        offsetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    }
     else
     {
         // Standard convolution / dense / bias context: Scale & Offset
@@ -1793,7 +1762,6 @@ void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
     tabBridgeButton.setColour (juce::TextButton::buttonColourId, isBridge ? activeBg : inactiveBg);
     tabBridgeButton.setColour (juce::TextButton::textColourOffId, isBridge ? activeText : inactiveText);
 
-    // Tab 1: Mutate Visibility
     mutateEnableToggle.setVisible (isMutate);
     scaleLabel.setVisible (isMutate);
     scaleSlider.setVisible (isMutate);
@@ -1808,7 +1776,6 @@ void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
     driftModeCombo.setVisible (isMutate);
     freezeButton.setVisible (isMutate);
 
-    // Tab 2: Harmonics Visibility
     harmonicEnableToggle.setVisible (isHarmonics);
     harmonicFreqLabel.setVisible (isHarmonics);
     harmonicFreqSlider.setVisible (isHarmonics);
@@ -1822,7 +1789,6 @@ void NNBendingAudioProcessorEditor::setSideTab (SideTab newTab)
     harmonicModeCombo.setVisible (isHarmonics);
     harmonicApplyButton.setVisible (isHarmonics);
 
-    // Tab 3: Bridge Visibility
     bridgeEnableToggle.setVisible (isBridge);
     bridgeLabel.setVisible (isBridge);
     bridgeCombo.setVisible (isBridge);
@@ -1839,7 +1805,6 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     bool isWeights = (currentViewMode == ViewMode::Weights);
     bool isLatent = (currentViewMode == ViewMode::Latent);
 
-    // Style the toggle buttons
     juce::Colour activeBg = juce::Colour::fromString ("#ff4a1d72"); // Vivid violet
     juce::Colour inactiveBg = juce::Colour::fromString ("#ff1c1926"); // Dark charcoal
     juce::Colour activeText = juce::Colours::white;
@@ -1851,11 +1816,9 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     viewLatentButton.setColour (juce::TextButton::buttonColourId, isLatent ? activeBg : inactiveBg);
     viewLatentButton.setColour (juce::TextButton::textColourOffId, isLatent ? activeText : inactiveText);
 
-    // Switch main canvas visibility
     weightCanvas.setVisible (isWeights);
     latentPad.setVisible (isLatent);
 
-    // Toggle weight-domain header controls visibility
     categoryLabel.setVisible (isWeights);
     categoryCombo.setVisible (isWeights);
     layerLabel.setVisible (isWeights);
@@ -1865,12 +1828,10 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     displayCurveButton.setVisible (isWeights);
     displayMatrixButton.setVisible (isWeights);
 
-    // Toggle weight-domain side tabs visibility
     tabMutateButton.setVisible (isWeights);
     tabHarmonicsButton.setVisible (isWeights);
     tabBridgeButton.setVisible (isWeights);
 
-    // Toggle latent-domain controls visibility on right side
     latentEnableButton.setVisible (isLatent);
     latentDepthLabel.setVisible (isLatent);
     latentDepthSlider.setVisible (isLatent);
@@ -1879,10 +1840,8 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     latentSlewLabel.setVisible (isLatent);
     latentSlewSlider.setVisible (isLatent);
 
-    // Refresh active weights tab visibility
     setSideTab (currentSideTab);
 
-    // Update bottom readout status
     if (isLatent)
     {
         if (audioProcessor.hasAutoencode())

@@ -2,10 +2,10 @@
 # Post-build helper to install VST3 plugin bundle to Windows VST3 directories.
 #
 # Variables expected via -D:
-#   SRC_BUNDLE   : Full path to built "nn~ Bending.vst3" folder
+#   SRC_BUNDLE   : Full path to built "NetBender.vst3" folder
 #   CUSTOM_DEST  : Optional override from VST3_INSTALL_PATH
-#   SYS_DEST     : System VST3 destination (e.g. C:/Program Files/Common Files/VST3/nn~ Bending.vst3)
-#   USER_DEST    : User VST3 destination (e.g. %LOCALAPPDATA%/Programs/Common/VST3/nn~ Bending.vst3)
+#   SYS_DEST     : System VST3 destination (e.g. C:/Program Files/Common Files/VST3/NetBender.vst3)
+#   USER_DEST    : User VST3 destination (e.g. %LOCALAPPDATA%/Programs/Common/VST3/NetBender.vst3)
 
 if (DEFINED CUSTOM_DEST AND NOT "${CUSTOM_DEST}" STREQUAL "" AND NOT "${CUSTOM_DEST}" STREQUAL "OFF" AND NOT "${CUSTOM_DEST}" STREQUAL "NONE")
     message(STATUS "Installing VST3 plugin to custom path: ${CUSTOM_DEST}")

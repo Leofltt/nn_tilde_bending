@@ -142,7 +142,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "nn~ Bending"; }
+    const juce::String getName() const override { return "NetBender"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -169,6 +169,8 @@ public:
     std::vector<juce::String> getAvailableModes() const;
     int getBufferSize() const { return m_bufferSize; }
     void setBufferSize(int size);
+    double getModelSampleRate() const { return m_modelSampleRate.load(); }
+    bool isResamplingActive() const { return m_resamplingActive.load(); }
 
     // Latent bending hook (applied during autoencode mode)
     void setLatentHook(Backend::LatentHook hook) { m_latentHook = hook; }
@@ -226,9 +228,12 @@ public:
     enum class LayerCategory
     {
         All = 0,
-        Norm,       // LayerNorm, BatchNorm, weight_g, scale/shift
-        Conv,       // Convolution kernels
+        Norm,       // LayerNorm, BatchNorm, RMSNorm, weight_g, scale/shift
+        Conv,       // Convolution kernels (Conv1d, ConvTranspose1d, ConvNeXt)
+        Attention,  // Multi-Head Self/Cross-Attention, QKV projections
         Linear,     // Dense / linear weights
+        Activation, // Snake, SnakeBeta, Siren periodic parameters (alpha, beta scalars)
+        Recurrent,  // LSTM / GRU weights (Encodec)
         Bias,       // All bias vectors
         Other       // Any remaining tensor parameters
     };
@@ -237,13 +242,19 @@ public:
     {
         std::string lower = name;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower.find("norm") != std::string::npos || lower.find("weight_g") != std::string::npos)
+        if (lower.find("norm") != std::string::npos || lower.find("weight_g") != std::string::npos || lower.find("gamma") != std::string::npos)
             return LayerCategory::Norm;
         if (lower.find("bias") != std::string::npos)
             return LayerCategory::Bias;
+        if (lower.find("snake") != std::string::npos || lower.find("act") != std::string::npos || lower.find("alpha") != std::string::npos)
+            return LayerCategory::Activation;
+        if (lower.find("attn") != std::string::npos || lower.find("attention") != std::string::npos || lower.find("qkv") != std::string::npos || lower.find("self_attn") != std::string::npos)
+            return LayerCategory::Attention;
+        if (lower.find("lstm") != std::string::npos || lower.find("gru") != std::string::npos || lower.find("rnn") != std::string::npos)
+            return LayerCategory::Recurrent;
         if (lower.find("conv") != std::string::npos)
             return LayerCategory::Conv;
-        if (lower.find("linear") != std::string::npos || lower.find("dense") != std::string::npos || lower.find("fc") != std::string::npos)
+        if (lower.find("linear") != std::string::npos || lower.find("dense") != std::string::npos || lower.find("fc") != std::string::npos || lower.find("proj") != std::string::npos)
             return LayerCategory::Linear;
         return LayerCategory::Other;
     }
@@ -454,7 +465,7 @@ private:
     std::atomic<float> m_dryWet { 1.0f }; // 0.0 = Dry, 1.0 = Wet
 
     // Latent Terrain State
-    std::atomic<bool>        m_latentEnabled { false };
+    std::atomic<bool>        m_latentEnabled { true };
     std::atomic<LatentMode>  m_latentMode { LatentMode::FourierOrbit };
     std::atomic<float>       m_latentX { 0.0f };
     std::atomic<float>       m_latentY { 0.0f };
@@ -512,6 +523,16 @@ private:
     std::atomic<bool> m_output_ready { false };
 
     ModelThread m_model_thread;
+
+    // Resampling infrastructure (Host SR <-> Model SR)
+    std::atomic<double> m_hostSampleRate { 44100.0 };
+    std::atomic<double> m_modelSampleRate { 44100.0 };
+    std::atomic<bool>   m_resamplingActive { false };
+
+    std::vector<juce::CatmullRomInterpolator> m_input_resamplers;
+    std::vector<juce::CatmullRomInterpolator> m_output_resamplers;
+    std::vector<std::vector<float>> m_resampled_in_scratch;
+    std::vector<std::vector<float>> m_resampled_out_scratch;
 
     void initBuffers();
 

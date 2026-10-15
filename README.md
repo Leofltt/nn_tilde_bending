@@ -18,7 +18,7 @@ The project provides multiple frontends tailored for modern music production wor
 
 ---
 
-## Key Neural Circuit-Bending Features
+## Key Neural Circuit-Bending Plugin Features
 
 1. **Interactive Weight Canvas & Visualizer (JUCE Plugin & Standalone)**:
    - Direct 2D interactive canvas allowing you to draw, invert, scramble, and sculpt weights in real time.

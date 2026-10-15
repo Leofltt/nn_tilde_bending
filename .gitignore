@@ -15,3 +15,4 @@ src/support/
 .env
 .env.*
 src/frontend/maxmsp/min-api/
+python_tools/__pycache__/

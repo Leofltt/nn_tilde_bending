@@ -1,2 +1,15 @@
-torch==2.5
+# Core requirements for nn_tilde_bending model export
+torch<=2.12.1
 cached_conv>=2.5.0
+numpy
+scipy
+huggingface_hub
+einops
+safetensors
+git+https://github.com/Stability-AI/stable-audio-3.git
+
+# Optional audio codec packages:
+encodec>=0.1.1
+# NOTE: stable-audio-tools is only needed if training/fine-tuning full diffusion models.
+# For exporting pretrained SAME-S / Stable Audio autoencoders, only torch, einops, and huggingface_hub are required.
+# stable-audio-tools

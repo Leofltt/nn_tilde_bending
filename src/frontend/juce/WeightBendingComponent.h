@@ -920,8 +920,8 @@ private:
     std::vector<float> m_bridgeMixWeights;
     std::vector<float> m_harmonicGhostWeights;
     bool m_showHarmonicGhost { false };
-    bool m_showBridgeVisuals { true };
-    bool m_showHarmonics { true };
+    bool m_showBridgeVisuals { false };
+    bool m_showHarmonics { false };
     float m_bridgeDepth { 0.0f };
     bool m_isContinuousMode { true };
 

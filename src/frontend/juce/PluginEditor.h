@@ -47,7 +47,6 @@ public:
                 g.fillRect (bounds);
             }
 
-            // Crisp 1px outline
             g.setColour (backgroundColour.brighter (0.18f).withAlpha (0.45f));
             g.drawRect (bounds, 1.0f);
         }
@@ -67,7 +66,6 @@ private:
 
     NNBendingAudioProcessor& audioProcessor;
 
-    // Header Components
     juce::Label titleLabel;
     juce::TextButton loadButton { "Load Model (.ts)" };
     juce::Label statusLabel;
@@ -78,18 +76,14 @@ private:
     juce::Label bufferLabel { {}, "Buffer:" };
     juce::Label bufferStatusLabel;
 
-    // Output Mix Control
     juce::Label dryWetLabel { {}, "Dry/Wet:" };
     juce::Slider dryWetSlider;
 
     juce::TextButton saveModelButton { "Save Model (.ts)" };
-
-    // View Switcher: "weights" and "latent"
     ViewMode currentViewMode { ViewMode::Weights };
     juce::TextButton viewWeightsButton { "weights" };
     juce::TextButton viewLatentButton { "latent" };
 
-    // Bending Section
     juce::GroupComponent bendingGroup { "Bending", "Interactive Weight Bending" };
     
     juce::Label layerLabel { {}, "Layer:" };
@@ -98,34 +92,26 @@ private:
     juce::TextButton resetLayerButton { "Reset Layer" };
     juce::TextButton resetAllButton { "Reset All Layers" };
 
-    // Interactive canvases
     WeightBendingComponent weightCanvas;
     LatentTerrainComponent latentPad;
 
-    // Weight canvas display mode toggle: "curve" vs "matrix"
     juce::TextButton displayCurveButton { "1D" };
     juce::TextButton displayMatrixButton { "2D" };
 
-    // Category Filter for Trace Isolation
     juce::Label categoryLabel { {}, "Trace:" };
     juce::ComboBox categoryCombo;
 
-    // Safety Sentry & Blown Fuse UI
     juce::TextButton fuseButton { "FUSE: OK" };
 
-    // Momentary Short-Circuit Glitch UI
     juce::TextButton shortCircuitButton { "SHORT [!]" };
     juce::Label triggerModeLabel { {}, "Trigger:" };
     juce::ComboBox triggerModeCombo;
-
-    // Right Side Tab System (Weights View)
     SideTab currentSideTab { SideTab::Mutate };
     juce::TextButton tabMutateButton { "Mutate" };
     juce::TextButton tabHarmonicsButton { "Harmonics" };
     juce::TextButton tabBridgeButton { "Bridge" };
     FlatTabLookAndFeel flatTabLf;
 
-    // Tab 1: Mutate Controls (Modern LinearBar Sliders + Enable Toggles)
     juce::ToggleButton mutateEnableToggle { "Enable Transform" };
     juce::Label scaleLabel { {}, "Scale" };
     juce::Slider scaleSlider;
@@ -141,7 +127,6 @@ private:
     juce::ComboBox driftModeCombo;
     juce::ToggleButton freezeButton { "Freeze Drift" };
 
-    // Tab 2: Harmonics Controls
     juce::ToggleButton harmonicEnableToggle { "Enable Harmonics" };
     juce::Label harmonicFreqLabel { {}, "Frequency" };
     juce::Slider harmonicFreqSlider;
@@ -155,14 +140,12 @@ private:
     juce::ComboBox harmonicModeCombo;
     juce::TextButton harmonicApplyButton { "Stamp Wave" };
 
-    // Tab 3: Trace Bridging (Cross-Talk)
     juce::ToggleButton bridgeEnableToggle { "Enable Cross-Talk" };
     juce::Label bridgeLabel { {}, "Bridge Wire Source:" };
     juce::ComboBox bridgeCombo;
     juce::Label bridgeDepthLabel { {}, "Cross-Talk Depth" };
     juce::Slider bridgeDepthSlider;
 
-    // Tab 4: Latent Hook Controls
     juce::ToggleButton latentEnableButton { "Enable Latent Hook" };
     juce::Label latentDepthLabel { {}, "Latent Depth" };
     juce::Slider latentDepthSlider;
@@ -176,10 +159,8 @@ private:
 
     juce::Label infoBendingLabel;
 
-    // File Chooser
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    // Active layer cache
     juce::String currentBendingLayer;
     std::vector<float> originalWeights;
     std::vector<float> currentWeights;

@@ -8,7 +8,11 @@ with open("README.md", "r") as readme:
     readme = readme.read()
 
 with open("requirements.txt", "r") as requirements:
-    requirements = requirements.read()
+    install_requires = [
+        line.strip()
+        for line in requirements.read().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
 
 setuptools.setup(
     name="nn_tilde",
@@ -25,6 +29,6 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    install_requires=requirements.split("\n"),
+    install_requires=install_requires,
     python_requires='>=3.11',
 )

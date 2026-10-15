@@ -97,15 +97,10 @@ void Backend::perform(std::vector<float *> &in_buffer,
   int out_batches(tensor_out.size(0)), out_channels(tensor_out.size(1)),
       out_n_vec(tensor_out.size(2));
 
-  if (out_n_vec != n_vec) {
-    std::cout << "model output size is not consistent, expected " << n_vec
-              << " samples, got " << out_n_vec << "!\n";
-    return;
-  }
-
   tensor_out = tensor_out.contiguous().to(CPU);
   const float* out_data = tensor_out.data_ptr<float>();
 
+  int copy_samples = std::min(n_vec, out_n_vec);
   for (int j = 0; j < n_batches; j++) {
     for (int i = 0; i < n_out_channels; i++) {
       float* dest = out_buffer[j * n_out_channels + i];
@@ -113,7 +108,10 @@ void Backend::perform(std::vector<float *> &in_buffer,
 
       if (i < out_channels) {
         const float* src = out_data + (j * out_channels + i) * out_n_vec;
-        std::memcpy(dest, src, n_vec * sizeof(float));
+        std::memcpy(dest, src, copy_samples * sizeof(float));
+        if (copy_samples < n_vec) {
+          std::memset(dest + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+        }
       } else {
         std::memset(dest, 0, n_vec * sizeof(float));
       }
@@ -125,10 +123,10 @@ void Backend::perform_forward(std::vector<float *> &in_buffer,
                               std::vector<float *> &out_buffer,
                               int n_batches, int n_out_channels, int n_vec,
                               LatentHook latent_hook) {
-  // If model has encode and decode, and a latent hook is provided or forward is missing,
-  // execute encode -> latent_hook -> decode
+  // If model has encode and decode, always execute encode -> (latent_hook) -> decode
+  // so latent bending and autoencoding are fully supported.
   bool has_enc_dec = has_method("encode") && has_method("decode");
-  if (has_enc_dec && (latent_hook != nullptr || !has_method("forward"))) {
+  if (has_enc_dec) {
     c10::InferenceMode guard;
     if (!m_loaded) return;
 
@@ -177,10 +175,10 @@ void Backend::perform_forward(std::vector<float *> &in_buffer,
 
     int out_batches(tensor_out.size(0)), out_channels(tensor_out.size(1)),
         out_n_vec(tensor_out.size(2));
-    if (out_n_vec != n_vec) return;
     tensor_out = tensor_out.contiguous().to(CPU);
     const float* out_data = tensor_out.data_ptr<float>();
 
+    int copy_samples = std::min(n_vec, out_n_vec);
     for (int j = 0; j < n_batches; j++) {
       for (int i = 0; i < n_out_channels; i++) {
         float* dest = out_buffer[j * n_out_channels + i];
@@ -188,7 +186,10 @@ void Backend::perform_forward(std::vector<float *> &in_buffer,
 
         if (i < out_channels) {
           const float* src = out_data + (j * out_channels + i) * out_n_vec;
-          std::memcpy(dest, src, n_vec * sizeof(float));
+          std::memcpy(dest, src, copy_samples * sizeof(float));
+          if (copy_samples < n_vec) {
+            std::memset(dest + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+          }
         } else {
           std::memset(dest, 0, n_vec * sizeof(float));
         }
@@ -277,6 +278,100 @@ void Backend::perform_prior_decode(std::vector<float *> &out_buffer,
   }
 }
 
+void Backend::perform_decode_gen(std::vector<float *> &out_buffer,
+                                int n_batches, int n_out_channels, int n_vec,
+                                LatentHook latent_hook) {
+  c10::InferenceMode guard;
+  if (!m_loaded || !has_method("decode")) return;
+
+  auto decode_params = get_method_params("decode");
+  if (decode_params.size() < 4) return;
+
+  int latent_dim = decode_params[0];
+  int latent_ratio = decode_params[1];
+  int out_dim = decode_params[2];
+  int out_ratio = decode_params[3];
+
+  int latent_steps = std::max(1, n_vec / std::max(1, latent_ratio));
+
+  at::Tensor latent_tensor;
+  std::string prior_method = has_method("prior") ? "prior" : (has_method("generate") ? "generate" : "");
+
+  if (!prior_method.empty()) {
+    // If model has a learned prior (RAVE / Darbouka), seed base latents using prior!
+    auto prior_params = get_method_params(prior_method);
+    std::unique_lock<std::mutex> model_lock(m_model_mutex);
+    auto kwargs = empty_kwargs();
+    std::vector<torch::jit::IValue> prior_inputs;
+
+    if (!prior_params.empty() && prior_params[0] > 0) {
+      int p_in_dim = prior_params[0];
+      int p_in_ratio = prior_params[1];
+      std::vector<float*> empty_in;
+      auto cat_tensor_in = prepare_io_tensor(empty_in, p_in_dim, n_batches, p_in_ratio, n_vec).to(m_device);
+      prior_inputs.push_back(cat_tensor_in);
+    }
+
+    try {
+      latent_tensor = m_model.get_method(prior_method)(prior_inputs, kwargs).toTensor().to(m_device);
+    } catch (...) {
+      latent_tensor = at::Tensor();
+    }
+    model_lock.unlock();
+  }
+
+  // Fallback: If no prior or prior failed, synthesize base latent buffer with subtle Gaussian excitation
+  if (!latent_tensor.defined() || latent_tensor.numel() == 0) {
+    latent_tensor = torch::randn({n_batches, latent_dim, latent_steps},
+                                 torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * 0.1f;
+  }
+
+  // Apply latent hook (2D Latent Vector Pad, Drift, Harmonics, RFF Orbit)
+  if (latent_hook) {
+    try {
+      latent_tensor = latent_hook(latent_tensor);
+    } catch (const std::exception &e) {
+      std::cerr << "Decode Gen latent hook error: " << e.what() << '\n';
+    }
+  }
+
+  std::unique_lock<std::mutex> model_lock(m_model_mutex);
+  auto kwargs = empty_kwargs();
+  std::vector<torch::jit::IValue> decode_inputs = {latent_tensor.to(m_device)};
+  at::Tensor tensor_out;
+  try {
+    tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
+    tensor_out = tensor_out.repeat_interleave(out_ratio).reshape({n_batches, out_dim, -1});
+  } catch (const std::exception &e) {
+    std::cerr << "Decode Gen decode error: " << e.what() << '\n';
+    return;
+  }
+  model_lock.unlock();
+
+  int out_batches(tensor_out.size(0)), out_channels(tensor_out.size(1)),
+      out_n_vec(tensor_out.size(2));
+  tensor_out = tensor_out.contiguous().to(CPU);
+  const float* out_data = tensor_out.data_ptr<float>();
+
+  int copy_samples = std::min(n_vec, out_n_vec);
+  for (int j = 0; j < n_batches; j++) {
+    for (int i = 0; i < n_out_channels; i++) {
+      float* dest = out_buffer[j * n_out_channels + i];
+      if (dest == nullptr) continue;
+
+      if (i < out_channels) {
+        const float* src = out_data + (j * out_channels + i) * out_n_vec;
+        std::memcpy(dest, src, copy_samples * sizeof(float));
+        if (copy_samples < n_vec) {
+          std::memset(dest + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+        }
+      } else {
+        std::memset(dest, 0, n_vec * sizeof(float));
+      }
+    }
+  }
+}
+
 bool Backend::has_prior_decode() {
   return (has_method("prior") || has_method("generate")) && has_method("decode");
 }
@@ -292,6 +387,9 @@ std::vector<std::string> Backend::get_plugin_modes() {
 
   if (has_method("forward") || (has_method("encode") && has_method("decode"))) {
     modes.push_back("forward");
+  }
+  if (has_method("decode")) {
+    modes.push_back("decode gen");
   }
   if (has_method("prior")) {
     modes.push_back("prior");
@@ -321,7 +419,7 @@ std::vector<int> Backend::get_mode_params(std::string mode) {
       }
     }
   }
-  if ((mode == "prior" || mode == "generate") && has_method("decode")) {
+  if ((mode == "decode gen" || mode == "prior" || mode == "generate") && has_method("decode")) {
     auto dp = get_method_params("decode");
     if (dp.size() >= 4) {
       // 0 inputs, audio out channels from decode
@@ -375,16 +473,39 @@ int Backend::load(std::string path, double sampleRate, const std::string* target
 }
 
 void Backend::set_sample_rate(double sampleRate) {
- if (has_method("set_sample_rate")) {
-      m_sr = sampleRate;
-      std::vector<c10::IValue> sr_input = {sampleRate};
-      std::unique_lock<std::mutex> model_lock(m_model_mutex);
-      auto args = empty_args(); args.push_back((int)sampleRate);
-      auto kwargs = empty_kwargs();
-      std::string method_name = "set_sample_rate";
-      m_model.get_method(method_name)(args, kwargs); 
+  m_sr = sampleRate;
+  if (has_method("set_sample_rate")) {
+    std::unique_lock<std::mutex> model_lock(m_model_mutex);
+    auto args = empty_args(); args.push_back((int)sampleRate);
+    auto kwargs = empty_kwargs();
+    std::string method_name = "set_sample_rate";
+    try {
+      m_model.get_method(method_name)(args, kwargs);
+    } catch (...) {}
+    model_lock.unlock();
+  } 
+}
+
+double Backend::get_sample_rate() {
+  if (has_method("get_sample_rate")) {
+    std::unique_lock<std::mutex> model_lock(m_model_mutex);
+    auto args = empty_args();
+    auto kwargs = empty_kwargs();
+    try {
+      auto res = m_model.get_method("get_sample_rate")(args, kwargs);
       model_lock.unlock();
-    } 
+      if (res.isInt()) {
+        int sr = res.toInt();
+        if (sr > 0) return (double)sr;
+      } else if (res.isDouble()) {
+        double sr = res.toDouble();
+        if (sr > 0) return sr;
+      }
+    } catch (...) {
+      model_lock.unlock();
+    }
+  }
+  return m_sr > 0 ? m_sr : 44100.0;
 }
 
 int Backend::reload() {
