@@ -637,16 +637,22 @@ void NNBendingAudioProcessorEditor::resized()
         latentEnableButton.setBounds (area4.removeFromTop (24));
         area4.removeFromTop (10);
 
-        latentDepthLabel.setBounds (area4.removeFromTop (16));
-        latentDepthSlider.setBounds (area4.removeFromTop (24));
-        area4.removeFromTop (12);
-
         latentModeLabel.setBounds (area4.removeFromTop (16));
         latentModeCombo.setBounds (area4.removeFromTop (26));
         area4.removeFromTop (12);
 
-        latentSlewLabel.setBounds (area4.removeFromTop (16));
-        latentSlewSlider.setBounds (area4.removeFromTop (24));
+        int modeId = latentModeCombo.getSelectedId(); // 1 = Fourier Orbit, 2 = Latent Slew, 3 = Quantize
+
+        if (modeId == 2) // Latent Slew mode
+        {
+            latentSlewLabel.setBounds (area4.removeFromTop (16));
+            latentSlewSlider.setBounds (area4.removeFromTop (24));
+        }
+        else // Fourier Orbit or Quantize mode
+        {
+            latentDepthLabel.setBounds (area4.removeFromTop (16));
+            latentDepthSlider.setBounds (area4.removeFromTop (24));
+        }
     }
 }
 
@@ -724,6 +730,8 @@ void NNBendingAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxTha
     {
         int modeIdx = latentModeCombo.getSelectedId() - 1;
         audioProcessor.setLatentMode ((NNBendingAudioProcessor::LatentMode)modeIdx);
+        updateLatentControlsVisibility();
+        resized();
     }
 }
 
@@ -1833,12 +1841,10 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     tabBridgeButton.setVisible (isWeights);
 
     latentEnableButton.setVisible (isLatent);
-    latentDepthLabel.setVisible (isLatent);
-    latentDepthSlider.setVisible (isLatent);
     latentModeLabel.setVisible (isLatent);
     latentModeCombo.setVisible (isLatent);
-    latentSlewLabel.setVisible (isLatent);
-    latentSlewSlider.setVisible (isLatent);
+
+    updateLatentControlsVisibility();
 
     setSideTab (currentSideTab);
 
@@ -1855,5 +1861,44 @@ void NNBendingAudioProcessorEditor::setViewMode (ViewMode newMode)
     }
 
     repaint();
+}
+
+void NNBendingAudioProcessorEditor::updateLatentControlsVisibility()
+{
+    bool isLatent = (currentViewMode == ViewMode::Latent);
+    if (!isLatent)
+    {
+        latentDepthLabel.setVisible (false);
+        latentDepthSlider.setVisible (false);
+        latentSlewLabel.setVisible (false);
+        latentSlewSlider.setVisible (false);
+        return;
+    }
+
+    int modeId = latentModeCombo.getSelectedId(); // 1 = Fourier Orbit, 2 = Latent Slew, 3 = Quantize
+
+    if (modeId == 2) // Latent Slew
+    {
+        latentDepthLabel.setVisible (false);
+        latentDepthSlider.setVisible (false);
+        latentSlewLabel.setVisible (true);
+        latentSlewSlider.setVisible (true);
+    }
+    else if (modeId == 3) // Quantize
+    {
+        latentDepthLabel.setText ("Quantize Step", juce::dontSendNotification);
+        latentDepthLabel.setVisible (true);
+        latentDepthSlider.setVisible (true);
+        latentSlewLabel.setVisible (false);
+        latentSlewSlider.setVisible (false);
+    }
+    else // Fourier Orbit
+    {
+        latentDepthLabel.setText ("Latent Depth", juce::dontSendNotification);
+        latentDepthLabel.setVisible (true);
+        latentDepthSlider.setVisible (true);
+        latentSlewLabel.setVisible (false);
+        latentSlewSlider.setVisible (false);
+    }
 }
 

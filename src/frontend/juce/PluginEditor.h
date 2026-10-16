@@ -154,6 +154,7 @@ private:
     juce::Label latentSlewLabel { {}, "Slew Speed" };
     juce::Slider latentSlewSlider;
 
+    void updateLatentControlsVisibility();
     void updateHarmonicGhostPreview();
     void applyHarmonicWeights();
 
