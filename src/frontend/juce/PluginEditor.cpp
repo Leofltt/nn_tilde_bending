@@ -1121,37 +1121,55 @@ void NNBendingAudioProcessorEditor::timerCallback()
         else
         {
             // In Momentary / Transient modes:
-            // Calculate target bent curve: (bridgedBase * scale + offset)
+            // Calculate target bent curve only when parameters or source change:
             if (!state.drawnWeights.empty())
             {
-                std::vector<float> bridgedBase = state.drawnWeights;
-                std::vector<float> srcTiled;
                 bool bridgeEnabled = bridgeEnableToggle.getToggleState();
-                if (bridgeEnabled && state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != currentBendingLayer.toStdString())
-                {
-                    auto srcW = audioProcessor.getBackend().get_original_layer_weights (state.bridgeSourceLayer);
-                    if (!srcW.empty())
-                    {
-                        float alpha = state.bridgeDepth;
-                        size_t srcSize = srcW.size();
-                        srcTiled.resize (bridgedBase.size());
-                        for (size_t i = 0; i < bridgedBase.size(); ++i)
-                        {
-                            srcTiled[i] = srcW[i % srcSize];
-                            bridgedBase[i] = (1.0f - alpha) * state.drawnWeights[i] + alpha * srcTiled[i];
-                        }
-                    }
-                }
-                weightCanvas.setShowBridgeVisuals (bridgeEnabled);
-                weightCanvas.setBridgeWeights (srcTiled, bridgedBase, bridgeEnabled ? state.bridgeDepth : 0.0f, false);
-
-                std::vector<float> targetBent(bridgedBase.size());
                 bool mutateEnabled = mutateEnableToggle.getToggleState();
                 float effScale = mutateEnabled ? state.scale : 1.0f;
                 float effOffset = mutateEnabled ? state.offset : 0.0f;
-                for (size_t i = 0; i < bridgedBase.size(); ++i)
-                    targetBent[i] = bridgedBase[i] * effScale + effOffset;
-                weightCanvas.setTargetBentWeights (targetBent);
+
+                bool paramsChanged = (bridgeEnabled != lastBridgeEnabled) ||
+                                     (std::abs(state.bridgeDepth - lastBridgeDepth) > 0.001f) ||
+                                     (state.bridgeSourceLayer != lastBridgeSource) ||
+                                     (std::abs(effScale - lastTargetScale) > 0.001f) ||
+                                     (std::abs(effOffset - lastTargetOffset) > 0.001f) ||
+                                     targetCurveDirty;
+
+                if (paramsChanged)
+                {
+                    lastBridgeEnabled = bridgeEnabled;
+                    lastBridgeDepth = state.bridgeDepth;
+                    lastBridgeSource = state.bridgeSourceLayer;
+                    lastTargetScale = effScale;
+                    lastTargetOffset = effOffset;
+                    targetCurveDirty = false;
+
+                    std::vector<float> bridgedBase = state.drawnWeights;
+                    std::vector<float> srcTiled;
+                    if (bridgeEnabled && state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != currentBendingLayer.toStdString())
+                    {
+                        auto srcW = audioProcessor.getBackend().get_original_layer_weights (state.bridgeSourceLayer);
+                        if (!srcW.empty())
+                        {
+                            float alpha = state.bridgeDepth;
+                            size_t srcSize = srcW.size();
+                            srcTiled.resize (bridgedBase.size());
+                            for (size_t i = 0; i < bridgedBase.size(); ++i)
+                            {
+                                srcTiled[i] = srcW[i % srcSize];
+                                bridgedBase[i] = (1.0f - alpha) * state.drawnWeights[i] + alpha * srcTiled[i];
+                            }
+                        }
+                    }
+                    weightCanvas.setShowBridgeVisuals (bridgeEnabled);
+                    weightCanvas.setBridgeWeights (srcTiled, bridgedBase, bridgeEnabled ? state.bridgeDepth : 0.0f, false);
+
+                    std::vector<float> targetBent(bridgedBase.size());
+                    for (size_t i = 0; i < bridgedBase.size(); ++i)
+                        targetBent[i] = bridgedBase[i] * effScale + effOffset;
+                    weightCanvas.setTargetBentWeights (targetBent);
+                }
             }
             else
             {
@@ -1416,6 +1434,7 @@ void NNBendingAudioProcessorEditor::selectLayer (const juce::String& layerName)
     lastKnownOffset = state.offset;
     lastKnownHeat = state.heat;
     lastKnownMemory = state.memory;
+    targetCurveDirty = true;
 
     updateHarmonicGhostPreview();
 }
@@ -1478,6 +1497,11 @@ void NNBendingAudioProcessorEditor::applyKnobBending()
     {
         weightCanvas.setTargetBentWeights (bentTarget);
     }
+    lastTargetScale = scale;
+    lastTargetOffset = offset;
+    lastBridgeDepth = state.bridgeDepth;
+    lastBridgeSource = state.bridgeSourceLayer;
+    lastBridgeEnabled = bridgeEnabled;
 }
 
 void NNBendingAudioProcessorEditor::resetLayerWeights()

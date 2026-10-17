@@ -76,60 +76,16 @@ public:
         float cx = padArea.getX() + pw * 0.5f;
         float cy = padArea.getY() + ph * 0.5f;
 
-        // 1. Render multi-pole potential / topographic latent heat map
-        // Generates an attractive background gradient field that visualizes the latent space topology
+        // 1. Render multi-pole potential / topographic latent heat map via precomputed texture blit
         {
             juce::Graphics::ScopedSaveState sss(g);
             g.reduceClipRegion(padArea.toNearestInt());
 
-            int sampleSteps = 28;
-            float stepW = pw / (float)sampleSteps;
-            float stepH = ph / (float)sampleSteps;
-
-            for (int sy = 0; sy < sampleSteps; ++sy)
+            updateBackgroundTerrainImage((int)pw, (int)ph);
+            if (m_backgroundTerrainImage.isValid())
             {
-                float pyNorm = 1.0f - 2.0f * ((sy + 0.5f) / (float)sampleSteps);
-                float pyPix = padArea.getY() + sy * stepH;
-
-                for (int sx = 0; sx < sampleSteps; ++sx)
-                {
-                    float pxNorm = 2.0f * ((sx + 0.5f) / (float)sampleSteps) - 1.0f;
-                    float pxPix = padArea.getX() + sx * stepW;
-
-                    // Synthetic latent manifold potential: combined harmonic potential wells
-                    float dOrigin = std::sqrt(pxNorm * pxNorm + pyNorm * pyNorm);
-                    float dCursor = std::sqrt((pxNorm - m_x) * (pxNorm - m_x) + (pyNorm - m_y) * (pyNorm - m_y));
-
-                    float field1 = std::sin(pxNorm * 3.14159f * 1.5f) * std::cos(pyNorm * 3.14159f * 1.5f);
-                    float field2 = 0.5f * std::cos(dOrigin * 6.28318f);
-                    float field = 0.5f * (field1 + field2); // [-0.75, +0.75]
-
-                    // Dynamic influence of cursor position
-                    float cursorProximity = std::exp(-dCursor * 2.5f);
-
-                    float val = juce::jlimit(0.0f, 1.0f, 0.45f + field * 0.35f + cursorProximity * 0.35f);
-
-                    // Deep midnight plum -> electric violet/cyan gradient
-                    juce::Colour cellCol;
-                    if (val < 0.45f)
-                    {
-                        float t = val / 0.45f;
-                        cellCol = juce::Colour::fromString("#ff0b0a12").interpolatedWith(juce::Colour::fromString("#ff17122a"), t);
-                    }
-                    else if (val < 0.70f)
-                    {
-                        float t = (val - 0.45f) / 0.25f;
-                        cellCol = juce::Colour::fromString("#ff17122a").interpolatedWith(juce::Colour::fromString("#ff2e1065"), t);
-                    }
-                    else
-                    {
-                        float t = (val - 0.70f) / 0.30f;
-                        cellCol = juce::Colour::fromString("#ff2e1065").interpolatedWith(juce::Colour::fromString("#ff065f46"), t);
-                    }
-
-                    g.setColour(cellCol.withAlpha(0.70f));
-                    g.fillRect(pxPix, pyPix, stepW + 0.5f, stepH + 0.5f);
-                }
+                g.setImageResamplingQuality(juce::Graphics::ResamplingQuality::lowResamplingQuality);
+                g.drawImage(m_backgroundTerrainImage, padArea, juce::RectanglePlacement::stretchToFit);
             }
         }
 
@@ -289,6 +245,54 @@ private:
     float m_y { 0.0f };
     bool m_isEnabled { false };
     bool m_hasBottleneck { true };
+
+    juce::Image m_backgroundTerrainImage;
+
+    void updateBackgroundTerrainImage(int w, int h)
+    {
+        if (w <= 0 || h <= 0) return;
+        int steps = 36;
+        if (!m_backgroundTerrainImage.isValid() || m_backgroundTerrainImage.getWidth() != steps || m_backgroundTerrainImage.getHeight() != steps)
+        {
+            m_backgroundTerrainImage = juce::Image(juce::Image::ARGB, steps, steps, false);
+            juce::Image::BitmapData bmp(m_backgroundTerrainImage, juce::Image::BitmapData::writeOnly);
+
+            for (int sy = 0; sy < steps; ++sy)
+            {
+                float pyNorm = 1.0f - 2.0f * ((sy + 0.5f) / (float)steps);
+                auto* line = reinterpret_cast<uint32_t*>(bmp.getLinePointer(sy));
+
+                for (int sx = 0; sx < steps; ++sx)
+                {
+                    float pxNorm = 2.0f * ((sx + 0.5f) / (float)steps) - 1.0f;
+                    float dOrigin = std::sqrt(pxNorm * pxNorm + pyNorm * pyNorm);
+
+                    float field1 = std::sin(pxNorm * 3.14159f * 1.5f) * std::cos(pyNorm * 3.14159f * 1.5f);
+                    float field2 = 0.5f * std::cos(dOrigin * 6.28318f);
+                    float field = 0.5f * (field1 + field2); // [-0.75, +0.75]
+                    float val = juce::jlimit(0.0f, 1.0f, 0.45f + field * 0.35f);
+
+                    juce::Colour cellCol;
+                    if (val < 0.45f)
+                    {
+                        float t = val / 0.45f;
+                        cellCol = juce::Colour::fromString("#ff0b0a12").interpolatedWith(juce::Colour::fromString("#ff17122a"), t);
+                    }
+                    else if (val < 0.70f)
+                    {
+                        float t = (val - 0.45f) / 0.25f;
+                        cellCol = juce::Colour::fromString("#ff17122a").interpolatedWith(juce::Colour::fromString("#ff2e1065"), t);
+                    }
+                    else
+                    {
+                        float t = (val - 0.70f) / 0.30f;
+                        cellCol = juce::Colour::fromString("#ff2e1065").interpolatedWith(juce::Colour::fromString("#ff065f46"), t);
+                    }
+                    line[sx] = cellCol.withAlpha(0.70f).getARGB();
+                }
+            }
+        }
+    }
 
     struct Point2D { float x; float y; };
     std::vector<Point2D> m_trail;

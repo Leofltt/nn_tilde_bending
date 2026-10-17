@@ -247,14 +247,13 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
                     if (c < (int)m_input_resamplers.size() && c < (int)m_resampled_in_scratch.size())
                     {
-                        if (numModelSamples > (int)m_resampled_in_scratch[c].size())
-                            m_resampled_in_scratch[c].resize(numModelSamples * 2);
+                        int targetSamples = std::min(numModelSamples, (int)m_resampled_in_scratch[c].size());
 
                         int actualWritten = m_input_resamplers[c].process(
                             inRatio,
                             inPtr,
                             m_resampled_in_scratch[c].data(),
-                            numModelSamples
+                            targetSamples
                         );
 
                         m_in_buffers[c].put(m_resampled_in_scratch[c].data(), actualWritten);
@@ -311,10 +310,9 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             if (c < (int)m_output_resamplers.size() && c < (int)m_resampled_out_scratch.size())
             {
-                if (numModelToRead > (int)m_resampled_out_scratch[c].size())
-                    m_resampled_out_scratch[c].resize(numModelToRead * 2);
+                int samplesToRead = std::min(numModelToRead, (int)m_resampled_out_scratch[c].size());
 
-                m_out_buffers[c].get(m_resampled_out_scratch[c].data(), numModelToRead);
+                m_out_buffers[c].get(m_resampled_out_scratch[c].data(), samplesToRead);
 
                 m_output_resamplers[c].process(
                     outRatio,
@@ -684,7 +682,10 @@ void NNBendingAudioProcessor::runInference()
             }
 
             // Cross-Talk (Trace Bridging): Blend target layer's base shape with a source layer
-            std::vector<float> bridgedBase = state.drawnWeights;
+            if (state.scratchBridged.size() != numWeights)
+                state.scratchBridged.resize(numWeights);
+            std::memcpy(state.scratchBridged.data(), state.drawnWeights.data(), numWeights * sizeof(float));
+
             if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != layerName)
             {
                 auto sourceWeights = m_backend.get_original_layer_weights(state.bridgeSourceLayer);
@@ -695,18 +696,19 @@ void NNBendingAudioProcessor::runInference()
                     for (size_t i = 0; i < numWeights; ++i)
                     {
                         float srcVal = sourceWeights[i % srcSize];
-                        bridgedBase[i] = (1.0f - alpha) * state.drawnWeights[i] + alpha * srcVal;
+                        state.scratchBridged[i] = (1.0f - alpha) * state.drawnWeights[i] + alpha * srcVal;
                     }
                 }
             }
+
+            if (state.scratchFinal.size() != numWeights)
+                state.scratchFinal.resize(numWeights);
 
             // Compute stochastic drift when heat > 0 and not frozen
             if (state.heat > 0.0001f && !state.frozen)
             {
                 float heat = state.heat;
                 float memory = juce::jlimit(0.0f, 0.999f, state.memory);
-
-                std::vector<float> finalWeights(numWeights);
 
                 for (size_t i = 0; i < numWeights; ++i)
                 {
@@ -728,19 +730,19 @@ void NNBendingAudioProcessor::runInference()
                     }
 
                     // Calculate bent target weight (Bridged base shape * Static Scale + Offset + Stochastic Drift)
-                    float bentWeight = (bridgedBase[i] * state.scale + state.offset) + state.driftOffsets[i];
+                    float bentWeight = (state.scratchBridged[i] * state.scale + state.offset) + state.driftOffsets[i];
 
                     if (mode == TriggerMode::Continuous)
                     {
-                        finalWeights[i] = bentWeight;
+                        state.scratchFinal[i] = bentWeight;
                     }
                     else
                     {
                         // Crossfade from unbent baseline W0 (originalWeights) to target bent W based on envelope
-                        finalWeights[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
+                        state.scratchFinal[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
                     }
                 }
-                m_backend.set_layer_weights(layerName, finalWeights);
+                m_backend.set_layer_weights(layerName, state.scratchFinal);
                 state.isApplied = true;
                 state.lastAppliedEnv = currentEnv;
             }
@@ -749,17 +751,16 @@ void NNBendingAudioProcessor::runInference()
                 // Momentary gate active without heat: only recompute if envelope moved significantly
                 if (std::abs(currentEnv - state.lastAppliedEnv) > 0.002f)
                 {
-                    std::vector<float> finalWeights(numWeights);
                     // Vectorized: bentWeight = bridgedBase * scale + offset
-                    juce::FloatVectorOperations::copy(finalWeights.data(), bridgedBase.data(), (int)numWeights);
-                    juce::FloatVectorOperations::multiply(finalWeights.data(), state.scale, (int)numWeights);
-                    juce::FloatVectorOperations::add(finalWeights.data(), state.offset, (int)numWeights);
+                    juce::FloatVectorOperations::copy(state.scratchFinal.data(), state.scratchBridged.data(), (int)numWeights);
+                    juce::FloatVectorOperations::multiply(state.scratchFinal.data(), state.scale, (int)numWeights);
+                    juce::FloatVectorOperations::add(state.scratchFinal.data(), state.offset, (int)numWeights);
 
                     // Vectorized crossfade: finalWeights = originalWeights * (1 - env) + bentWeight * env
-                    juce::FloatVectorOperations::multiply(finalWeights.data(), currentEnv, (int)numWeights);
-                    juce::FloatVectorOperations::addWithMultiply(finalWeights.data(), state.originalWeights.data(), 1.0f - currentEnv, (int)numWeights);
+                    juce::FloatVectorOperations::multiply(state.scratchFinal.data(), currentEnv, (int)numWeights);
+                    juce::FloatVectorOperations::addWithMultiply(state.scratchFinal.data(), state.originalWeights.data(), 1.0f - currentEnv, (int)numWeights);
 
-                    m_backend.set_layer_weights(layerName, finalWeights);
+                    m_backend.set_layer_weights(layerName, state.scratchFinal);
                     state.isApplied = true;
                     state.lastAppliedEnv = currentEnv;
                 }
@@ -769,13 +770,12 @@ void NNBendingAudioProcessor::runInference()
                 // Continuous mode without drift: apply bent target once and skip redundant uploads
                 if (!state.isApplied)
                 {
-                    std::vector<float> finalWeights(numWeights);
                     // Vectorized: finalWeights = bridgedBase * scale + offset
-                    juce::FloatVectorOperations::copy(finalWeights.data(), bridgedBase.data(), (int)numWeights);
-                    juce::FloatVectorOperations::multiply(finalWeights.data(), state.scale, (int)numWeights);
-                    juce::FloatVectorOperations::add(finalWeights.data(), state.offset, (int)numWeights);
+                    juce::FloatVectorOperations::copy(state.scratchFinal.data(), state.scratchBridged.data(), (int)numWeights);
+                    juce::FloatVectorOperations::multiply(state.scratchFinal.data(), state.scale, (int)numWeights);
+                    juce::FloatVectorOperations::add(state.scratchFinal.data(), state.offset, (int)numWeights);
 
-                    m_backend.set_layer_weights(layerName, finalWeights);
+                    m_backend.set_layer_weights(layerName, state.scratchFinal);
                     state.isApplied = true;
                 }
             }
@@ -846,8 +846,15 @@ void NNBendingAudioProcessor::runInference()
                         m_cachedLatentDim = (int)latentDim;
                     }
 
-                    auto coords = torch::tensor({lx, ly}, z.options()).reshape({2, 1});
-                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), coords); // [numHarmonics, 1]
+                    if (!m_coordsTensor.defined() || m_coordsTensor.device() != z.device() || m_coordsTensor.dtype() != z.dtype())
+                    {
+                        m_coordsTensor = torch::empty({2, 1}, z.options());
+                    }
+                    float* coordsPtr = m_coordsTensor.data_ptr<float>();
+                    coordsPtr[0] = lx;
+                    coordsPtr[1] = ly;
+
+                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), m_coordsTensor); // [numHarmonics, 1]
 
                     // Compute sin and cos components for smooth, infinite-resolution harmonic orbits
                     auto cosFeat = torch::cos(proj);
@@ -918,8 +925,15 @@ void NNBendingAudioProcessor::runInference()
                         m_cachedLatentDim = (int)latentDim;
                     }
 
-                    auto coords = torch::tensor({lx, ly}, z.options()).reshape({2, 1});
-                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), coords);
+                    if (!m_coordsTensor.defined() || m_coordsTensor.device() != z.device() || m_coordsTensor.dtype() != z.dtype())
+                    {
+                        m_coordsTensor = torch::empty({2, 1}, z.options());
+                    }
+                    float* coordsPtr = m_coordsTensor.data_ptr<float>();
+                    coordsPtr[0] = lx;
+                    coordsPtr[1] = ly;
+
+                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), m_coordsTensor);
 
                     auto cosFeat = torch::cos(proj);
                     auto sinFeat = torch::sin(proj);

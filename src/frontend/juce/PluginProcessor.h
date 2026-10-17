@@ -281,6 +281,8 @@ public:
         std::vector<float> originalWeights; // Unbent baseline weights W0
         std::vector<float> drawnWeights;    // User-drawn / bent target curve
         std::vector<float> driftOffsets;    // Current stochastic drift vector
+        std::vector<float> scratchBridged;  // Persistent scratch buffer for cross-talk composite
+        std::vector<float> scratchFinal;    // Persistent scratch buffer for bent weight upload
         bool isApplied { false };           // True if bent weights currently applied to model
         float lastAppliedEnv { -1.0f };     // Previous momentary envelope value applied
     };
@@ -473,6 +475,7 @@ private:
     std::atomic<float>       m_latentSlew { 0.0f };
     at::Tensor               m_prevLatentTensor;
     at::Tensor               m_rffMatrix; // Random Fourier Feature projection matrix B [D/2, 2]
+    at::Tensor               m_coordsTensor; // Preallocated [2, 1] tensor for zero-alloc projection
     int                      m_cachedLatentDim { 0 };
 
     // Safety Sentry state

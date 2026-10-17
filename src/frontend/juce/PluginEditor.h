@@ -173,6 +173,12 @@ private:
     float lastKnownHeat { 0.0f };
     float lastKnownMemory { 0.8f };
     float lastKnownDryWet { 1.0f };
+    std::string lastBridgeSource;
+    float lastBridgeDepth { -1.0f };
+    bool lastBridgeEnabled { false };
+    float lastTargetScale { -999.0f };
+    float lastTargetOffset { -999.0f };
+    bool targetCurveDirty { true };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NNBendingAudioProcessorEditor)
 };
