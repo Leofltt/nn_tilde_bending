@@ -27,11 +27,11 @@ std::string tensor_to_str(torch::Tensor &tsr) {
 }
 
 
-Backend::Backend() : m_loaded(0), m_device(CPU), m_use_gpu(false) {
+TorchBackend::TorchBackend() : m_loaded(0), m_device(CPU), m_use_gpu(false) {
   at::init_num_threads();
 }
 
-torch::Tensor Backend::prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec) {
+torch::Tensor TorchBackend::prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec) {
   // Directly allocate one contiguous tensor of shape [in_dim * n_batches, n_vec]
   // This avoids per-channel .clone() heap thrashing and subsequent torch::cat() allocations!
   auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
@@ -55,7 +55,7 @@ torch::Tensor Backend::prepare_io_tensor(std::vector<float *> &in_buffer, int in
   return cat_tensor_in;
 }
 
-void Backend::perform(std::vector<float *> &in_buffer,
+void TorchBackend::perform(std::vector<float *> &in_buffer,
                       std::vector<float *> &out_buffer, 
                       std::string method, 
                       int n_batches, int n_out_channels, int n_vec) {
@@ -119,10 +119,38 @@ void Backend::perform(std::vector<float *> &in_buffer,
   }
 }
 
-void Backend::perform_forward(std::vector<float *> &in_buffer,
+void TorchBackend::perform_forward(std::vector<float *> &in_buffer,
                               std::vector<float *> &out_buffer,
                               int n_batches, int n_out_channels, int n_vec,
-                              LatentHook latent_hook) {
+                              IBackend::LatentHook latent_hook) {
+  if (latent_hook) {
+    TorchLatentHook torch_hook = [&latent_hook](at::Tensor z) -> at::Tensor {
+      if (!z.defined() || z.numel() == 0) return z;
+      auto z_contig = z.contiguous();
+      float* ptr = z_contig.data_ptr<float>();
+      int64_t channels = z.dim() > 1 ? z.size(1) : 1;
+      int64_t length = z.dim() > 2 ? z.size(2) : z.numel();
+      IBackend::LatentBuffer buf{ ptr, channels, length };
+      latent_hook(buf);
+      return z_contig;
+    };
+    perform_forward_torch(in_buffer, out_buffer, n_batches, n_out_channels, n_vec, torch_hook);
+  } else {
+    perform_forward_torch(in_buffer, out_buffer, n_batches, n_out_channels, n_vec, nullptr);
+  }
+}
+
+void TorchBackend::perform_forward(std::vector<float *> &in_buffer,
+                                   std::vector<float *> &out_buffer,
+                                   int n_batches, int n_out_channels, int n_vec,
+                                   TorchLatentHook latent_hook) {
+  perform_forward_torch(in_buffer, out_buffer, n_batches, n_out_channels, n_vec, latent_hook);
+}
+
+void TorchBackend::perform_forward_torch(std::vector<float *> &in_buffer,
+                                   std::vector<float *> &out_buffer,
+                                   int n_batches, int n_out_channels, int n_vec,
+                                   TorchLatentHook latent_hook) {
   // If model has encode and decode, always execute encode -> (latent_hook) -> decode
   // so latent bending and autoencoding are fully supported.
   bool has_enc_dec = has_method("encode") && has_method("decode");
@@ -201,7 +229,7 @@ void Backend::perform_forward(std::vector<float *> &in_buffer,
   }
 }
 
-void Backend::perform_prior_decode(std::vector<float *> &out_buffer,
+void TorchBackend::perform_prior_decode(std::vector<float *> &out_buffer,
                                   int n_batches, int n_out_channels, int n_vec) {
   c10::InferenceMode guard;
   if (!m_loaded) return;
@@ -278,9 +306,35 @@ void Backend::perform_prior_decode(std::vector<float *> &out_buffer,
   }
 }
 
-void Backend::perform_decode_gen(std::vector<float *> &out_buffer,
+void TorchBackend::perform_decode_gen(std::vector<float *> &out_buffer,
                                 int n_batches, int n_out_channels, int n_vec,
-                                LatentHook latent_hook) {
+                                IBackend::LatentHook latent_hook) {
+  if (latent_hook) {
+    TorchLatentHook torch_hook = [&latent_hook](at::Tensor z) -> at::Tensor {
+      if (!z.defined() || z.numel() == 0) return z;
+      auto z_contig = z.contiguous();
+      float* ptr = z_contig.data_ptr<float>();
+      int64_t channels = z.dim() > 1 ? z.size(1) : 1;
+      int64_t length = z.dim() > 2 ? z.size(2) : z.numel();
+      IBackend::LatentBuffer buf{ ptr, channels, length };
+      latent_hook(buf);
+      return z_contig;
+    };
+    perform_decode_gen_torch(out_buffer, n_batches, n_out_channels, n_vec, torch_hook);
+  } else {
+    perform_decode_gen_torch(out_buffer, n_batches, n_out_channels, n_vec, nullptr);
+  }
+}
+
+void TorchBackend::perform_decode_gen(std::vector<float *> &out_buffer,
+                                      int n_batches, int n_out_channels, int n_vec,
+                                      TorchLatentHook latent_hook) {
+  perform_decode_gen_torch(out_buffer, n_batches, n_out_channels, n_vec, latent_hook);
+}
+
+void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
+                                      int n_batches, int n_out_channels, int n_vec,
+                                      TorchLatentHook latent_hook) {
   c10::InferenceMode guard;
   if (!m_loaded || !has_method("decode")) return;
 
@@ -372,15 +426,15 @@ void Backend::perform_decode_gen(std::vector<float *> &out_buffer,
   }
 }
 
-bool Backend::has_prior_decode() {
+bool TorchBackend::has_prior_decode() {
   return (has_method("prior") || has_method("generate")) && has_method("decode");
 }
 
-bool Backend::has_autoencode() {
+bool TorchBackend::has_autoencode() {
   return has_method("encode") && has_method("decode");
 }
 
-std::vector<std::string> Backend::get_plugin_modes() {
+std::vector<std::string> TorchBackend::get_plugin_modes() {
   std::vector<std::string> modes;
   if (!is_loaded())
     return modes;
@@ -407,7 +461,7 @@ std::vector<std::string> Backend::get_plugin_modes() {
   return modes;
 }
 
-std::vector<int> Backend::get_mode_params(std::string mode) {
+std::vector<int> TorchBackend::get_mode_params(std::string mode) {
   if (mode == "forward") {
     if (has_method("forward")) {
       return get_method_params("forward");
@@ -429,7 +483,7 @@ std::vector<int> Backend::get_mode_params(std::string mode) {
   return get_method_params(mode);
 }
 
-int Backend::load(std::string path, double sampleRate, const std::string* target_method) {
+int TorchBackend::load(std::string path, double sampleRate, const std::string* target_method) {
   try {
     auto model = torch::jit::load(path);
     if (target_method != nullptr) {
@@ -472,7 +526,7 @@ int Backend::load(std::string path, double sampleRate, const std::string* target
   }
 }
 
-void Backend::set_sample_rate(double sampleRate) {
+void TorchBackend::set_sample_rate(double sampleRate) {
   m_sr = sampleRate;
   if (has_method("set_sample_rate")) {
     std::unique_lock<std::mutex> model_lock(m_model_mutex);
@@ -486,7 +540,7 @@ void Backend::set_sample_rate(double sampleRate) {
   } 
 }
 
-double Backend::get_sample_rate() {
+double TorchBackend::get_sample_rate() {
   if (has_method("get_sample_rate")) {
     std::unique_lock<std::mutex> model_lock(m_model_mutex);
     auto args = empty_args();
@@ -508,12 +562,12 @@ double Backend::get_sample_rate() {
   return m_sr > 0 ? m_sr : 44100.0;
 }
 
-int Backend::reload() {
+int TorchBackend::reload() {
   auto return_code = load(m_path, m_sr);
   return return_code;
 }
 
-bool Backend::has_method(std::string method_name) {
+bool TorchBackend::has_method(std::string method_name) {
   if (!is_loaded()){
     return false; 
   }
@@ -525,7 +579,7 @@ bool Backend::has_method(std::string method_name) {
   return false;
 }
 
-bool Backend::has_settable_attribute(std::string attribute) {
+bool TorchBackend::has_settable_attribute(std::string attribute) {
   for (const auto &a : get_settable_attributes()) {
     if (a == attribute)
       return true;
@@ -533,7 +587,7 @@ bool Backend::has_settable_attribute(std::string attribute) {
   return false;
 }
 
-std::vector<std::string> Backend::get_available_methods(LockedModel *target_model) {
+std::vector<std::string> TorchBackend::get_available_methods(LockedModel *target_model) {
   std::vector<std::string> methods;
   torch::jit::script::Module *model;
   std::mutex *mutex; 
@@ -568,7 +622,7 @@ std::vector<std::string> Backend::get_available_methods(LockedModel *target_mode
   return methods;
 }
 
-std::vector<std::string> Backend::get_available_attributes() {
+std::vector<std::string> TorchBackend::get_available_attributes() {
   std::vector<std::string> attributes;
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   for (const auto &attribute : m_model.named_attributes())
@@ -576,7 +630,7 @@ std::vector<std::string> Backend::get_available_attributes() {
   return attributes;
 }
 
-std::vector<std::string> Backend::get_settable_attributes() {
+std::vector<std::string> TorchBackend::get_settable_attributes() {
   std::vector<std::string> attributes;
   try {
     std::vector<c10::IValue> dumb_input = {};
@@ -606,7 +660,7 @@ std::vector<std::string> Backend::get_settable_attributes() {
   return attributes;
 }
 
-std::vector<c10::IValue> Backend::get_attribute(std::string attribute_name) {
+std::vector<c10::IValue> TorchBackend::get_attribute(std::string attribute_name) {
   std::string attribute_getter_name = "get_" + attribute_name;
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   try {
@@ -634,7 +688,7 @@ std::vector<c10::IValue> Backend::get_attribute(std::string attribute_name) {
   return attributes;
 }
 
-std::string Backend::get_attribute_as_string(std::string attribute_name) {
+std::string TorchBackend::get_attribute_as_string(std::string attribute_name) {
   std::vector<c10::IValue> getter_outputs = get_attribute(attribute_name);
   // finstringd arguments
   torch::Tensor setter_params;
@@ -695,9 +749,9 @@ std::string Backend::get_attribute_as_string(std::string attribute_name) {
 }
 
 
-void Backend::set_attribute(std::string attribute_name,
+void TorchBackend::set_attribute(std::string attribute_name,
                             std::vector<std::string> attribute_args, 
-                            const Backend::BufferMap &buffer_array) {
+                            const TorchBackend::BufferMap &buffer_array) {
   // find setter
   std::string attribute_setter_name = "set_" + attribute_name;
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
@@ -796,7 +850,7 @@ void Backend::set_attribute(std::string attribute_name,
   }
 }
 
-std::vector<int> Backend::get_method_params(std::string method) {
+std::vector<int> TorchBackend::get_method_params(std::string method) {
   std::vector<int> params;
 
   if (std::find(m_available_methods.begin(), m_available_methods.end(),
@@ -813,7 +867,7 @@ std::vector<int> Backend::get_method_params(std::string method) {
   return params;
 }
 
-int Backend::get_higher_ratio() {
+int TorchBackend::get_higher_ratio() {
   int higher_ratio = 1;
   for (const auto &method : m_available_methods) {
     auto params = get_method_params(method);
@@ -825,9 +879,9 @@ int Backend::get_higher_ratio() {
   return higher_ratio;
 }
 
-bool Backend::is_loaded() { return m_loaded; }
+bool TorchBackend::is_loaded() { return m_loaded; }
 
-void Backend::use_gpu(bool value) {
+void TorchBackend::use_gpu(bool value) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   if (value) {
     if (torch::hasCUDA()) {
@@ -846,11 +900,11 @@ void Backend::use_gpu(bool value) {
   m_model.to(m_device);
 }
 
-std::string Backend::get_buffer_name(std::string attribute_name, int attribute_elt_idx) {
+std::string TorchBackend::get_buffer_name(std::string attribute_name, int attribute_elt_idx) {
   return attribute_name + "#" + std::to_string(attribute_elt_idx);
 }
 
-bool Backend::is_buffer_element_of_attribute(std::string attribute_name, int attribute_elt_idx) {
+bool TorchBackend::is_buffer_element_of_attribute(std::string attribute_name, int attribute_elt_idx) {
   std::string target_buffer_name = get_buffer_name(attribute_name, attribute_elt_idx);
   // std::cout << "current registered buffers : " << m_buffer_attributes.size() << std::endl; 
   for (auto buffer_name: m_buffer_attributes) {
@@ -862,7 +916,7 @@ bool Backend::is_buffer_element_of_attribute(std::string attribute_name, int att
   return false;
 }
 
-bool Backend::is_tensor_element_of_attribute(std::string attribute_name, int attribute_elt_idx) {
+bool TorchBackend::is_tensor_element_of_attribute(std::string attribute_name, int attribute_elt_idx) {
   auto attribute_params = m_model.attr(attribute_name + "_params").toTensor(); 
   if (id_to_string_hash.at(attribute_params.item().toInt()) == "tensor") {
     return true;
@@ -871,7 +925,7 @@ bool Backend::is_tensor_element_of_attribute(std::string attribute_name, int att
   }
 }
 
-std::vector<std::string> Backend::retrieve_buffer_attributes() {
+std::vector<std::string> TorchBackend::retrieve_buffer_attributes() {
   std::vector<std::string> bufferNames = {};
   std::string getter_name = "get_buffer_attributes";
   if (has_method(getter_name)) {
@@ -892,11 +946,11 @@ std::vector<std::string> Backend::retrieve_buffer_attributes() {
   return bufferNames;
 }
 
-std::vector<std::string> Backend::get_buffer_attributes() {
+std::vector<std::string> TorchBackend::get_buffer_attributes() {
   return m_buffer_attributes;
 }
 
-int Backend::reset_buffer(std::string buffer_name) {
+int TorchBackend::reset_buffer(std::string buffer_name) {
   std::string clear_method = "clear_buffer_attribute";
   auto args = empty_args(); auto kwargs = empty_kwargs();
   args.push_back(buffer_name);
@@ -906,7 +960,7 @@ int Backend::reset_buffer(std::string buffer_name) {
   return result;  
 }
 
-int Backend::update_buffer(std::string buffer_name, StaticBuffer<float> &buffer) {
+int TorchBackend::update_buffer(std::string buffer_name, StaticBuffer<float> &buffer) {
   std::string setter_method = "set_buffer_attribute";
   auto args = empty_args(); auto kwargs = empty_kwargs();
   auto tensor = buffer.to_tensor().to(m_device); auto sr = static_cast<int>(buffer.sr());
@@ -920,7 +974,7 @@ int Backend::update_buffer(std::string buffer_name, StaticBuffer<float> &buffer)
   return result; 
 }
 
-ModelInfo Backend::get_model_info() {
+ModelInfo TorchBackend::get_model_info() {
   if (!m_loaded) {
     throw "no model loaded; cannot retrieve model information";
   }
@@ -969,7 +1023,7 @@ ModelInfo Backend::get_model_info() {
   }
 }
 
-std::vector<std::string> Backend::get_available_layers() {
+std::vector<std::string> TorchBackend::get_available_layers() {
   std::vector<std::string> layers;
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   for (const auto &layer : m_model.named_parameters())
@@ -979,7 +1033,7 @@ std::vector<std::string> Backend::get_available_layers() {
 }
 
 
-std::vector<float> Backend::get_layer_weights(std::string layer_name) {
+std::vector<float> TorchBackend::get_layer_weights(std::string layer_name) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   torch::Tensor m_tensor;
   for (const auto &layer : m_model.named_parameters())
@@ -991,7 +1045,7 @@ std::vector<float> Backend::get_layer_weights(std::string layer_name) {
   return m_weights;
 }
 
-std::vector<int64_t> Backend::get_layer_shape(std::string layer_name) {
+std::vector<int64_t> TorchBackend::get_layer_shape(std::string layer_name) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   std::vector<int64_t> shape;
   for (const auto &layer : m_model.named_parameters()) {
@@ -1004,7 +1058,7 @@ std::vector<int64_t> Backend::get_layer_shape(std::string layer_name) {
   return shape;
 }
 
-void Backend::set_layer_weights(std::string layer_name,
+void TorchBackend::set_layer_weights(std::string layer_name,
                                 const std::vector<float>& weights) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
 
@@ -1027,7 +1081,7 @@ void Backend::set_layer_weights(std::string layer_name,
   }
 }
 
-std::vector<float> Backend::get_original_layer_weights(std::string layer_name) {
+std::vector<float> TorchBackend::get_original_layer_weights(std::string layer_name) {
   auto it = m_original_weights.find(layer_name);
   if (it != m_original_weights.end()) {
     return it->second;
@@ -1035,20 +1089,20 @@ std::vector<float> Backend::get_original_layer_weights(std::string layer_name) {
   return get_layer_weights(layer_name);
 }
 
-void Backend::reset_layer_weights(std::string layer_name) {
+void TorchBackend::reset_layer_weights(std::string layer_name) {
   auto it = m_original_weights.find(layer_name);
   if (it != m_original_weights.end()) {
     set_layer_weights(layer_name, it->second);
   }
 }
 
-void Backend::reset_all_layer_weights() {
+void TorchBackend::reset_all_layer_weights() {
   for (const auto &pair : m_original_weights) {
     set_layer_weights(pair.first, pair.second);
   }
 }
 
-int Backend::save_model(std::string path) {
+int TorchBackend::save_model(std::string path) {
   std::unique_lock<std::mutex> model_lock(m_model_mutex);
   try {
     m_model.save(path);

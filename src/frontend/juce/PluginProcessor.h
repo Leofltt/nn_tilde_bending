@@ -159,7 +159,8 @@ public:
 
     // Backend methods
     bool loadModel(const juce::File& file);
-    Backend& getBackend() { return m_backend; }
+    IBackend& getBackend() { return m_backend; }
+    TorchBackend& getTorchBackend() { return m_backend; }
     bool isModelLoaded() const { return m_modelLoaded.load(); }
     juce::String getModelPath() const { return m_modelPath; }
     juce::String getCurrentMethod() const { return m_currentMethod; }
@@ -173,7 +174,7 @@ public:
     bool isResamplingActive() const { return m_resamplingActive.load(); }
 
     // Latent bending hook (applied during autoencode mode)
-    void setLatentHook(Backend::LatentHook hook) { m_latentHook = hook; }
+    void setLatentHook(TorchBackend::TorchLatentHook hook) { m_latentHook = hook; }
 
     enum class LatentMode
     {
@@ -456,7 +457,7 @@ private:
     friend class ModelThread;
 
     Backend m_backend;
-    Backend::LatentHook m_latentHook { nullptr };
+    TorchBackend::TorchLatentHook m_latentHook { nullptr };
     std::atomic<bool> m_modelLoaded { false };
     juce::String m_modelPath;
     juce::String m_currentMethod;

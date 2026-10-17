@@ -410,7 +410,7 @@ std::vector<juce::String> NNBendingAudioProcessor::getAvailableModes() const
     if (!m_modelLoaded.load())
         return modes;
 
-    auto backendModes = const_cast<Backend&>(m_backend).get_plugin_modes();
+    auto backendModes = const_cast<IBackend&>(static_cast<const IBackend&>(m_backend)).get_plugin_modes();
     for (const auto& m : backendModes)
         modes.push_back(juce::String(m));
     return modes;
@@ -819,7 +819,7 @@ void NNBendingAudioProcessor::runInference()
     if (modeStr == "forward")
     {
         // Compose latent hook: if user hook is set, use it; otherwise if latent terrain is enabled, execute it!
-        Backend::LatentHook activeHook = m_latentHook;
+        TorchBackend::TorchLatentHook activeHook = m_latentHook;
         if (!activeHook && m_latentEnabled.load())
         {
             activeHook = [this](at::Tensor z) -> at::Tensor {
@@ -902,7 +902,7 @@ void NNBendingAudioProcessor::runInference()
     else if (modeStr == "decode gen")
     {
         // Autonomous neural synthesis: generate latent trajectory with Pad/Drift/Harmonics and decode
-        Backend::LatentHook activeHook = m_latentHook;
+        TorchBackend::TorchLatentHook activeHook = m_latentHook;
         if (!activeHook)
         {
             activeHook = [this](at::Tensor z) -> at::Tensor {
