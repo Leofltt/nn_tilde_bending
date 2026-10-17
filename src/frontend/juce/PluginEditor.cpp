@@ -438,7 +438,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     setResizeLimits (1060, 600, 1600, 1000);
 
     updateModelInfo();
-    startTimer (60);
+    startTimerHz (60);
 }
 
 NNBendingAudioProcessorEditor::~NNBendingAudioProcessorEditor()
@@ -1158,10 +1158,14 @@ void NNBendingAudioProcessorEditor::timerCallback()
                 weightCanvas.setTargetBentWeights ({});
             }
 
-            auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
-            if (!liveWeights.empty())
+            bool isBendingEngaged = (audioProcessor.getMomentaryEnvelope() > 0.001f);
+            if (isBendingEngaged || state.heat > 0.0001f)
             {
-                weightCanvas.updateCurrentWeights (liveWeights);
+                auto liveWeights = audioProcessor.getBackend().get_layer_weights (currentBendingLayer.toStdString());
+                if (!liveWeights.empty())
+                {
+                    weightCanvas.updateCurrentWeights (liveWeights);
+                }
             }
         }
     }

@@ -35,6 +35,7 @@ public:
     {
         m_layerShape = shape;
         calculateMatrixDimensions();
+        m_matrixImageDirty = true;
         repaint();
     }
 
@@ -44,6 +45,7 @@ public:
         m_currentWeights = current;
         calculateMatrixDimensions();
         recalculateStats();
+        m_matrixImageDirty = true;
         // Reset zoom on loading a new layer
         resetView();
         repaint();
@@ -54,6 +56,7 @@ public:
         m_currentWeights = current;
         calculateMatrixDimensions();
         recalculateStats();
+        m_matrixImageDirty = true;
         repaint();
     }
 
@@ -437,41 +440,67 @@ public:
 
         float cellW = gridW / (float)cols;
         float cellH = gridH / (float)rows;
-
-        // Draw cells
         size_t totalWeights = m_currentWeights.size();
-        for (int r = 0; r < rows; ++r)
+
+        // Render backing bitmap buffer if dirty or dimensions changed
+        ensurePaletteLut();
+        if (m_matrixImageDirty || !m_matrixImage.isValid() || m_matrixImage.getWidth() != cols || m_matrixImage.getHeight() != rows)
         {
-            for (int c = 0; c < cols; ++c)
+            if (!m_matrixImage.isValid() || m_matrixImage.getWidth() != cols || m_matrixImage.getHeight() != rows)
             {
-                size_t idx = (size_t)(r * cols + c);
-                if (idx >= totalWeights)
-                    break;
+                m_matrixImage = juce::Image(juce::Image::ARGB, cols, rows, false);
+            }
 
-                float val = m_currentWeights[idx];
-                auto cellRect = juce::Rectangle<float>(
-                    plotArea.getX() + marginLeft + c * cellW,
-                    plotArea.getY() + marginTop + r * cellH,
-                    cellW, cellH
-                );
+            juce::Image::BitmapData bmp(m_matrixImage, juce::Image::BitmapData::writeOnly);
+            float maxAbs = std::max(0.001f, m_displayRange);
 
-                g.setColour(getHeatmapColour(val));
-                g.fillRect(cellRect);
-
-                // Subtle grid separator if cells are large enough
-                if (cellW > 4.0f && cellH > 4.0f)
+            for (int r = 0; r < rows; ++r)
+            {
+                auto* linePixels = reinterpret_cast<uint32_t*>(bmp.getLinePointer(r));
+                for (int c = 0; c < cols; ++c)
                 {
-                    g.setColour(juce::Colour::fromString("#ff0e0d13").withAlpha(0.6f));
-                    g.drawRect(cellRect, 0.5f);
-                }
-
-                // If hovered, highlight cell
-                if (r == m_hoveredRow && c == m_hoveredCol)
-                {
-                    g.setColour(juce::Colours::white.withAlpha(0.9f));
-                    g.drawRect(cellRect, 1.5f);
+                    size_t idx = (size_t)(r * cols + c);
+                    float val = (idx < totalWeights) ? m_currentWeights[idx] : 0.0f;
+                    float norm = juce::jlimit(-1.0f, 1.0f, val / maxAbs);
+                    // Map norm [-1.0, 1.0] to [0, 511]
+                    int lutIdx = juce::jlimit(0, 511, (int)((norm + 1.0f) * 255.5f));
+                    linePixels[c] = m_paletteLut[(size_t)lutIdx];
                 }
             }
+            m_matrixImageDirty = false;
+        }
+
+        // Blit matrix image directly
+        auto gridRect = juce::Rectangle<float>(plotArea.getX() + marginLeft, plotArea.getY() + marginTop, gridW, gridH);
+        g.setImageResamplingQuality(juce::Graphics::ResamplingQuality::lowResamplingQuality);
+        g.drawImage(m_matrixImage, gridRect, juce::RectanglePlacement::stretchToFit);
+
+        // Grid lines only if cells are sufficiently large to avoid visual clutter and overhead
+        if (cellW >= 12.0f && cellH >= 12.0f)
+        {
+            g.setColour(juce::Colour::fromString("#ff0e0d13").withAlpha(0.45f));
+            for (int r = 1; r < rows; ++r)
+            {
+                float y = gridRect.getY() + r * cellH;
+                g.drawHorizontalLine((int)y, gridRect.getX(), gridRect.getRight());
+            }
+            for (int c = 1; c < cols; ++c)
+            {
+                float x = gridRect.getX() + c * cellW;
+                g.drawVerticalLine((int)x, gridRect.getY(), gridRect.getBottom());
+            }
+        }
+
+        // Highlight hovered cell
+        if (m_hoveredRow >= 0 && m_hoveredRow < rows && m_hoveredCol >= 0 && m_hoveredCol < cols)
+        {
+            auto cellRect = juce::Rectangle<float>(
+                gridRect.getX() + m_hoveredCol * cellW,
+                gridRect.getY() + m_hoveredRow * cellH,
+                cellW, cellH
+            );
+            g.setColour(juce::Colours::white.withAlpha(0.9f));
+            g.drawRect(cellRect, 1.5f);
         }
 
         // Bridge Wire cross-talk glowing indicator
@@ -883,6 +912,7 @@ public:
                 float delta = invertOrErase ? -0.1f * m_displayRange : 0.1f * m_displayRange;
                 m_currentWeights[idx] = juce::jlimit(-10.0f, 10.0f, m_currentWeights[idx] + delta);
                 recalculateStats();
+                m_matrixImageDirty = true;
                 repaint();
 
                 if (onWeightsModified)
@@ -931,6 +961,32 @@ private:
     int m_matrixCols { 1 };
     int m_hoveredRow { -1 };
     int m_hoveredCol { -1 };
+
+    juce::Image m_matrixImage;
+    bool m_matrixImageDirty { true };
+    std::vector<uint32_t> m_paletteLut;
+
+    void ensurePaletteLut()
+    {
+        if (!m_paletteLut.empty()) return;
+        m_paletteLut.resize(512);
+
+        // Precompute palette in 32-bit ARGB (0 to 511, where 256 is 0.0 value)
+        juce::Colour cNeg = juce::Colour::fromString("#ff6366f1"); // Electric indigo
+        juce::Colour cMid = juce::Colour::fromString("#ff16131f"); // Charcoal
+        juce::Colour cPos = juce::Colour::fromString("#ff06b6d4"); // Bright neon cyan
+
+        for (int i = 0; i < 256; ++i)
+        {
+            float t = (255 - i) / 255.0f; // 1 down to 0
+            m_paletteLut[(size_t)i] = cMid.interpolatedWith(cNeg, t).getARGB();
+        }
+        for (int i = 256; i < 512; ++i)
+        {
+            float t = (i - 256) / 255.0f; // 0 up to 1
+            m_paletteLut[(size_t)i] = cMid.interpolatedWith(cPos, t).getARGB();
+        }
+    }
 
     void calculateMatrixDimensions()
     {
