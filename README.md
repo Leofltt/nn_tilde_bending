@@ -1,5 +1,9 @@
 # nn_tilde_bending — Creative Neural Circuit-Bending Engine
 
+> [!TIP]
+> **Pre-built Installers & Nightly Binaries**:
+> Looking to quickly install the VST3, AU, or Standalone plugins without building from source? Download pre-built installers and packages from the latest completed run of the [Release Plugins GitHub Action Workflow](https://github.com/Leofltt/nn_tilde_bending/actions/workflows/release_plugins.yaml) (under the **Artifacts** section).
+
 `nn_tilde_bending` is a creative, performative neural circuit-bending fork of [IRCAM's `nn~`](https://github.com/acids-ircam/nn_tilde). It transforms deep learning audio models (such as [RAVE](https://github.com/acids-ircam/RAVE) and other 1D/2D neural audio architectures) into expressive, tactile instruments by enabling real-time weight mutation, layer-selective trace isolation, momentary short-circuiting, thermal drift, resonant cross-talk, and safety circuit breakers.
 
 ---
