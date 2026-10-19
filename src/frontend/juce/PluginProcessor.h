@@ -1,10 +1,12 @@
 #pragma once
 #include "backend.h"
+#include "BackendFactory.h"
 #include <JuceHeader.h>
 #include <mutex>
 #include <atomic>
 #include <vector>
 #include <algorithm>
+#include <memory>
 
 class CircularBuffer {
 public:
@@ -159,8 +161,8 @@ public:
 
     // Backend methods
     bool loadModel(const juce::File& file);
-    IBackend& getBackend() { return m_backend; }
-    TorchBackend& getTorchBackend() { return m_backend; }
+    IBackend& getBackend() { return *m_backend; }
+    TorchBackend* getTorchBackend() { return dynamic_cast<TorchBackend*>(m_backend.get()); }
     bool isModelLoaded() const { return m_modelLoaded.load(); }
     juce::String getModelPath() const { return m_modelPath; }
     juce::String getCurrentMethod() const { return m_currentMethod; }
@@ -210,7 +212,7 @@ public:
     void setLatentSlew(float slew) { m_latentSlew.store(juce::jlimit(0.0f, 0.999f, slew)); }
     float getLatentSlew() const { return m_latentSlew.load(); }
 
-    bool hasAutoencode() { return m_backend.has_autoencode(); }
+    bool hasAutoencode() { return m_backend ? m_backend->has_autoencode() : false; }
 
     // Thread communication
     void runInference();
@@ -406,7 +408,8 @@ public:
     {
         m_blownFuse.store(false);
         clearAllLayerBending();
-        m_backend.reset_all_layer_weights();
+        if (m_backend)
+            m_backend->reset_all_layer_weights();
     }
     void setAutoResetFuse(bool enabled) { m_autoResetFuse.store(enabled); }
     bool getAutoResetFuse() const { return m_autoResetFuse.load(); }
@@ -456,7 +459,7 @@ public:
 private:
     friend class ModelThread;
 
-    Backend m_backend;
+    std::unique_ptr<IBackend> m_backend;
     TorchBackend::TorchLatentHook m_latentHook { nullptr };
     std::atomic<bool> m_modelLoaded { false };
     juce::String m_modelPath;

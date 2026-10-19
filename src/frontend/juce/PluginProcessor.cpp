@@ -100,6 +100,8 @@ NNBendingAudioProcessor::NNBendingAudioProcessor()
         juce::ParameterID ("latent_depth", 1), "Latent Depth",
         juce::NormalisableRange<float> (0.0f, 2.0f, 0.01f), 0.5f
     ));
+
+    m_backend = BackendFactory::createDefault();
 }
 
 NNBendingAudioProcessor::~NNBendingAudioProcessor()
@@ -112,10 +114,11 @@ void NNBendingAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 {
     juce::ignoreUnused(samplesPerBlock);
     m_hostSampleRate.store(sampleRate);
-    m_backend.set_sample_rate(sampleRate);
-    if (m_modelLoaded.load())
+    if (m_backend)
+        m_backend->set_sample_rate(sampleRate);
+    if (m_modelLoaded.load() && m_backend)
     {
-        double modelSr = m_backend.get_sample_rate();
+        double modelSr = m_backend->get_sample_rate();
         m_modelSampleRate.store(modelSr);
         m_resamplingActive.store(std::abs(sampleRate - modelSr) > 1.0);
     }
@@ -407,10 +410,10 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 std::vector<juce::String> NNBendingAudioProcessor::getAvailableModes() const
 {
     std::vector<juce::String> modes;
-    if (!m_modelLoaded.load())
+    if (!m_modelLoaded.load() || !m_backend)
         return modes;
 
-    auto backendModes = const_cast<IBackend&>(static_cast<const IBackend&>(m_backend)).get_plugin_modes();
+    auto backendModes = m_backend->get_plugin_modes();
     for (const auto& m : backendModes)
         modes.push_back(juce::String(m));
     return modes;
@@ -423,13 +426,19 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
     
     std::string path = file.getFullPathName().toStdString();
     
-    int err = m_backend.load(path, getSampleRate());
+    auto newBackend = BackendFactory::createForFile(path);
+    if (!newBackend)
+        return false;
+
+    m_backend = std::move(newBackend);
+
+    int err = m_backend->load(path, getSampleRate());
     if (err == 0)
     {
         m_modelPath = file.getFullPathName();
         
         // Find default mode: prefer "forward", else "prior", else first available
-        auto modes = m_backend.get_plugin_modes();
+        auto modes = m_backend->get_plugin_modes();
         if (!modes.empty())
         {
             std::string defaultMode = modes[0];
@@ -443,7 +452,7 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
             }
             m_currentMethod = defaultMode;
             
-            auto params = m_backend.get_mode_params(defaultMode);
+            auto params = m_backend->get_mode_params(defaultMode);
             if (params.size() >= 4)
             {
                 m_model_in = params[0];
@@ -455,7 +464,7 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
         // For deep convolutional autoencoders (such as Stable Audio / Oobleck / DAC / RAVE 2048),
         // each chunk needs multiple latent frames (at least 2 frames, >= 4096 samples)
         // to satisfy convolutional receptive field and streaming padding.
-        int higher_ratio = m_backend.get_higher_ratio();
+        int higher_ratio = m_backend->get_higher_ratio();
         int reqSize = 1;
         while (reqSize < higher_ratio)
             reqSize <<= 1;
@@ -470,7 +479,7 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
         // Query model sample rate vs host sample rate
         double hostSr = getSampleRate();
         m_hostSampleRate.store(hostSr > 0.0 ? hostSr : 44100.0);
-        double modelSr = m_backend.get_sample_rate();
+        double modelSr = m_backend->get_sample_rate();
         m_modelSampleRate.store(modelSr);
         m_resamplingActive.store(std::abs(m_hostSampleRate.load() - modelSr) > 1.0);
 
@@ -484,15 +493,16 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
 
 void NNBendingAudioProcessor::setCurrentMethod(const juce::String& method)
 {
+    if (!m_backend) return;
     std::string methodStr = method.toStdString();
-    auto modes = m_backend.get_plugin_modes();
+    auto modes = m_backend->get_plugin_modes();
     bool isValidMode = (std::find(modes.begin(), modes.end(), methodStr) != modes.end())
-                    || m_backend.has_method(methodStr);
+                    || m_backend->has_method(methodStr);
 
     if (isValidMode)
     {
         m_currentMethod = method;
-        auto params = m_backend.get_mode_params(methodStr);
+        auto params = m_backend->get_mode_params(methodStr);
         if (params.size() >= 4)
         {
             m_model_in = params[0];
@@ -663,7 +673,7 @@ void NNBendingAudioProcessor::runInference()
             // Ensure baseline originalWeights is populated from model
             if (state.originalWeights.empty())
             {
-                state.originalWeights = m_backend.get_original_layer_weights(layerName);
+                state.originalWeights = m_backend->get_original_layer_weights(layerName);
             }
             if (state.originalWeights.empty())
                 continue;
@@ -688,7 +698,7 @@ void NNBendingAudioProcessor::runInference()
 
             if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != layerName)
             {
-                auto sourceWeights = m_backend.get_original_layer_weights(state.bridgeSourceLayer);
+                auto sourceWeights = m_backend->get_original_layer_weights(state.bridgeSourceLayer);
                 if (!sourceWeights.empty())
                 {
                     float alpha = juce::jlimit(0.0f, 1.0f, state.bridgeDepth);
@@ -742,7 +752,7 @@ void NNBendingAudioProcessor::runInference()
                         state.scratchFinal[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
                     }
                 }
-                m_backend.set_layer_weights(layerName, state.scratchFinal);
+                m_backend->set_layer_weights(layerName, state.scratchFinal);
                 state.isApplied = true;
                 state.lastAppliedEnv = currentEnv;
             }
@@ -760,7 +770,7 @@ void NNBendingAudioProcessor::runInference()
                     juce::FloatVectorOperations::multiply(state.scratchFinal.data(), currentEnv, (int)numWeights);
                     juce::FloatVectorOperations::addWithMultiply(state.scratchFinal.data(), state.originalWeights.data(), 1.0f - currentEnv, (int)numWeights);
 
-                    m_backend.set_layer_weights(layerName, state.scratchFinal);
+                    m_backend->set_layer_weights(layerName, state.scratchFinal);
                     state.isApplied = true;
                     state.lastAppliedEnv = currentEnv;
                 }
@@ -775,7 +785,7 @@ void NNBendingAudioProcessor::runInference()
                     juce::FloatVectorOperations::multiply(state.scratchFinal.data(), state.scale, (int)numWeights);
                     juce::FloatVectorOperations::add(state.scratchFinal.data(), state.offset, (int)numWeights);
 
-                    m_backend.set_layer_weights(layerName, state.scratchFinal);
+                    m_backend->set_layer_weights(layerName, state.scratchFinal);
                     state.isApplied = true;
                 }
             }
@@ -784,7 +794,7 @@ void NNBendingAudioProcessor::runInference()
                 // Momentary gate inactive: restore unbent baseline weights once
                 if (state.isApplied)
                 {
-                    m_backend.set_layer_weights(layerName, state.originalWeights);
+                    m_backend->set_layer_weights(layerName, state.originalWeights);
                     state.isApplied = false;
                     state.lastAppliedEnv = 0.0f;
                 }
@@ -897,7 +907,10 @@ void NNBendingAudioProcessor::runInference()
             };
         }
 
-        m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+        if (auto* torchBackend = getTorchBackend())
+            torchBackend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+        else if (m_backend)
+            m_backend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, nullptr);
     }
     else if (modeStr == "decode gen")
     {
@@ -971,15 +984,20 @@ void NNBendingAudioProcessor::runInference()
             };
         }
 
-        m_backend.perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+        if (auto* torchBackend = getTorchBackend())
+            torchBackend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+        else if (m_backend)
+            m_backend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, nullptr);
     }
     else if (modeStr == "prior" || modeStr == "generate")
     {
-        m_backend.perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
+        if (m_backend)
+            m_backend->perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
     }
     else
     {
-        m_backend.perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
+        if (m_backend)
+            m_backend->perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
     }
 
     // 5. Transfer computed output back to staging_out under a brief lock
