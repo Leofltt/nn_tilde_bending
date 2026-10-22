@@ -2,6 +2,8 @@
 torch<=2.12.1
 cached_conv>=2.5.0
 numpy
+git+https://github.com/leofltt/RAVE.git
+onnx
 scipy
 huggingface_hub
 einops
@@ -13,5 +15,3 @@ encodec>=0.1.1
 # NOTE: stable-audio-tools is only needed if training/fine-tuning full diffusion models.
 # For exporting pretrained SAME-S / Stable Audio autoencoders, only torch, einops, and huggingface_hub are required.
 # stable-audio-tools
-acids-rave
-onnx 

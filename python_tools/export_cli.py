@@ -38,6 +38,16 @@ def main():
     enc_parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
     enc_parser.add_argument("--no-bending", action="store_true", help="Don't promote parameters for ONNX bending")
 
+    # RAVE Checkpoint Exporter (TS or ONNX)
+    rave_ckpt_parser = subparsers.add_parser("rave", help="Export RAVE from checkpoint (.ckpt) to TorchScript or ONNX")
+    rave_ckpt_parser.add_argument("-i", "--checkpoint", required=True, help="Path to RAVE checkpoint (.ckpt)")
+    rave_ckpt_parser.add_argument("-o", "--output", required=True, help="Output file path (.ts or .onnx)")
+    rave_ckpt_parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
+    rave_ckpt_parser.add_argument("--no-streaming", action="store_true", help="Disable streaming mode for TorchScript export")
+    rave_ckpt_parser.add_argument("--no-bending", action="store_true", help="Skip promoting initializers for ONNX bending")
+    rave_ckpt_parser.add_argument("--buffer-size", type=int, default=2048, help="Buffer size (default: 2048)")
+    rave_ckpt_parser.add_argument("--channels", type=int, default=1, help="Input audio channels (default: 1)")
+
     # RAVE TorchScript to ONNX
     rave_parser = subparsers.add_parser("rave_to_onnx", help="Convert RAVE TorchScript (.ts) to bendable ONNX")
     rave_parser.add_argument("-i", "--input", required=True, help="Input TorchScript .ts model path")
@@ -70,6 +80,17 @@ def main():
             ratio=args.ratio,
             to_onnx=args.onnx,
             promote_for_bending=not args.no_bending,
+        )
+    elif args.command == "rave":
+        from python_tools.exporters.rave_exporter import export_rave
+        export_rave(
+            checkpoint_path=args.checkpoint,
+            output_path=args.output,
+            to_onnx=args.onnx,
+            streaming=not args.no_streaming,
+            promote_for_bending=not args.no_bending,
+            buffer_size=args.buffer_size,
+            channels=args.channels,
         )
     elif args.command == "rave_to_onnx":
         from python_tools.rave_ts_to_onnx import convert_rave_ts_to_onnx
