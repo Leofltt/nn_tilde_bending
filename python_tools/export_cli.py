@@ -32,9 +32,19 @@ def main():
     # Encodec
     enc_parser = subparsers.add_parser("encodec", help="Export Meta Encodec continuous autoencoder")
     enc_parser.add_argument("--model", type=str, default="encodec_24khz", help="Model name or checkpoint")
-    enc_parser.add_argument("--output", type=str, default="models/encodec_continuous.ts", help="Output .ts file")
+    enc_parser.add_argument("--output", type=str, default="models/encodec_continuous.ts", help="Output .ts or .onnx file")
     enc_parser.add_argument("--channels", type=int, default=1, help="Channels (1 or 2)")
     enc_parser.add_argument("--ratio", type=int, default=320, help="Downsampling ratio")
+    enc_parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
+    enc_parser.add_argument("--no-bending", action="store_true", help="Don't promote parameters for ONNX bending")
+
+    # RAVE TorchScript to ONNX
+    rave_parser = subparsers.add_parser("rave_to_onnx", help="Convert RAVE TorchScript (.ts) to bendable ONNX")
+    rave_parser.add_argument("-i", "--input", required=True, help="Input TorchScript .ts model path")
+    rave_parser.add_argument("-o", "--output", default=None, help="Output .onnx file path")
+    rave_parser.add_argument("--buffer-size", type=int, default=2048, help="Buffer size (default: 2048)")
+    rave_parser.add_argument("--channels", type=int, default=1, help="Input audio channels (default: 1)")
+    rave_parser.add_argument("--no-bending", action="store_true", help="Skip promoting initializers to graph inputs")
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -53,7 +63,27 @@ def main():
         )
     elif args.command == "encodec":
         from python_tools.exporters.encodec_exporter import export_encodec
-        export_encodec(args.model, args.output, args.channels, args.ratio)
+        export_encodec(
+            model_or_pretrained=args.model,
+            output_path=args.output,
+            channels=args.channels,
+            ratio=args.ratio,
+            to_onnx=args.onnx,
+            promote_for_bending=not args.no_bending,
+        )
+    elif args.command == "rave_to_onnx":
+        from python_tools.rave_ts_to_onnx import convert_rave_ts_to_onnx
+        out = args.output
+        if not out:
+            base, _ = os.path.splitext(args.input)
+            out = f"{base}_bendable.onnx"
+        convert_rave_ts_to_onnx(
+            ts_model_path=args.input,
+            output_onnx_path=out,
+            buffer_size=args.buffer_size,
+            channels=args.channels,
+            promote_for_bending=not args.no_bending,
+        )
 
 
 if __name__ == "__main__":
