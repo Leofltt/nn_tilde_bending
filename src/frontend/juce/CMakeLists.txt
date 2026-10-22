@@ -37,6 +37,7 @@ function(configure_nn_bending_target target_name)
     target_link_libraries(${target_name} PRIVATE
         backend
         "${TORCH_LIBRARIES}"
+        onnxruntime
         nlohmann_json::nlohmann_json
         juce::juce_audio_utils
         juce::juce_audio_processors
@@ -55,7 +56,7 @@ function(configure_nn_bending_target target_name)
     if (APPLE)
         set_target_properties(${target_name} PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/nn_bending/lib;@loader_path/;@loader_path/../Frameworks"
+            INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${ort_extracted_dir}/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/nn_bending/lib;@loader_path/;@loader_path/../Frameworks"
         )
 
         # Post-build library handling and local plugin installation
@@ -64,7 +65,7 @@ function(configure_nn_bending_target target_name)
             foreach(sub_target IN LISTS active_targets)
                 set_target_properties(${sub_target} PROPERTIES
                     BUILD_WITH_INSTALL_RPATH TRUE
-                    INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/nn_bending/lib;@loader_path/;@loader_path/../Frameworks"
+                    INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${ort_extracted_dir}/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/nn_bending/lib;@loader_path/;@loader_path/../Frameworks"
                 )
 
                 # Determine destination path for local installation

@@ -43,6 +43,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/add_torch.cmake)
 list(PREPEND CMAKE_PREFIX_PATH "${torch_dir}/libtorch")
 find_package(Torch REQUIRED PATHS ${torch_dir}/libtorch/lib)
 
+include(${CMAKE_SOURCE_DIR}/cmake/add_onnxruntime.cmake)
+
 if (APPLE)
   # Automatically strip quarantine and ad-hoc sign torch dylibs to prevent Gatekeeper popups
   if (EXISTS "${TORCH_INSTALL_PREFIX}/lib")

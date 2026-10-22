@@ -1,6 +1,7 @@
 #pragma once
 #include "IBackend.h"
 #include "backend.h"
+#include "OnnxBackend.h"
 #include <memory>
 #include <string>
 #include <algorithm>
@@ -21,9 +22,7 @@ public:
     }
 
     if (ext == ".onnx") {
-      // Phase 3 will return std::make_unique<OnnxBackend>()
-      // Fallback or placeholder until OnnxBackend is compiled:
-      return nullptr;
+      return std::make_unique<OnnxBackend>();
     }
 
     // Default to TorchScript backend (.ts or fallback)
