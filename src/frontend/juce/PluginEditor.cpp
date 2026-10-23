@@ -864,9 +864,9 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     else if (button == &loadButton)
     {
         fileChooser = std::make_unique<juce::FileChooser> (
-            "Select a PyTorch TorchScript model (.ts)...",
+            "Select a Neural Audio Model (.ts, .onnx)...",
             juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-            "*.ts"
+            "*.ts;*.onnx"
         );
         
         auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
@@ -1619,10 +1619,14 @@ void NNBendingAudioProcessorEditor::saveModelToFile()
         return;
     }
 
+    bool isOnnx = audioProcessor.getModelPath().endsWithIgnoreCase (".onnx");
+    juce::String defaultName = isOnnx ? "bended_model.onnx" : "bended_model.ts";
+    juce::String filePattern = isOnnx ? "*.onnx" : "*.ts";
+
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Save Bended TorchScript Model (.ts)...",
-        juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("bended_model.ts"),
-        "*.ts"
+        "Save Bended Model (" + filePattern + ")...",
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile (defaultName),
+        filePattern
     );
 
     auto flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting;

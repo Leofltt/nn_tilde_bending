@@ -1,8 +1,11 @@
 #include "OnnxBackend.h"
 #include <iostream>
+#include <fstream>
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <cstdint>
+#include <cstring>
 
 // Include official ONNX Runtime C++ API
 #include <onnxruntime_cxx_api.h>
@@ -93,7 +96,9 @@ void OnnxBackend::introspectGraph() {
 
     size_t numInputs = m_impl->session->GetInputCount();
     size_t numOutputs = m_impl->session->GetOutputCount();
+    size_t numOverridables = m_impl->session->GetOverridableInitializerCount();
 
+    // 1. Process primary required graph inputs (audio stream)
     for (size_t i = 0; i < numInputs; ++i) {
         auto inputName = m_impl->session->GetInputNameAllocated(i, m_impl->allocator);
         std::string name = inputName.get();
@@ -103,9 +108,6 @@ void OnnxBackend::introspectGraph() {
         auto tensorInfo = typeInfo.GetTensorTypeAndShapeInfo();
         std::vector<int64_t> shape = tensorInfo.GetShape();
 
-        // Categorize input:
-        // Audio stream inputs typically have negative/symbolic dynamic sample length, or batch dim
-        // Parameter inputs have fixed positive weights dimensions (e.g. conv kernels, bias vectors)
         bool isAudioStream = (i == 0) || (shape.size() >= 3 && (shape.back() <= 0 || shape.back() > 2048));
 
         if (isAudioStream && m_audioInputs.empty()) {
@@ -116,7 +118,7 @@ void OnnxBackend::introspectGraph() {
             m_audioInputs.push_back(stream);
             m_inChannels = (shape.size() >= 2 && shape[1] > 0) ? (int)shape[1] : 1;
         } else {
-            // Parameter input (Exposed Port)
+            // Free parameter input
             ParameterInfo param;
             param.name = name;
             param.shape = shape;
@@ -132,6 +134,84 @@ void OnnxBackend::introspectGraph() {
 
             m_parameters[name] = param;
             m_availableLayers.push_back(name);
+        }
+    }
+
+    // 2. Process Overridable Initializers (Promoted layers with model baseline defaults)
+    for (size_t i = 0; i < numOverridables; ++i) {
+        auto initName = m_impl->session->GetOverridableInitializerNameAllocated(i, m_impl->allocator);
+        std::string name = initName.get();
+
+        if (m_parameters.find(name) == m_parameters.end()) {
+            auto typeInfo = m_impl->session->GetOverridableInitializerTypeInfo(i);
+            auto tensorInfo = typeInfo.GetTensorTypeAndShapeInfo();
+            std::vector<int64_t> shape = tensorInfo.GetShape();
+
+            ParameterInfo param;
+            param.name = name;
+            param.shape = shape;
+            param.inputIndex = m_impl->inputNames.size();
+
+            size_t total = 1;
+            for (auto d : shape) {
+                total *= (d > 0 ? d : 1);
+            }
+            param.totalElements = total;
+            param.originalWeights.assign(total, 0.0f);
+            param.currentWeights.assign(total, 0.0f);
+
+            m_parameters[name] = param;
+            m_availableLayers.push_back(name);
+        }
+    }
+
+    // 3. Load initial baseline weights from high-speed binary sidecar (.bin) if available
+    std::string sidecarPath = m_path;
+    size_t extPos = sidecarPath.find_last_of('.');
+    if (extPos != std::string::npos) {
+        sidecarPath = sidecarPath.substr(0, extPos) + ".bin";
+    } else {
+        sidecarPath += ".bin";
+    }
+
+    std::ifstream binFile(sidecarPath, std::ios::binary);
+    if (binFile.is_open()) {
+        char magic[4];
+        binFile.read(magic, 4);
+        if (std::memcmp(magic, "NBND", 4) == 0) {
+            uint32_t version = 0;
+            binFile.read(reinterpret_cast<char*>(&version), sizeof(version));
+            uint32_t numTensors = 0;
+            binFile.read(reinterpret_cast<char*>(&numTensors), sizeof(numTensors));
+
+            for (uint32_t t = 0; t < numTensors; ++t) {
+                uint32_t nameLen = 0;
+                binFile.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
+                std::string tName(nameLen, '\0');
+                binFile.read(&tName[0], nameLen);
+
+                uint32_t numDims = 0;
+                binFile.read(reinterpret_cast<char*>(&numDims), sizeof(numDims));
+                std::vector<int64_t> tShape(numDims);
+                for (uint32_t d = 0; d < numDims; ++d) {
+                    binFile.read(reinterpret_cast<char*>(&tShape[d]), sizeof(int64_t));
+                }
+
+                uint64_t numElems = 0;
+                binFile.read(reinterpret_cast<char*>(&numElems), sizeof(numElems));
+
+                std::vector<float> data(numElems);
+                binFile.read(reinterpret_cast<char*>(data.data()), numElems * sizeof(float));
+
+                auto it = m_parameters.find(tName);
+                if (it != m_parameters.end()) {
+                    it->second.originalWeights = data;
+                    it->second.currentWeights = data;
+                    it->second.totalElements = numElems;
+                    it->second.shape = tShape;
+                }
+            }
+            std::cout << "[OnnxBackend] Successfully loaded initial baseline weights from " << sidecarPath << std::endl;
         }
     }
 
@@ -179,18 +259,17 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
     if (!lock.owns_lock()) return;
 
     try {
-        std::vector<Ort::Value> inputTensors;
-        inputTensors.reserve(m_impl->inputNames.size());
+        std::vector<const char*> runInputNames;
+        std::vector<Ort::Value> runInputTensors;
 
         // 1. Bind audio input tensor
         int inCh = std::min((int)in_buffer.size(), m_inChannels);
         std::vector<int64_t> inShape = { 1, inCh, n_vec };
 
-        // For planar audio in_buffer [ch][samples], wrap the first channel pointer
-        // (or contiguous interleaved block depending on model layout)
         float* audioInputPtr = in_buffer.empty() ? nullptr : in_buffer[0];
-        if (audioInputPtr) {
-            inputTensors.push_back(Ort::Value::CreateTensor<float>(
+        if (audioInputPtr && !m_audioInputs.empty()) {
+            runInputNames.push_back(m_audioInputs[0].name.c_str());
+            runInputTensors.push_back(Ort::Value::CreateTensor<float>(
                 m_impl->memoryInfo,
                 audioInputPtr,
                 inCh * n_vec,
@@ -199,13 +278,20 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
             ));
         }
 
-        // 2. Bind parameter tensors (Input-Promoted zero-copy weights)
-        for (size_t i = 1; i < m_impl->inputNames.size(); ++i) {
-            const std::string& paramName = m_impl->inputNames[i];
-            auto it = m_parameters.find(paramName);
-            if (it != m_parameters.end()) {
-                ParameterInfo& p = it->second;
-                inputTensors.push_back(Ort::Value::CreateTensor<float>(
+        // 2. Bind parameter tensors (Only override initializers that have actually been modified/bent)
+        for (auto& pair : m_parameters) {
+            ParameterInfo& p = pair.second;
+            // Check if parameter has been bent/modified away from original weights
+            bool isModified = false;
+            if (p.currentWeights.size() == p.originalWeights.size() && !p.currentWeights.empty()) {
+                if (std::memcmp(p.currentWeights.data(), p.originalWeights.data(), p.currentWeights.size() * sizeof(float)) != 0) {
+                    isModified = true;
+                }
+            }
+
+            if (isModified) {
+                runInputNames.push_back(pair.first.c_str());
+                runInputTensors.push_back(Ort::Value::CreateTensor<float>(
                     m_impl->memoryInfo,
                     p.currentWeights.data(),
                     p.totalElements,
@@ -215,12 +301,12 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
             }
         }
 
-        // 3. Run session
+        // 3. Run session with dynamic feed list
         auto outputTensors = m_impl->session->Run(
             Ort::RunOptions{nullptr},
-            m_impl->inputNamePtrs.data(),
-            inputTensors.data(),
-            inputTensors.size(),
+            runInputNames.data(),
+            runInputTensors.data(),
+            runInputTensors.size(),
             m_impl->outputNamePtrs.data(),
             m_impl->outputNamePtrs.size()
         );

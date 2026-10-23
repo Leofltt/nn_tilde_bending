@@ -130,9 +130,30 @@ def promote_initializers_to_inputs(
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     onnx.save(model, output_path)
 
+    # Export high-speed binary sidecar file (.bin) storing initial float weights
+    # This enables NetBender C++ to instantly map original layer weights for bending
+    import struct
+    base_path, _ = os.path.splitext(output_path)
+    sidecar_bin_path = f"{base_path}.bin"
+    with open(sidecar_bin_path, "wb") as f:
+        # Magic header 'NBND' (NetBender) + version 1
+        f.write(b"NBND\x01\x00\x00\x00")
+        f.write(struct.pack("<I", len(initializers)))
+        for init in initializers:
+            arr = numpy_helper.to_array(init).astype("float32")
+            name_bytes = init.name.encode("utf-8")
+            f.write(struct.pack("<I", len(name_bytes)))
+            f.write(name_bytes)
+            f.write(struct.pack("<I", len(arr.shape)))
+            for dim in arr.shape:
+                f.write(struct.pack("<q", dim))
+            f.write(struct.pack("<Q", arr.size))
+            f.write(arr.tobytes())
+
     if verbose:
         print(f"\nSuccessfully promoted {promoted_count} parameters to graph inputs.")
         print(f"Saved bendable model to: {output_path}")
+        print(f"Saved initial weights sidecar to: {sidecar_bin_path}")
 
     return promoted_count
 

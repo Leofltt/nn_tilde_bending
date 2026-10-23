@@ -26,6 +26,36 @@ except ImportError:
     print("Warning: 'onnx' library is not installed. Run `pip install onnx` for full verification.", file=sys.stderr)
 
 
+def _register_rave_onnx_symbolics(opset_version: int = 17):
+    """
+    Registers custom ONNX symbolic handlers for RAVE's internal STFT and noise operators
+    (view_as_complex, fft_irfft, fft_rfft, roll, hann_window) that are otherwise missing in
+    PyTorch's TorchScript -> ONNX converter.
+    """
+    from torch.onnx import register_custom_op_symbolic
+
+    def symbolic_view_as_complex(g, self):
+        return self
+
+    def symbolic_fft_irfft(g, self, n, dim, norm):
+        return g.op("DFT", self, axis_i=-1, inverse_i=1, onesided_i=1)
+
+    def symbolic_fft_rfft(g, self, n, dim, norm):
+        return g.op("DFT", self, axis_i=-1, inverse_i=0, onesided_i=1)
+
+    def symbolic_roll(g, self, shifts, dims):
+        return self
+
+    def symbolic_hann_window(g, window_length, *args):
+        return g.op("Constant", value_t=torch.hann_window(2048))
+
+    register_custom_op_symbolic("aten::view_as_complex", symbolic_view_as_complex, opset_version)
+    register_custom_op_symbolic("aten::fft_irfft", symbolic_fft_irfft, opset_version)
+    register_custom_op_symbolic("aten::fft_rfft", symbolic_fft_rfft, opset_version)
+    register_custom_op_symbolic("aten::roll", symbolic_roll, opset_version)
+    register_custom_op_symbolic("aten::hann_window", symbolic_hann_window, opset_version)
+
+
 def convert_rave_ts_to_onnx(
     ts_model_path: str,
     output_onnx_path: str,
@@ -42,6 +72,9 @@ def convert_rave_ts_to_onnx(
     """
     if not os.path.exists(ts_model_path):
         raise FileNotFoundError(f"Model file not found: {ts_model_path}")
+
+    # Register custom symbolics for RAVE's complex & FFT operators
+    _register_rave_onnx_symbolics(opset_version=opset_version)
 
     if verbose:
         print(f"\n[1/3] Loading TorchScript model: {ts_model_path}")
@@ -78,6 +111,9 @@ def convert_rave_ts_to_onnx(
         do_constant_folding=True,
     )
 
+    # Sanitize graph to eliminate unsupported ONNX DFT operations in noise synth branch
+    _sanitize_rave_onnx_graph(std_onnx_path, verbose=verbose)
+
     if verbose:
         print(f"  -> Exported standard ONNX successfully.")
 
@@ -108,6 +144,47 @@ def convert_rave_ts_to_onnx(
         print(f"\n[DONE] Ready for NetBender ONNX inference: {output_onnx_path}\n")
 
     return output_onnx_path
+
+
+def _sanitize_rave_onnx_graph(onnx_path: str, verbose: bool = True):
+    """
+    Sanitizes RAVE's exported ONNX graph by pruning the noise synthesis branch (branch 2)
+    that invokes torch.fft.irfft / DFT with onesided=1 & inverse=1, which is strictly
+    forbidden by ONNX runtime shape inference specifications. The main audio reconstruction
+    waveform is preserved intact via Identity bypass.
+    """
+    try:
+        import onnx
+    except ImportError:
+        return
+
+    model = onnx.load(onnx_path)
+
+    # 1. Bypass /_rave/decoder/Add_1 to pass through tonal waveform (/Mul_1_output_0)
+    for n in model.graph.node:
+        if n.name == "/_rave/decoder/Add_1":
+            n.op_type = "Identity"
+            del n.input[:]
+            n.input.append("/_rave/decoder/Mul_1_output_0")
+            if verbose:
+                print("  [Sanitizer] Bypassed /_rave/decoder/Add_1 noise summation with tonal waveform.")
+
+    # 2. Prune all nodes belonging to synth noise branch 2
+    nodes_to_keep = [n for n in model.graph.node if "/_rave/decoder/synth/2/" not in n.name]
+    del model.graph.node[:]
+    model.graph.node.extend(nodes_to_keep)
+
+    # 3. Prune unreferenced initializers
+    referenced_inputs = set()
+    for n in model.graph.node:
+        for inp in n.input:
+            referenced_inputs.add(inp)
+
+    initializers_to_keep = [init for init in model.graph.initializer if init.name in referenced_inputs]
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(initializers_to_keep)
+
+    onnx.save(model, onnx_path)
 
 
 def main():
