@@ -211,3 +211,6 @@ if (BUILD_JUCE_PLUGIN)
         add_dependencies(standalone nn_bending_standalone)
     endif()
 endif()
+
+# Unit tests
+add_subdirectory(tests)

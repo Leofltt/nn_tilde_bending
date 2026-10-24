@@ -48,6 +48,7 @@ public:
   virtual void set_sample_rate(double sampleRate) = 0;
   virtual double get_sample_rate() = 0;
   virtual void use_gpu(bool value) = 0;
+  virtual std::string get_last_error() const { return ""; }
 
   // Latent Hook Abstraction (backend agnostic: operates on raw float pointer, channels, length)
   struct LatentBuffer {

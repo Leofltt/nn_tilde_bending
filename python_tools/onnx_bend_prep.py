@@ -53,6 +53,7 @@ def promote_initializers_to_inputs(
     layer_filter: Optional[List[str]] = None,
     keep_initializers_as_defaults: bool = True,
     verbose: bool = True,
+    extra_metadata: Optional[dict] = None,
 ) -> int:
     """
     Reads an ONNX model, finds specified or all eligible float initializers,
@@ -119,6 +120,14 @@ def promote_initializers_to_inputs(
     meta_count = model.metadata_props.add()
     meta_count.key = "netbender.promoted_layers_count"
     meta_count.value = str(promoted_count)
+
+    if extra_metadata:
+        for k, v in extra_metadata.items():
+            m = model.metadata_props.add()
+            m.key = str(k)
+            m.value = str(v)
+            if verbose:
+                print(f"  [+] Metadata property: {k} = {v}")
 
     # Verify model validity
     try:

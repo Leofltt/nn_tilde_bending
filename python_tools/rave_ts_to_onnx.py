@@ -12,6 +12,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 # Add project root to sys.path
 project_root = str(Path(__file__).resolve().parents[1])
@@ -38,16 +39,52 @@ def _register_rave_onnx_symbolics(opset_version: int = 17):
         return self
 
     def symbolic_fft_irfft(g, self, n, dim, norm):
-        return g.op("DFT", self, axis_i=-1, inverse_i=1, onesided_i=1)
+        # ONNX Runtime specification forbids DFT with onesided=1 & inverse=1.
+        # We rebuild the exact two-sided conjugate-symmetric spectrum [..., N, 2]
+        # and invoke DFT with inverse=1, onesided=0 along axis=-2, which ONNX Runtime natively executes!
+        axis_freq = g.op("Constant", value_t=torch.tensor([-2], dtype=torch.int64))
+        start_1 = g.op("Constant", value_t=torch.tensor([1], dtype=torch.int64))
+        end_neg1 = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+        interior = g.op("Slice", self, start_1, end_neg1, axis_freq)
+
+        # Reverse interior along the frequency axis (-2) using negative step -1
+        rev_start = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+        rev_end = g.op("Constant", value_t=torch.tensor([-999999], dtype=torch.int64))
+        rev_step = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+        flipped = g.op("Slice", interior, rev_start, rev_end, axis_freq, rev_step)
+
+        # Conjugate: keep real part, negate imaginary part along the complex component axis (-1)
+        axis_complex = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+        real_part = g.op("Slice", flipped, g.op("Constant", value_t=torch.tensor([0], dtype=torch.int64)), g.op("Constant", value_t=torch.tensor([1], dtype=torch.int64)), axis_complex)
+        imag_part = g.op("Slice", flipped, g.op("Constant", value_t=torch.tensor([1], dtype=torch.int64)), g.op("Constant", value_t=torch.tensor([2], dtype=torch.int64)), axis_complex)
+        neg_imag = g.op("Neg", imag_part)
+        conj_flipped = g.op("Concat", real_part, neg_imag, axis_i=-1)
+
+        # Concat along frequency axis (-2) to form full two-sided Hermitian spectrum
+        full_spectrum = g.op("Concat", self, conj_flipped, axis_i=-2)
+
+        # Inverse two-sided DFT along axis -2
+        inv_dft = g.op("DFT", full_spectrum, axis_i=-2, inverse_i=1, onesided_i=0)
+
+        # Extract real part (index 0 along complex axis -1) and squeeze
+        real_out = g.op("Slice", inv_dft, g.op("Constant", value_t=torch.tensor([0], dtype=torch.int64)), g.op("Constant", value_t=torch.tensor([1], dtype=torch.int64)), axis_complex)
+        return g.op("Squeeze", real_out, axis_complex)
 
     def symbolic_fft_rfft(g, self, n, dim, norm):
-        return g.op("DFT", self, axis_i=-1, inverse_i=0, onesided_i=1)
+        # ONNX specification requires one-sided forward DFT input to have trailing dimension 1: [..., samples, 1]
+        axis_c = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.int64))
+        real_in = g.op("Unsqueeze", self, axis_c)
+        return g.op("DFT", real_in, axis_i=-2, inverse_i=0, onesided_i=1)
 
     def symbolic_roll(g, self, shifts, dims):
         return self
 
     def symbolic_hann_window(g, window_length, *args):
-        return g.op("Constant", value_t=torch.hann_window(2048))
+        val = window_length.toIValue() if hasattr(window_length, "toIValue") else None
+        if val is None and hasattr(window_length, "node") and window_length.node().hasAttribute("value"):
+            val = window_length.node().t("value").item()
+        L = int(val) if val is not None else 8
+        return g.op("Constant", value_t=torch.hann_window(L))
 
     register_custom_op_symbolic("aten::view_as_complex", symbolic_view_as_complex, opset_version)
     register_custom_op_symbolic("aten::fft_irfft", symbolic_fft_irfft, opset_version)
@@ -63,10 +100,12 @@ def convert_rave_ts_to_onnx(
     channels: int = 1,
     opset_version: int = 17,
     promote_for_bending: bool = True,
+    methods: Optional[List[str]] = None,
     verbose: bool = True,
 ) -> str:
     """
     Loads a TorchScript model and exports it to ONNX.
+    Supports exporting forward pass as well as companion methods (encode, decode, prior).
     If promote_for_bending is True, automatically invokes onnx_bend_prep to convert
     initializers into bendable graph inputs.
     """
@@ -111,39 +150,260 @@ def convert_rave_ts_to_onnx(
         do_constant_folding=True,
     )
 
-    # Sanitize graph to eliminate unsupported ONNX DFT operations in noise synth branch
-    _sanitize_rave_onnx_graph(std_onnx_path, verbose=verbose)
-
     if verbose:
-        print(f"  -> Exported standard ONNX successfully.")
+        print(f"  -> Exported standard ONNX successfully with full DDSP noise synthesizer intact.")
 
-    if not promote_for_bending:
-        return std_onnx_path
+    # Extract metadata properties if available on the model
+    sr = 48000
+    try:
+        if hasattr(model, "sr"):
+            val = model.sr() if callable(model.sr) else model.sr
+            sr = int(val)
+        elif hasattr(model, "sample_rate"):
+            val = model.sample_rate() if callable(model.sample_rate) else model.sample_rate
+            sr = int(val)
+    except Exception:
+        pass
 
-    # Step 3: Run parameter promotion
-    if verbose:
-        print(f"[3/3] Promoting weights to graph inputs for real-time bending: {output_onnx_path}...")
+    ratio = 2048
+    try:
+        if hasattr(model, "encode_params"):
+            ep = model.encode_params() if callable(model.encode_params) else model.encode_params
+            if hasattr(ep, "stride"):
+                val = ep.stride() if callable(ep.stride) else ep.stride
+                ratio = int(val)
+            elif isinstance(ep, (list, tuple)) and len(ep) >= 2:
+                ratio = int(ep[1])
+        elif hasattr(model, "ratios"):
+            ratios = model.ratios() if callable(model.ratios) else model.ratios
+            if hasattr(ratios, "__iter__"):
+                prod = 1
+                for r in ratios:
+                    prod *= int(r)
+                if prod > 0:
+                    ratio = prod
+    except Exception:
+        pass
 
-    from python_tools.onnx_bend_prep import promote_initializers_to_inputs
+    latent_dim = 4
+    try:
+        if hasattr(model, "decode_params"):
+            dp = model.decode_params() if callable(model.decode_params) else model.decode_params
+            if isinstance(dp, (list, tuple)) and len(dp) >= 1:
+                latent_dim = int(dp[0])
+    except Exception:
+        pass
 
-    promote_initializers_to_inputs(
-        input_path=std_onnx_path,
-        output_path=output_onnx_path,
-        keep_initializers_as_defaults=True,
-        verbose=verbose,
-    )
+    extra_meta = {
+        "netbender.sample_rate": str(sr),
+        "netbender.ratio": str(ratio),
+        "netbender.latent_dim": str(latent_dim),
+        "netbender.in_channels": str(in_channels),
+        "netbender.out_channels": str(in_channels),
+    }
 
-    # Clean up intermediate raw file if different
-    if std_onnx_path != output_onnx_path and os.path.exists(std_onnx_path):
-        try:
-            os.remove(std_onnx_path)
-        except OSError:
-            pass
+    if promote_for_bending:
+        # Step 3: Run parameter promotion
+        if verbose:
+            print(f"[3/3] Promoting weights to graph inputs for real-time bending: {output_onnx_path}...")
+
+        from python_tools.onnx_bend_prep import promote_initializers_to_inputs
+
+        promote_initializers_to_inputs(
+            input_path=std_onnx_path,
+            output_path=output_onnx_path,
+            keep_initializers_as_defaults=True,
+            verbose=verbose,
+            extra_metadata=extra_meta,
+        )
+
+        # Clean up intermediate raw file if different
+        if std_onnx_path != output_onnx_path and os.path.exists(std_onnx_path):
+            try:
+                os.remove(std_onnx_path)
+            except OSError:
+                pass
+
+    # Export companion subgraphs if requested
+    if methods:
+        candidate_methods = ["encode", "decode", "prior"]
+        available_ts_methods = [m for m in candidate_methods if hasattr(model, m)]
+        export_list = []
+        if "all" in methods:
+            export_list = available_ts_methods
+        else:
+            export_list = [m for m in methods if m in available_ts_methods and m != "forward"]
+
+        if export_list:
+            slice_rave_onnx_subgraphs(output_onnx_path, base, export_list, verbose=verbose)
+
+        # Direct companion export for 'prior' if present on the TorchScript model
+        if "prior" in export_list and hasattr(model, "prior"):
+            prior_onnx_path = f"{base}_prior.onnx"
+            if verbose:
+                print(f"  -> Exporting companion method 'prior' -> {prior_onnx_path}...")
+            try:
+                p_in_dim = 0
+                p_in_ratio = 1
+                try:
+                    if hasattr(model, "prior_params"):
+                        pp = model.prior_params() if callable(model.prior_params) else model.prior_params
+                        if isinstance(pp, (list, tuple)) and len(pp) >= 2:
+                            p_in_dim = int(pp[0])
+                            p_in_ratio = int(pp[1])
+                except Exception:
+                    pass
+
+                in_ch = max(1, p_in_dim)
+                dummy_x = torch.zeros(1, in_ch, 2048, dtype=torch.float32)
+
+                # Export the TorchScript prior method directly without an outer nn.Module wrapper
+                # When exporting a ScriptModule method, pass the model with args and specify forward-equivalent or invoke directly
+                if hasattr(model, "_c"):
+                    # Save currently active default method
+                    orig_forward = getattr(model, "forward", None)
+                    setattr(model, "forward", model.prior)
+                    try:
+                        torch.onnx.export(
+                            model,
+                            (dummy_x,),
+                            prior_onnx_path,
+                            input_names=["prior_in"],
+                            output_names=["latent_out"],
+                            dynamic_axes={"prior_in": {0: "batch", 2: "samples"}, "latent_out": {0: "batch", 2: "frames"}},
+                            opset_version=opset_version,
+                        )
+                        if verbose:
+                            print(f"  -> Companion 'prior' exported successfully.")
+                    finally:
+                        if orig_forward:
+                            setattr(model, "forward", orig_forward)
+                else:
+                    torch.onnx.export(
+                        model.prior,
+                        (dummy_x,),
+                        prior_onnx_path,
+                        input_names=["prior_in"],
+                        output_names=["latent_out"],
+                        dynamic_axes={"prior_in": {0: "batch", 2: "samples"}, "latent_out": {0: "batch", 2: "frames"}},
+                        opset_version=opset_version,
+                    )
+                    if verbose:
+                        print(f"  -> Companion 'prior' exported successfully.")
+            except Exception as pe:
+                if verbose:
+                    print(f"  [Note] RAVE prior export skipped: {pe}")
 
     if verbose:
         print(f"\n[DONE] Ready for NetBender ONNX inference: {output_onnx_path}\n")
 
     return output_onnx_path
+
+
+def slice_rave_onnx_subgraphs(full_onnx_path: str, base_path: str, methods: List[str], verbose: bool = True):
+    """
+    Slices the verified bendable RAVE ONNX graph into companion models for 'encode' and 'decode'
+    using the bottleneck latent tensor /_rave/Slice_1_output_0.
+    """
+    try:
+        import onnx
+        from onnx import helper, TensorProto
+        import copy
+    except ImportError:
+        return
+
+    full_model = onnx.load(full_onnx_path)
+    latent_tensor_name = "/_rave/Slice_1_output_0"
+
+    # Find actual latent tensor if name was modified or differently named
+    has_latent = any(latent_tensor_name in n.output for n in full_model.graph.node)
+    if not has_latent:
+        for n in full_model.graph.node:
+            if n.name.endswith("/Slice_1"):
+                latent_tensor_name = n.output[0]
+                has_latent = True
+                break
+
+    if not has_latent:
+        if verbose:
+            print("  [Warning] Could not find latent bottleneck tensor in ONNX graph for slicing.")
+        return
+
+    # 1. ENCODE SUBGRAPH
+    if "encode" in methods:
+        enc_path = f"{base_path}_encode.onnx"
+        if verbose:
+            print(f"  -> Slicing companion method 'encode' -> {enc_path}...")
+        enc_model = copy.deepcopy(full_model)
+        del enc_model.graph.output[:]
+        latent_out = helper.make_tensor_value_info("latent_out", TensorProto.FLOAT, ["batch", 4, "frames"])
+        enc_model.graph.output.append(latent_out)
+
+        for n in enc_model.graph.node:
+            for i, out in enumerate(n.output):
+                if out == latent_tensor_name:
+                    n.output[i] = "latent_out"
+
+        needed = {"latent_out"}
+        nodes_to_keep = []
+        for n in reversed(enc_model.graph.node):
+            if any(out in needed for out in n.output):
+                needed.update(n.input)
+                nodes_to_keep.append(n)
+        nodes_to_keep.reverse()
+
+        del enc_model.graph.node[:]
+        enc_model.graph.node.extend(nodes_to_keep)
+
+        enc_inits = [init for init in enc_model.graph.initializer if init.name in needed]
+        del enc_model.graph.initializer[:]
+        enc_model.graph.initializer.extend(enc_inits)
+
+        enc_inputs = [inp for inp in enc_model.graph.input if inp.name in needed]
+        del enc_model.graph.input[:]
+        enc_model.graph.input.extend(enc_inputs)
+
+        onnx.save(enc_model, enc_path)
+        if verbose:
+            print(f"  -> Companion 'encode' exported successfully ({len(enc_model.graph.node)} nodes).")
+
+    # 2. DECODE SUBGRAPH
+    if "decode" in methods:
+        dec_path = f"{base_path}_decode.onnx"
+        if verbose:
+            print(f"  -> Slicing companion method 'decode' -> {dec_path}...")
+        dec_model = copy.deepcopy(full_model)
+        latent_in = helper.make_tensor_value_info("latent_in", TensorProto.FLOAT, ["batch", 4, "frames"])
+        dec_model.graph.input.insert(0, latent_in)
+
+        for n in dec_model.graph.node:
+            for i, inp in enumerate(n.input):
+                if inp == latent_tensor_name:
+                    n.input[i] = "latent_in"
+
+        needed = {o.name for o in dec_model.graph.output}
+        nodes_to_keep = []
+        for n in reversed(dec_model.graph.node):
+            if any(out in needed for out in n.output):
+                needed.update(n.input)
+                nodes_to_keep.append(n)
+        nodes_to_keep.reverse()
+
+        del dec_model.graph.node[:]
+        dec_model.graph.node.extend(nodes_to_keep)
+
+        needed.add("latent_in")
+        dec_inits = [init for init in dec_model.graph.initializer if init.name in needed]
+        del dec_model.graph.initializer[:]
+        dec_model.graph.initializer.extend(dec_inits)
+
+        dec_inputs = [inp for inp in dec_model.graph.input if inp.name in needed]
+        del dec_model.graph.input[:]
+        dec_model.graph.input.extend(dec_inputs)
+
+        onnx.save(dec_model, dec_path)
+        if verbose:
+            print(f"  -> Companion 'decode' exported successfully ({len(dec_model.graph.node)} nodes).")
 
 
 def _sanitize_rave_onnx_graph(onnx_path: str, verbose: bool = True):
@@ -197,6 +457,12 @@ def main():
     parser.add_argument("--channels", type=int, default=1, help="Input audio channels (default: 1)")
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
     parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["all"],
+        help="Methods to export (e.g. all, forward, encode, decode, prior). Default: all",
+    )
+    parser.add_argument(
         "--no-bending",
         action="store_true",
         help="Export standard static ONNX without promoting weights to inputs",
@@ -216,6 +482,7 @@ def main():
         channels=args.channels,
         opset_version=args.opset,
         promote_for_bending=not args.no_bending,
+        methods=args.methods,
         verbose=True,
     )
 

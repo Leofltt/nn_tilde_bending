@@ -36,6 +36,12 @@ def main():
     enc_parser.add_argument("--channels", type=int, default=1, help="Channels (1 or 2)")
     enc_parser.add_argument("--ratio", type=int, default=320, help="Downsampling ratio")
     enc_parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
+    enc_parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["all"],
+        help="Methods to export for ONNX (e.g. all, forward, encode, decode). Default: all",
+    )
     enc_parser.add_argument("--no-bending", action="store_true", help="Don't promote parameters for ONNX bending")
 
     # RAVE Checkpoint Exporter (TS or ONNX)
@@ -54,6 +60,12 @@ def main():
     rave_parser.add_argument("-o", "--output", default=None, help="Output .onnx file path")
     rave_parser.add_argument("--buffer-size", type=int, default=2048, help="Buffer size (default: 2048)")
     rave_parser.add_argument("--channels", type=int, default=1, help="Input audio channels (default: 1)")
+    rave_parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["all"],
+        help="Methods to export for ONNX (e.g. all, forward, encode, decode, prior). Default: all",
+    )
     rave_parser.add_argument("--no-bending", action="store_true", help="Skip promoting initializers to graph inputs")
 
     args = parser.parse_args()
@@ -80,6 +92,7 @@ def main():
             ratio=args.ratio,
             to_onnx=args.onnx,
             promote_for_bending=not args.no_bending,
+            methods=args.methods,
         )
     elif args.command == "rave":
         from python_tools.exporters.rave_exporter import export_rave
@@ -93,6 +106,7 @@ def main():
             channels=args.channels,
         )
     elif args.command == "rave_to_onnx":
+        import os
         from python_tools.rave_ts_to_onnx import convert_rave_ts_to_onnx
         out = args.output
         if not out:
@@ -104,6 +118,7 @@ def main():
             buffer_size=args.buffer_size,
             channels=args.channels,
             promote_for_bending=not args.no_bending,
+            methods=args.methods,
         )
 
 

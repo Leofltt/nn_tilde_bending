@@ -520,9 +520,17 @@ int TorchBackend::load(std::string path, double sampleRate, const std::string* t
           t.data_ptr<float>(), t.data_ptr<float>() + t.numel());
     }
 
+    m_last_error.clear();
     return 0;
   } catch (const std::exception &e) {
+    m_last_error = e.what();
     throw "problem loading model " + path + ". Exception : " + e.what();
+  } catch (const std::string &s) {
+    m_last_error = s;
+    throw;
+  } catch (...) {
+    m_last_error = "Unknown error loading TorchScript model.";
+    throw;
   }
 }
 

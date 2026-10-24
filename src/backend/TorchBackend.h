@@ -34,8 +34,10 @@ protected:
   std::unordered_map<std::string, std::vector<float>> m_original_weights;
   std::unordered_map<std::string, torch::Tensor> m_parameter_cache;
   torch::Tensor prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec);
+  std::string m_last_error;
 
 public:
+  std::string get_last_error() const override { return m_last_error; }
   using DataType = float; 
   using ArgsType = std::vector<c10::IValue>;
   using KwargsType = std::unordered_map<std::string, c10::IValue>;

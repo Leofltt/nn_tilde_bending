@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional, List
 
 # Add project root to sys.path so direct script execution works
 project_root = str(Path(__file__).resolve().parents[2])
@@ -81,6 +82,7 @@ def export_encodec(
     latent_dim: int = 128,
     to_onnx: bool = False,
     promote_for_bending: bool = True,
+    methods: Optional[List[str]] = None,
 ):
     """
     Loads pretrained Encodec model from torch or checkpoint and exports to TorchScript or ONNX.
@@ -144,9 +146,61 @@ def export_encodec(
         if promote_for_bending:
             logging.info(f"Promoting Encodec parameters for NetBender real-time bending: {output_path}...")
             from python_tools.onnx_bend_prep import promote_initializers_to_inputs
-            promote_initializers_to_inputs(raw_onnx, output_path, verbose=True)
+            extra_meta = {
+                "netbender.sample_rate": str(sr),
+                "netbender.ratio": str(ratio),
+                "netbender.latent_dim": str(latent_dim),
+                "netbender.in_channels": str(channels),
+                "netbender.out_channels": str(channels),
+            }
+            promote_initializers_to_inputs(raw_onnx, output_path, verbose=True, extra_metadata=extra_meta)
             if raw_onnx != output_path and os.path.exists(raw_onnx):
                 os.remove(raw_onnx)
+
+        # Export companion subgraphs if requested
+        if methods:
+            export_list = []
+            if "all" in methods:
+                export_list = ["encode", "decode"]
+            else:
+                export_list = [m for m in methods if m in ("encode", "decode")]
+
+            for meth in export_list:
+                comp_path = f"{base}_{meth}.onnx"
+                logging.info(f"Exporting companion method '{meth}' -> {comp_path}...")
+                try:
+                    if meth == "encode":
+                        dummy_in = (dummy_audio,)
+                        in_names = ["audio_in"]
+                        out_names = ["latent_out"]
+                        dyn_axes = {
+                            "audio_in": {0: "batch", 2: "samples"},
+                            "latent_out": {0: "batch", 2: "frames"},
+                        }
+                        target_submodule = wrapper.encoder_module
+                    else: # decode
+                        frames = 2048 // ratio if 2048 >= ratio else 1
+                        dummy_in = (torch.zeros(1, latent_dim, frames),)
+                        in_names = ["latent_in"]
+                        out_names = ["audio_out"]
+                        dyn_axes = {
+                            "latent_in": {0: "batch", 2: "frames"},
+                            "audio_out": {0: "batch", 2: "samples"},
+                        }
+                        target_submodule = wrapper.decoder_module
+
+                    torch.onnx.export(
+                        target_submodule,
+                        dummy_in,
+                        comp_path,
+                        input_names=in_names,
+                        output_names=out_names,
+                        dynamic_axes=dyn_axes,
+                        opset_version=17,
+                    )
+                    logging.info(f"Companion '{meth}' exported successfully.")
+                except Exception as ce:
+                    logging.warning(f"Could not export companion '{meth}': {ce}")
 
         logging.info(f"Successfully exported Encodec ONNX: {output_path}")
         return output_path
@@ -161,6 +215,12 @@ if __name__ == "__main__":
     parser.add_argument("--channels", type=int, default=1, help="Audio channels (1 or 2)")
     parser.add_argument("--ratio", type=int, default=320, help="Downsampling ratio")
     parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["all"],
+        help="Methods to export for ONNX (e.g. all, forward, encode, decode). Default: all",
+    )
     parser.add_argument("--no-bending", action="store_true", help="Don't promote initializers to inputs in ONNX mode")
     args = parser.parse_args()
 

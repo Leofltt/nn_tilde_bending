@@ -38,6 +38,7 @@ public:
     void set_sample_rate(double sampleRate) override;
     double get_sample_rate() override;
     void use_gpu(bool value) override;
+    std::string get_last_error() const override { return m_lastError; }
 
     // Inference Execution
     void perform(std::vector<float*>& in_buffer,
@@ -113,6 +114,7 @@ private:
     double m_sampleRate { 44100.0 };
     bool m_loaded { false };
     bool m_useGpu { false };
+    std::string m_lastError;
     std::mutex m_sessionMutex;
 
     // Internal implementation pointers (PIMPL to keep ORT types out of public API)
@@ -127,6 +129,10 @@ private:
     int m_inChannels { 1 };
     int m_outChannels { 1 };
     int m_higherRatio { 1 };
+    int m_latentDim { 64 };
+
+    std::vector<std::string> m_availableMethods;
 
     void introspectGraph();
 };
+
