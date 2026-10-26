@@ -151,7 +151,13 @@ void TorchBackend::perform_forward_torch(std::vector<float *> &in_buffer,
                                    std::vector<float *> &out_buffer,
                                    int n_batches, int n_out_channels, int n_vec,
                                    TorchLatentHook latent_hook) {
-  // If model has encode and decode, always execute encode -> (latent_hook) -> decode
+  // If no latent hook is active and the model has a native forward method, invoke it directly
+  if (!latent_hook && has_method("forward")) {
+    perform(in_buffer, out_buffer, "forward", n_batches, n_out_channels, n_vec);
+    return;
+  }
+
+  // If model has encode and decode, execute encode -> (latent_hook) -> decode
   // so latent bending and autoencoding are fully supported.
   bool has_enc_dec = has_method("encode") && has_method("decode");
   if (has_enc_dec) {
@@ -163,11 +169,11 @@ void TorchBackend::perform_forward_torch(std::vector<float *> &in_buffer,
     if (encode_params.empty() || decode_params.empty()) return;
 
     auto in_dim = encode_params[0];
-    auto in_ratio = encode_params[1];
     auto out_dim = decode_params[2];
     auto out_ratio = decode_params[3];
 
-    auto cat_tensor_in = prepare_io_tensor(in_buffer, in_dim, n_batches, in_ratio, n_vec);
+    // Audio input to encoder must never be temporally decimated (in_ratio = 1)
+    auto cat_tensor_in = prepare_io_tensor(in_buffer, in_dim, n_batches, 1, n_vec);
 
     std::unique_lock<std::mutex> model_lock(m_model_mutex);
     cat_tensor_in = cat_tensor_in.to(m_device);
@@ -194,7 +200,8 @@ void TorchBackend::perform_forward_torch(std::vector<float *> &in_buffer,
     at::Tensor tensor_out;
     try {
       tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
-      tensor_out = tensor_out.repeat_interleave(out_ratio).reshape({n_batches, out_dim, -1});
+      int effective_out_ratio = (out_ratio > 1 && tensor_out.size(-1) >= n_vec) ? 1 : out_ratio;
+      tensor_out = tensor_out.repeat_interleave(effective_out_ratio).reshape({n_batches, out_dim, -1});
     } catch (const std::exception &e) {
       std::cerr << "Forward decode error: " << e.what() << '\n';
       return;
@@ -346,7 +353,8 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
   int out_dim = decode_params[2];
   int out_ratio = decode_params[3];
 
-  int latent_steps = std::max(1, n_vec / std::max(1, latent_ratio));
+  int min_steps = (latent_ratio <= 512 || latent_dim >= 64) ? 8 : 1;
+  int latent_steps = std::max(min_steps, n_vec / std::max(1, latent_ratio));
 
   at::Tensor latent_tensor;
   std::string prior_method = has_method("prior") ? "prior" : (has_method("generate") ? "generate" : "");
@@ -374,10 +382,12 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
     model_lock.unlock();
   }
 
-  // Fallback: If no prior or prior failed, synthesize base latent buffer with subtle Gaussian excitation
+  // Fallback: If no prior or prior failed, synthesize base latent buffer with calibrated Gaussian excitation
+  // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; RAVE operates at sigma ~ 0.5
   if (!latent_tensor.defined() || latent_tensor.numel() == 0) {
+    float latent_scale = (latent_dim >= 64 || latent_ratio <= 512) ? 8.5f : 0.5f;
     latent_tensor = torch::randn({n_batches, latent_dim, latent_steps},
-                                 torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * 0.1f;
+                                 torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * latent_scale;
   }
 
   // Apply latent hook (2D Latent Vector Pad, Drift, Harmonics, RFF Orbit)
@@ -395,7 +405,8 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
   at::Tensor tensor_out;
   try {
     tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
-    tensor_out = tensor_out.repeat_interleave(out_ratio).reshape({n_batches, out_dim, -1});
+    int effective_out_ratio = (out_ratio > 1 && tensor_out.size(-1) >= n_vec) ? 1 : out_ratio;
+    tensor_out = tensor_out.repeat_interleave(effective_out_ratio).reshape({n_batches, out_dim, -1});
   } catch (const std::exception &e) {
     std::cerr << "Decode Gen decode error: " << e.what() << '\n';
     return;
@@ -567,6 +578,16 @@ double TorchBackend::get_sample_rate() {
       model_lock.unlock();
     }
   }
+  try {
+    for (const auto& buf : m_model.named_buffers()) {
+      if (buf.name.find("sampling_rate") != std::string::npos || buf.name.find("sample_rate") != std::string::npos) {
+        if (buf.value.numel() == 1) {
+          int64_t sr = buf.value.item<int64_t>();
+          if (sr > 0) return (double)sr;
+        }
+      }
+    }
+  } catch (...) {}
   return m_sr > 0 ? m_sr : 44100.0;
 }
 

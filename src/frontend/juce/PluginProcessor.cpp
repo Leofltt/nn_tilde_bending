@@ -375,9 +375,22 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             {
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    float sample = outPtr[i] * wetGain + dryBlock[i] * dryGain;
+                    float rawWet = outPtr[i];
 
-                    // NaN Sentry & Safety Check (+3 dBFS is approx 1.414f; cutoff at 2.0f)
+                    // NaN & Inf Sentry Check
+                    if (std::isnan(rawWet) || std::isinf(rawWet))
+                    {
+                        m_blownFuse.store(true);
+                        outPtr[i] = 0.0f;
+                        continue;
+                    }
+
+                    // Transparent soft headroom saturation on wet model output:
+                    // Linear unity gain for |x| <= 0.6, smoothly compressing transient peaks to <= 1.3f
+                    float satWet = (std::abs(rawWet) < 0.6f) ? rawWet : (std::tanh(rawWet * 0.77f) * 1.3f);
+                    float sample = satWet * wetGain + dryBlock[i] * dryGain;
+
+                    // Hard cutoff safety check for runaway signals
                     if (std::isnan(sample) || std::isinf(sample) || std::abs(sample) > 2.0f)
                     {
                         m_blownFuse.store(true);

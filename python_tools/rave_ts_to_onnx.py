@@ -68,7 +68,15 @@ def _register_rave_onnx_symbolics(opset_version: int = 17):
 
         # Extract real part (index 0 along complex axis -1) and squeeze
         real_out = g.op("Slice", inv_dft, g.op("Constant", value_t=torch.tensor([0], dtype=torch.int64)), g.op("Constant", value_t=torch.tensor([1], dtype=torch.int64)), axis_complex)
-        return g.op("Squeeze", real_out, axis_complex)
+        squeezed = g.op("Squeeze", real_out, axis_complex)
+
+        # Scale by 1 / N to match PyTorch irfft(norm="backward") specification
+        # full_spectrum has shape [..., N, 2] along axis -2
+        shape_full = g.op("Shape", full_spectrum)
+        axis_dim = g.op("Constant", value_t=torch.tensor([-2], dtype=torch.int64))
+        n_samples = g.op("Gather", shape_full, axis_dim, axis_i=0)
+        n_float = g.op("Cast", n_samples, to_i=1)  # 1 = FLOAT
+        return g.op("Div", squeezed, n_float)
 
     def symbolic_fft_rfft(g, self, n, dim, norm):
         # ONNX specification requires one-sided forward DFT input to have trailing dimension 1: [..., samples, 1]
@@ -151,7 +159,10 @@ def convert_rave_ts_to_onnx(
     )
 
     if verbose:
-        print(f"  -> Exported standard ONNX successfully with full DDSP noise synthesizer intact.")
+        print(f"  -> Exported standard ONNX successfully.")
+
+    # Sanitize graph to bypass NaN-producing DFT noise branch in ONNX Runtime C++
+    _sanitize_rave_onnx_graph(std_onnx_path, verbose=verbose)
 
     # Extract metadata properties if available on the model
     sr = 48000
@@ -162,6 +173,11 @@ def convert_rave_ts_to_onnx(
         elif hasattr(model, "sample_rate"):
             val = model.sample_rate() if callable(model.sample_rate) else model.sample_rate
             sr = int(val)
+        elif hasattr(model, "named_buffers"):
+            for bname, buf in model.named_buffers():
+                if "sampling_rate" in bname.lower() or "sample_rate" in bname.lower():
+                    sr = int(buf.item())
+                    break
     except Exception:
         pass
 
@@ -189,8 +205,12 @@ def convert_rave_ts_to_onnx(
     try:
         if hasattr(model, "decode_params"):
             dp = model.decode_params() if callable(model.decode_params) else model.decode_params
-            if isinstance(dp, (list, tuple)) and len(dp) >= 1:
+            if hasattr(dp, "__iter__") or isinstance(dp, (list, tuple, torch.Tensor)):
                 latent_dim = int(dp[0])
+        elif hasattr(model, "encode_params"):
+            ep = model.encode_params() if callable(model.encode_params) else model.encode_params
+            if hasattr(ep, "__iter__") or isinstance(ep, (list, tuple, torch.Tensor)):
+                latent_dim = int(ep[2])
     except Exception:
         pass
 
@@ -235,7 +255,7 @@ def convert_rave_ts_to_onnx(
             export_list = [m for m in methods if m in available_ts_methods and m != "forward"]
 
         if export_list:
-            slice_rave_onnx_subgraphs(output_onnx_path, base, export_list, verbose=verbose)
+            slice_rave_onnx_subgraphs(output_onnx_path, base, export_list, latent_dim=latent_dim, verbose=verbose)
 
         # Direct companion export for 'prior' if present on the TorchScript model
         if "prior" in export_list and hasattr(model, "prior"):
@@ -257,42 +277,41 @@ def convert_rave_ts_to_onnx(
                 in_ch = max(1, p_in_dim)
                 dummy_x = torch.zeros(1, in_ch, 2048, dtype=torch.float32)
 
-                # Export the TorchScript prior method directly without an outer nn.Module wrapper
-                # When exporting a ScriptModule method, pass the model with args and specify forward-equivalent or invoke directly
-                if hasattr(model, "_c"):
-                    # Save currently active default method
-                    orig_forward = getattr(model, "forward", None)
-                    setattr(model, "forward", model.prior)
-                    try:
-                        torch.onnx.export(
-                            model,
-                            (dummy_x,),
-                            prior_onnx_path,
-                            input_names=["prior_in"],
-                            output_names=["latent_out"],
-                            dynamic_axes={"prior_in": {0: "batch", 2: "samples"}, "latent_out": {0: "batch", 2: "frames"}},
-                            opset_version=opset_version,
-                        )
-                        if verbose:
-                            print(f"  -> Companion 'prior' exported successfully.")
-                    finally:
-                        if orig_forward:
-                            setattr(model, "forward", orig_forward)
-                else:
-                    torch.onnx.export(
-                        model.prior,
-                        (dummy_x,),
-                        prior_onnx_path,
-                        input_names=["prior_in"],
-                        output_names=["latent_out"],
-                        dynamic_axes={"prior_in": {0: "batch", 2: "samples"}, "latent_out": {0: "batch", 2: "frames"}},
-                        opset_version=opset_version,
-                    )
-                    if verbose:
-                        print(f"  -> Companion 'prior' exported successfully.")
+                class PriorExportModule(torch.nn.Module):
+                    def __init__(self, prior_fn, takes_audio_input: bool = False):
+                        super().__init__()
+                        self.prior_fn = prior_fn
+                        self.takes_audio_input = takes_audio_input
+
+                    def forward(self, x):
+                        if self.takes_audio_input:
+                            return self.prior_fn(x)
+                        try:
+                            return self.prior_fn(x)
+                        except TypeError:
+                            return self.prior_fn()
+
+                wrapper = PriorExportModule(model.prior, takes_audio_input=(p_in_dim > 0))
+
+                torch.onnx.export(
+                    wrapper,
+                    (dummy_x,),
+                    prior_onnx_path,
+                    input_names=["prior_in"],
+                    output_names=["latent_out"],
+                    dynamic_axes={"prior_in": {0: "batch", 2: "samples"}, "latent_out": {0: "batch", 2: "frames"}},
+                    opset_version=opset_version,
+                )
+                if verbose:
+                    print(f"  -> Companion 'prior' exported successfully.")
             except Exception as pe:
                 if verbose:
                     print(f"  [Note] RAVE prior export skipped: {pe}")
+                if os.path.exists(prior_onnx_path):
+                    try:
+                        os.remove(prior_onnx_path)
+                    except OSError:
+                        pass
 
     if verbose:
         print(f"\n[DONE] Ready for NetBender ONNX inference: {output_onnx_path}\n")
@@ -300,7 +319,7 @@ def convert_rave_ts_to_onnx(
     return output_onnx_path
 
 
-def slice_rave_onnx_subgraphs(full_onnx_path: str, base_path: str, methods: List[str], verbose: bool = True):
+def slice_rave_onnx_subgraphs(full_onnx_path: str, base_path: str, methods: List[str], latent_dim: int = 4, verbose: bool = True):
     """
     Slices the verified bendable RAVE ONNX graph into companion models for 'encode' and 'decode'
     using the bottleneck latent tensor /_rave/Slice_1_output_0.
@@ -336,7 +355,7 @@ def slice_rave_onnx_subgraphs(full_onnx_path: str, base_path: str, methods: List
             print(f"  -> Slicing companion method 'encode' -> {enc_path}...")
         enc_model = copy.deepcopy(full_model)
         del enc_model.graph.output[:]
-        latent_out = helper.make_tensor_value_info("latent_out", TensorProto.FLOAT, ["batch", 4, "frames"])
+        latent_out = helper.make_tensor_value_info("latent_out", TensorProto.FLOAT, ["batch", latent_dim, "frames"])
         enc_model.graph.output.append(latent_out)
 
         for n in enc_model.graph.node:
@@ -373,7 +392,7 @@ def slice_rave_onnx_subgraphs(full_onnx_path: str, base_path: str, methods: List
         if verbose:
             print(f"  -> Slicing companion method 'decode' -> {dec_path}...")
         dec_model = copy.deepcopy(full_model)
-        latent_in = helper.make_tensor_value_info("latent_in", TensorProto.FLOAT, ["batch", 4, "frames"])
+        latent_in = helper.make_tensor_value_info("latent_in", TensorProto.FLOAT, ["batch", latent_dim, "frames"])
         dec_model.graph.input.insert(0, latent_in)
 
         for n in dec_model.graph.node:

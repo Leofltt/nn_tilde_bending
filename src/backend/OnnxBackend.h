@@ -131,6 +131,10 @@ private:
     int m_higherRatio { 1 };
     int m_latentDim { 64 };
 
+    // Causal receptive field history buffer for stateless ONNX models (e.g. RAVE)
+    std::vector<std::vector<float>> m_audioHistory;
+    size_t m_historySamples { 0 };
+
     std::vector<std::string> m_availableMethods;
 
     void introspectGraph();

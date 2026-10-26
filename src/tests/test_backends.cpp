@@ -7,10 +7,12 @@
 #include <cassert>
 #include <memory>
 #include <algorithm>
+#include <cmath>
+#include <iomanip>
 
 int main(int argc, char** argv) {
     std::cout << "==========================================" << std::endl;
-    std::cout << "Unit Test: Multi-Backend (TorchScript & ONNX)" << std::endl;
+    std::cout << "Unit Test: Multi-Backend Audio & Sentry Parity" << std::endl;
     std::cout << "==========================================" << std::endl;
 
     std::vector<std::string> testModels;
@@ -23,9 +25,11 @@ int main(int argc, char** argv) {
             // TorchScript reference models
             "models/darbouka.ts",
             "models/encodec_bendable.ts",
+            "models/speech.ts",
             // ONNX bendable models
             "models/darbouka_bendable.onnx",
-            "models/encodec_bendable.onnx"
+            "models/encodec_bendable.onnx",
+            "models/speech_bendable.onnx"
         };
     }
 
@@ -33,7 +37,7 @@ int main(int argc, char** argv) {
     std::string reportPath = "test_report.md";
     std::ofstream report(reportPath);
 
-    report << "# NetBender Backend Parity & Unit Test Report\n\n";
+    report << "# NetBender Audio Parity & Sentry Verification Report\n\n";
     auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     report << "**Timestamp**: " << std::ctime(&now) << "\n\n";
 
@@ -48,8 +52,26 @@ int main(int argc, char** argv) {
         size_t numLayers = 0;
         std::vector<std::string> modes;
         std::vector<std::string> bendableLayers;
+        
+        // Audio Quality & Sentry Status
         std::string fwdStatus = "N/A";
+        float fwdPeak = 0.0f;
+        float fwdRms = 0.0f;
+        bool fwdFuseTripped = false;
+        bool fwdHasNan = false;
+
         std::string decStatus = "N/A";
+        float decPeak = 0.0f;
+        float decRms = 0.0f;
+        bool decFuseTripped = false;
+        bool decHasNan = false;
+
+        std::string priorStatus = "N/A";
+        float priorPeak = 0.0f;
+        float priorRms = 0.0f;
+        bool priorFuseTripped = false;
+        bool priorHasNan = false;
+
         std::string failureDetails;
     };
 
@@ -62,7 +84,6 @@ int main(int argc, char** argv) {
         ModelTestResult res;
         res.path = path;
 
-        // Detect backend type from extension
         bool isTorch = (path.size() >= 3 && path.substr(path.size() - 3) == ".ts");
         res.backendType = isTorch ? "TorchScript" : "ONNX Runtime";
 
@@ -80,9 +101,6 @@ int main(int argc, char** argv) {
             loadRet = backend->load(path, 44100.0);
         } catch (const std::exception& e) {
             res.loadError = e.what();
-            loadRet = -1;
-        } catch (const std::string& s) {
-            res.loadError = s;
             loadRet = -1;
         } catch (...) {
             res.loadError = "Unknown exception during load()";
@@ -107,58 +125,210 @@ int main(int argc, char** argv) {
         res.numLayers = layers.size();
         res.bendableLayers = layers;
 
-        std::cout << "  Sample rate: " << res.sr << std::endl;
-        std::cout << "  Higher ratio: " << res.ratio << std::endl;
-        std::cout << "  Available layers: " << res.numLayers << std::endl;
-
         res.modes = backend->get_plugin_modes();
         if (backend->has_method("decode")) {
             auto decParams = backend->get_mode_params("decode");
             if (!decParams.empty()) res.latentDim = decParams[0];
         }
 
-        // Perform test forward inference
-        int inCh = 1;
         int outCh = 1;
         int n_vec = 2048;
-        std::vector<float> inData(inCh * n_vec, 0.0f);
-        std::vector<float> outData(outCh * n_vec, 0.0f);
-        std::vector<float*> inPtrs = { inData.data() };
-        std::vector<float*> outPtrs = { outData.data() };
 
-        std::cout << "  Testing perform_forward..." << std::endl;
+        // -------------------------------------------------------------
+        // 1. STREAMING FORWARD TEST (8 consecutive blocks of test audio)
+        // -------------------------------------------------------------
+        std::cout << "  Testing perform_forward (8-block audio stream)..." << std::endl;
         try {
-            backend->perform_forward(inPtrs, outPtrs, 1, outCh, n_vec, nullptr);
-            std::cout << "  SUCCESS: perform_forward completed." << std::endl;
-            res.fwdStatus = "✅ PASS";
+            float maxPeak = 0.0f;
+            double sumSq = 0.0;
+            size_t totalSamples = 0;
+            bool hadNan = false;
+            bool fuseTripped = false;
+
+            for (int b = 0; b < 8; ++b) {
+                std::vector<float> inData(n_vec);
+                std::vector<float> outData(n_vec, 0.0f);
+                // Synthesize 100 Hz sine wave + periodic impulse transients at amplitude 0.7
+                for (int i = 0; i < n_vec; ++i) {
+                    float t = (float)(b * n_vec + i) / 44100.0f;
+                    inData[i] = std::sin(6.2831853f * 100.0f * t) * 0.7f;
+                    if (i % 512 == 0) inData[i] += 0.2f;
+                }
+
+                std::vector<float*> inPtrs = { inData.data() };
+                std::vector<float*> outPtrs = { outData.data() };
+
+                backend->perform_forward(inPtrs, outPtrs, 1, outCh, n_vec, nullptr);
+
+                for (int i = 0; i < n_vec; ++i) {
+                    float s = outData[i];
+                    if (std::isnan(s) || std::isinf(s)) {
+                        hadNan = true;
+                    } else {
+                        float abs_s = std::abs(s);
+                        if (abs_s > maxPeak) maxPeak = abs_s;
+                        if (abs_s > 2.0f) fuseTripped = true;
+                        sumSq += (double)s * (double)s;
+                        totalSamples++;
+                    }
+                }
+            }
+
+            res.fwdPeak = maxPeak;
+            res.fwdRms = totalSamples > 0 ? (float)std::sqrt(sumSq / totalSamples) : 0.0f;
+            res.fwdHasNan = hadNan;
+            res.fwdFuseTripped = fuseTripped;
+
+            std::cout << "    Forward: Peak=" << std::fixed << std::setprecision(4) << maxPeak
+                      << " | RMS=" << res.fwdRms << " | NaN=" << (hadNan ? "YES" : "NO")
+                      << " | FuseCutoff(>2.0)=" << (fuseTripped ? "💥 BLOWN" : "OK") << std::endl;
+
+            if (hadNan) {
+                res.fwdStatus = "❌ FAIL (NaN)";
+                res.failureDetails += "Forward produced NaN/Inf\n";
+                failures++;
+            } else if (fuseTripped) {
+                res.fwdStatus = "💥 BLOWN FUSE";
+                res.failureDetails += "Forward peak (" + std::to_string(maxPeak) + ") exceeded 2.0 safety fuse\n";
+                failures++;
+            } else if (res.fwdRms < 1e-5f) {
+                res.fwdStatus = "⚠️ SILENT";
+                res.failureDetails += "Forward produced near-zero audio (RMS < 1e-5)\n";
+                failures++;
+            } else {
+                res.fwdStatus = "✅ PASS";
+            }
         } catch (const std::exception& e) {
             std::cerr << "  FAILED: perform_forward exception: " << e.what() << std::endl;
             res.fwdStatus = "❌ FAIL";
             res.failureDetails += std::string("perform_forward error: ") + e.what() + "\n";
             failures++;
-        } catch (...) {
-            std::cerr << "  FAILED: perform_forward unknown exception" << std::endl;
-            res.fwdStatus = "❌ FAIL";
-            res.failureDetails += "perform_forward error: unknown exception\n";
-            failures++;
         }
 
-        // Test decode gen if available
+        // -------------------------------------------------------------
+        // 2. DECODE GEN TEST (4 blocks)
+        // -------------------------------------------------------------
         if (backend->has_method("decode")) {
-            std::cout << "  Testing perform_decode_gen..." << std::endl;
+            std::cout << "  Testing perform_decode_gen (4 blocks)..." << std::endl;
             try {
-                backend->perform_decode_gen(outPtrs, 1, outCh, n_vec, nullptr);
-                std::cout << "  SUCCESS: perform_decode_gen completed." << std::endl;
-                res.decStatus = "✅ PASS";
+                float maxPeak = 0.0f;
+                double sumSq = 0.0;
+                size_t totalSamples = 0;
+                bool hadNan = false;
+                bool fuseTripped = false;
+
+                for (int b = 0; b < 4; ++b) {
+                    std::vector<float> outData(n_vec, 0.0f);
+                    std::vector<float*> outPtrs = { outData.data() };
+
+                    backend->perform_decode_gen(outPtrs, 1, outCh, n_vec, nullptr);
+
+                    for (int i = 0; i < n_vec; ++i) {
+                        float s = outData[i];
+                        if (std::isnan(s) || std::isinf(s)) {
+                            hadNan = true;
+                        } else {
+                            float abs_s = std::abs(s);
+                            if (abs_s > maxPeak) maxPeak = abs_s;
+                            if (abs_s > 2.0f) fuseTripped = true;
+                            sumSq += (double)s * (double)s;
+                            totalSamples++;
+                        }
+                    }
+                }
+
+                res.decPeak = maxPeak;
+                res.decRms = totalSamples > 0 ? (float)std::sqrt(sumSq / totalSamples) : 0.0f;
+                res.decHasNan = hadNan;
+                res.decFuseTripped = fuseTripped;
+
+                std::cout << "    Decode Gen: Peak=" << std::fixed << std::setprecision(4) << maxPeak
+                          << " | RMS=" << res.decRms << " | NaN=" << (hadNan ? "YES" : "NO")
+                          << " | FuseCutoff(>2.0)=" << (fuseTripped ? "💥 BLOWN" : "OK") << std::endl;
+
+                if (hadNan) {
+                    res.decStatus = "❌ FAIL (NaN)";
+                    res.failureDetails += "Decode Gen produced NaN/Inf\n";
+                    failures++;
+                } else if (fuseTripped) {
+                    res.decStatus = "💥 BLOWN FUSE";
+                    res.failureDetails += "Decode Gen peak (" + std::to_string(maxPeak) + ") exceeded 2.0 safety fuse\n";
+                    failures++;
+                } else if (res.decRms < 1e-5f) {
+                    res.decStatus = "⚠️ SILENT";
+                    res.failureDetails += "Decode Gen produced near-zero audio (RMS < 1e-5)\n";
+                    failures++;
+                } else {
+                    res.decStatus = "✅ PASS";
+                }
             } catch (const std::exception& e) {
                 std::cerr << "  FAILED: perform_decode_gen exception: " << e.what() << std::endl;
                 res.decStatus = "❌ FAIL";
                 res.failureDetails += std::string("perform_decode_gen error: ") + e.what() + "\n";
                 failures++;
-            } catch (...) {
-                std::cerr << "  FAILED: perform_decode_gen unknown exception" << std::endl;
-                res.decStatus = "❌ FAIL";
-                res.failureDetails += "perform_decode_gen error: unknown exception\n";
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 3. PRIOR DECODE TEST (4 blocks)
+        // -------------------------------------------------------------
+        if (backend->has_method("prior")) {
+            std::cout << "  Testing perform_prior_decode (4 blocks)..." << std::endl;
+            try {
+                float maxPeak = 0.0f;
+                double sumSq = 0.0;
+                size_t totalSamples = 0;
+                bool hadNan = false;
+                bool fuseTripped = false;
+
+                for (int b = 0; b < 4; ++b) {
+                    std::vector<float> outData(n_vec, 0.0f);
+                    std::vector<float*> outPtrs = { outData.data() };
+
+                    backend->perform_prior_decode(outPtrs, 1, outCh, n_vec);
+
+                    for (int i = 0; i < n_vec; ++i) {
+                        float s = outData[i];
+                        if (std::isnan(s) || std::isinf(s)) {
+                            hadNan = true;
+                        } else {
+                            float abs_s = std::abs(s);
+                            if (abs_s > maxPeak) maxPeak = abs_s;
+                            if (abs_s > 2.0f) fuseTripped = true;
+                            sumSq += (double)s * (double)s;
+                            totalSamples++;
+                        }
+                    }
+                }
+
+                res.priorPeak = maxPeak;
+                res.priorRms = totalSamples > 0 ? (float)std::sqrt(sumSq / totalSamples) : 0.0f;
+                res.priorHasNan = hadNan;
+                res.priorFuseTripped = fuseTripped;
+
+                std::cout << "    Prior: Peak=" << std::fixed << std::setprecision(4) << maxPeak
+                          << " | RMS=" << res.priorRms << " | NaN=" << (hadNan ? "YES" : "NO")
+                          << " | FuseCutoff(>2.0)=" << (fuseTripped ? "💥 BLOWN" : "OK") << std::endl;
+
+                if (hadNan) {
+                    res.priorStatus = "❌ FAIL (NaN)";
+                    res.failureDetails += "Prior produced NaN/Inf\n";
+                    failures++;
+                } else if (fuseTripped) {
+                    res.priorStatus = "💥 BLOWN FUSE";
+                    res.failureDetails += "Prior peak (" + std::to_string(maxPeak) + ") exceeded 2.0 safety fuse\n";
+                    failures++;
+                } else if (res.priorRms < 1e-5f) {
+                    res.priorStatus = "⚠️ SILENT";
+                    res.failureDetails += "Prior produced near-zero audio (RMS < 1e-5)\n";
+                    failures++;
+                } else {
+                    res.priorStatus = "✅ PASS";
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "  FAILED: perform_prior_decode exception: " << e.what() << std::endl;
+                res.priorStatus = "❌ FAIL";
+                res.failureDetails += std::string("perform_prior_decode error: ") + e.what() + "\n";
                 failures++;
             }
         }
@@ -167,26 +337,27 @@ int main(int argc, char** argv) {
     }
 
     // Write Overview Table
-    report << "| Model Path | Engine | Status | Sample Rate | Ratio | Latent Dim | Layers | Available Modes | Forward | Decode Gen |\n";
-    report << "|---|---|---|---|---|---|---|---|---|---|\n";
+    report << "| Model Path | Engine | Status | Forward Peak (RMS) | Decode Gen (RMS) | Prior (RMS) |\n";
+    report << "|---|---|---|---|---|---|\n";
 
     for (const auto& r : results) {
         if (!r.loadSuccess) {
-            report << "| `" << r.path << "` | " << r.backendType << " | ❌ FAILED | - | - | - | - | - | - | - |\n";
+            report << "| `" << r.path << "` | " << r.backendType << " | ❌ LOAD FAIL | - | - | - |\n";
         } else {
-            std::string modeStr;
-            for (size_t i = 0; i < r.modes.size(); ++i) {
-                if (i > 0) modeStr += ", ";
-                modeStr += r.modes[i];
-            }
-            report << "| `" << r.path << "` | " << r.backendType << " | ✅ PASS | " << r.sr << " Hz | " << r.ratio << " | "
-                   << r.latentDim << " | " << r.numLayers << " | `" << modeStr << "` | "
-                   << r.fwdStatus << " | " << r.decStatus << " |\n";
+            auto fmtStat = [](const std::string& st, float peak, float rms) {
+                if (st == "N/A") return std::string("N/A");
+                return st + " (Pk:" + std::to_string(peak).substr(0, 5) + ", RMS:" + std::to_string(rms).substr(0, 6) + ")";
+            };
+            report << "| `" << r.path << "` | " << r.backendType << " | "
+                   << (r.failureDetails.empty() ? "✅ PASS" : "⚠️ ISSUES") << " | "
+                   << fmtStat(r.fwdStatus, r.fwdPeak, r.fwdRms) << " | "
+                   << fmtStat(r.decStatus, r.decPeak, r.decRms) << " | "
+                   << fmtStat(r.priorStatus, r.priorPeak, r.priorRms) << " |\n";
         }
     }
 
     // Write Detailed Per-Model Breakdown
-    report << "\n## Model Inspection Details\n\n";
+    report << "\n## Detailed Model Diagnostics\n\n";
     for (const auto& r : results) {
         report << "### `" << r.path << "` (" << r.backendType << ")\n\n";
         if (!r.loadSuccess) {
@@ -196,28 +367,19 @@ int main(int argc, char** argv) {
         }
 
         report << "- **Engine**: `" << r.backendType << "`\n";
-        report << "- **Load Status**: ✅ Successfully initialized backend session\n";
-        report << "- **Sample Rate**: " << r.sr << " Hz\n";
-        report << "- **Higher Ratio**: " << r.ratio << "\n";
-        report << "- **Latent Dimension**: " << r.latentDim << "\n";
-        report << "- **Bendable Parameter Count**: " << r.numLayers << " layers\n";
-        report << "- **Forward Inference (2048 samples)**: " << r.fwdStatus << "\n";
-        report << "- **Decode Generation**: " << r.decStatus << "\n";
+        report << "- **Sample Rate**: " << r.sr << " Hz | **Ratio**: " << r.ratio << " | **Latent Dim**: " << r.latentDim << "\n";
+        report << "- **Forward Stream (8 blk)**: " << r.fwdStatus
+               << " (Max Peak: " << r.fwdPeak << ", RMS: " << r.fwdRms << ")\n";
+        report << "- **Decode Gen (4 blk)**: " << r.decStatus
+               << " (Max Peak: " << r.decPeak << ", RMS: " << r.decRms << ")\n";
+        if (r.priorStatus != "N/A") {
+            report << "- **Prior Mode (4 blk)**: " << r.priorStatus
+                   << " (Max Peak: " << r.priorPeak << ", RMS: " << r.priorRms << ")\n";
+        }
 
         if (!r.failureDetails.empty()) {
             report << "\n> [!WARNING]\n";
-            report << "> **Execution Diagnostics**:\n> ```\n> " << r.failureDetails << "> ```\n";
-        }
-
-        if (!r.bendableLayers.empty()) {
-            report << "\n<details>\n<summary><b>Bendable Layers (" << r.numLayers << ")</b></summary>\n\n";
-            for (size_t i = 0; i < std::min<size_t>(r.bendableLayers.size(), 30); ++i) {
-                report << "- `" << r.bendableLayers[i] << "`\n";
-            }
-            if (r.bendableLayers.size() > 30) {
-                report << "- *... and " << (r.bendableLayers.size() - 30) << " more layers*\n";
-            }
-            report << "\n</details>\n\n";
+            report << "> **Detected Audio / Sentry Issues**:\n> ```\n> " << r.failureDetails << "> ```\n";
         }
     }
 
@@ -225,13 +387,13 @@ int main(int argc, char** argv) {
     report << "\n## Summary\n\n";
     if (failures == 0) {
         std::cout << "ALL BACKEND TESTS PASSED!" << std::endl;
-        report << "**Result**: 🎉 **ALL TESTS PASSED (TorchScript & ONNX Parity Verified)**\n";
+        report << "**Result**: 🎉 **ALL TESTS PASSED WITH REAL AUDIO VALIDATION**\n";
         report.close();
         std::cout << "Saved test report to: " << reportPath << std::endl;
         return 0;
     } else {
-        std::cerr << failures << " TEST(S) FAILED!" << std::endl;
-        report << "**Result**: ⚠️ **" << failures << " TEST(S) FAILED**\n";
+        std::cerr << failures << " TEST(S) FAILED OR TRIPPED SENTRY!" << std::endl;
+        report << "**Result**: ⚠️ **" << failures << " TEST(S) FAILED OR TRIPPED SENTRY**\n";
         report.close();
         std::cout << "Saved test report to: " << reportPath << std::endl;
         return 1;
