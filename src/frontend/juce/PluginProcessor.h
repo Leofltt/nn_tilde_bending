@@ -199,7 +199,7 @@ public:
     bool isResamplingActive() const { return m_resamplingActive.load(); }
 
     // Latent bending hook (applied during autoencode mode)
-    void setLatentHook(TorchBackend::TorchLatentHook hook) { m_latentHook = hook; }
+    void setLatentHook(IBackend::LatentHook hook) { m_latentHook = hook; }
 
     enum class LatentMode
     {
@@ -483,7 +483,7 @@ private:
     friend class ModelThread;
 
     std::unique_ptr<IBackend> m_backend;
-    TorchBackend::TorchLatentHook m_latentHook { nullptr };
+    IBackend::LatentHook m_latentHook { nullptr };
     std::atomic<bool> m_modelLoaded { false };
     juce::String m_modelPath;
     juce::String m_currentMethod;

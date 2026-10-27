@@ -445,7 +445,7 @@ std::vector<juce::String> NNBendingAudioProcessor::getAvailableModes() const
 
     auto backendModes = m_backend->get_plugin_modes();
     for (const auto& m : backendModes)
-        modes.push_back(juce::String(m));
+        modes.emplace_back(juce::String(m));
     return modes;
 }
 
@@ -635,6 +635,11 @@ void NNBendingAudioProcessor::initBuffers()
     
     m_output_ready.store(false);
     
+    if (m_backend)
+    {
+        m_backend->clear_decode_gen_fifo();
+    }
+    
     if (m_modelLoaded.load())
     {
         m_model_thread.startThread(juce::Thread::Priority::high);
@@ -646,7 +651,6 @@ void NNBendingAudioProcessor::runInference()
     if (!m_modelLoaded.load() || m_model_out <= 0)
         return;
 
-    // 1. Sync active DAW parameter values into the active layer state
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         std::string activeLayer = m_activeLayerName.toStdString();
@@ -703,13 +707,10 @@ void NNBendingAudioProcessor::runInference()
 
         m_momentaryEnvelope.store(currentEnv);
 
-        // 2. For each configured layer, apply Scale, Offset, and Stochastic Drift (Noise / OU / Random Walk)
         for (auto& pair : m_layerStates)
         {
             const std::string& layerName = pair.first;
             LayerBendingState& state = pair.second;
-
-            // Ensure baseline originalWeights is populated from model
             if (state.originalWeights.empty())
             {
                 state.originalWeights = m_backend->get_original_layer_weights(layerName);
@@ -719,7 +720,6 @@ void NNBendingAudioProcessor::runInference()
 
             size_t numWeights = state.originalWeights.size();
 
-            // Ensure drawnWeights is initialized to original baseline if not drawn yet
             if (state.drawnWeights.size() != numWeights)
             {
                 state.drawnWeights = state.originalWeights;
@@ -852,29 +852,27 @@ void NNBendingAudioProcessor::runInference()
             }
         }
     }
-
-    // 4. Run PyTorch model inference completely WITHOUT holding m_staging_mutex!
-    // This ensures processBlock is never blocked or starved during heavy model execution.
     std::vector<float*> in_ptrs;
     std::vector<float*> out_ptrs;
     
     int numIn = std::min(m_model_in, (int)m_worker_in.size());
     for (int c = 0; c < numIn; ++c)
-        in_ptrs.push_back(m_worker_in[c].data());
+        in_ptrs.emplace_back(m_worker_in[c].data());
         
     int numOut = std::min(m_model_out, (int)m_worker_out.size());
     for (int c = 0; c < numOut; ++c)
-        out_ptrs.push_back(m_worker_out[c].data());
+        out_ptrs.emplace_back(m_worker_out[c].data());
         
     std::string modeStr = m_currentMethod.toStdString();
     if (modeStr == "forward")
     {
         // Compose latent hook: if user hook is set, use it; otherwise if latent terrain is enabled, execute it!
-        TorchBackend::TorchLatentHook activeHook = m_latentHook;
+        IBackend::LatentHook activeHook = m_latentHook;
         if (!activeHook && m_latentEnabled.load())
         {
-            activeHook = [this](at::Tensor z) -> at::Tensor {
-                if (!z.defined()) return z;
+            activeHook = [this](IBackend::LatentBuffer& buf) {
+                if (buf.data == nullptr || buf.channels <= 0 || buf.length <= 0) return;
+                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
 
                 // Sync automatable parameters
                 float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
@@ -882,8 +880,7 @@ void NNBendingAudioProcessor::runInference()
                 float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
                 auto mode = m_latentMode.load();
 
-                // Latent dimension (channel dimension is typically dimension 1)
-                int64_t latentDim = (z.dim() >= 2) ? z.size(1) : z.size(0);
+                int64_t latentDim = buf.channels;
 
                 if (mode == LatentMode::FourierOrbit)
                 {
@@ -944,43 +941,32 @@ void NNBendingAudioProcessor::runInference()
                     z = torch::round(z / qStep) * qStep;
                 }
 
-                return z;
-            };
-        }
-
-        IBackend::LatentHook backendLatentHook = nullptr;
-        if (activeHook)
-        {
-            backendLatentHook = [&activeHook](IBackend::LatentBuffer& buf) {
-                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
-                auto res = activeHook(z);
-                if (res.data_ptr<float>() != buf.data)
+                if (z.data_ptr<float>() != buf.data)
                 {
-                    std::memcpy(buf.data, res.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
+                    std::memcpy(buf.data, z.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
                 }
             };
         }
 
-        if (auto* torchBackend = getTorchBackend())
-            torchBackend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
-        else if (m_backend)
-            m_backend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, backendLatentHook);
+        if (m_backend)
+            m_backend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
     }
     else if (modeStr == "decode gen")
     {
         // Autonomous neural synthesis: generate latent trajectory with Pad/Drift/Harmonics and decode
-        TorchBackend::TorchLatentHook activeHook = m_latentHook;
+        IBackend::LatentHook activeHook = m_latentHook;
         if (!activeHook)
         {
-            activeHook = [this](at::Tensor z) -> at::Tensor {
-                if (!z.defined()) return z;
+            activeHook = [this](IBackend::LatentBuffer& buf) {
+                if (buf.data == nullptr || buf.channels <= 0 || buf.length <= 0) return;
+                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
 
                 float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
                 float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
                 float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
                 auto mode = m_latentMode.load();
 
-                int64_t latentDim = (z.dim() >= 2) ? z.size(1) : z.size(0);
+                int64_t latentDim = buf.channels;
 
                 if (mode == LatentMode::FourierOrbit)
                 {
@@ -1034,27 +1020,15 @@ void NNBendingAudioProcessor::runInference()
                     z = torch::round(z / qStep) * qStep;
                 }
 
-                return z;
-            };
-        }
-
-        IBackend::LatentHook backendLatentHook = nullptr;
-        if (activeHook)
-        {
-            backendLatentHook = [&activeHook](IBackend::LatentBuffer& buf) {
-                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
-                auto res = activeHook(z);
-                if (res.data_ptr<float>() != buf.data)
+                if (z.data_ptr<float>() != buf.data)
                 {
-                    std::memcpy(buf.data, res.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
+                    std::memcpy(buf.data, z.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
                 }
             };
         }
 
-        if (auto* torchBackend = getTorchBackend())
-            torchBackend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
-        else if (m_backend)
-            m_backend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, backendLatentHook);
+        if (m_backend)
+            m_backend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
     }
     else if (modeStr == "prior" || modeStr == "generate")
     {
@@ -1096,7 +1070,6 @@ void NNBendingAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xmlState.setAttribute ("envRelease", (double)m_envRelease.load());
     xmlState.setAttribute ("transientThresh", (double)m_transientThreshold.load());
 
-    // Save per-layer bending states
     std::lock_guard<std::mutex> lock(m_layerStateMutex);
     auto* layersElement = xmlState.createNewChildElement ("Layers");
     for (const auto& pair : m_layerStates)

@@ -28,126 +28,91 @@ protected:
   std::vector<std::string> m_buffer_attributes;
   c10::DeviceType m_device;
   bool m_use_gpu;
-  std::vector<std::string> retrieve_buffer_attributes();
+  auto retrieve_buffer_attributes() -> std::vector<std::string>;
   std::unique_ptr<std::thread> set_attribute_thread; 
   double m_sr; 
   std::unordered_map<std::string, std::vector<float>> m_original_weights;
   std::unordered_map<std::string, torch::Tensor> m_parameter_cache;
-  torch::Tensor prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec);
+  auto prepare_io_tensor(std::vector<float*>& in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec) -> torch::Tensor;
   std::string m_last_error;
 
-  // Decode Gen output FIFO buffer per channel for gapless streaming
-  std::vector<std::vector<float>> m_decode_gen_fifo;
-  size_t m_decode_gen_fifo_read_idx = 0;
-  std::vector<float> m_decode_gen_latent_state;
-  void clear_decode_gen_fifo() {
-    for (auto &ch : m_decode_gen_fifo) ch.clear();
-    m_decode_gen_fifo.clear();
-    m_decode_gen_fifo_read_idx = 0;
-    m_decode_gen_latent_state.clear();
-  }
-
 public:
-  std::string get_last_error() const override { return m_last_error; }
+  auto get_last_error() const -> std::string override { return m_last_error; }
   using DataType = float; 
   using ArgsType = std::vector<c10::IValue>;
   using KwargsType = std::unordered_map<std::string, c10::IValue>;
   using BufferMap = std::map<std::string, StaticBuffer<float>>;
-  using TorchLatentHook = std::function<at::Tensor(at::Tensor)>;
-  // For backward compatibility with existing code calling Backend::LatentHook:
-  using LatentHook = TorchLatentHook;
+  using LatentHook = IBackend::LatentHook;
 
   TorchBackend();
   virtual ~TorchBackend() override = default;
 
-  void perform(std::vector<float *> &in_buffer,
-               std::vector<float *> &out_buffer, 
-               std::string method, 
-               int n_batches, int n_out_channels, int n_vec) override;
+  auto perform(std::vector<float*>& in_buffer,
+               std::vector<float*>& out_buffer,
+               std::string method,
+               int n_batches, int n_out_channels, int n_vec) -> void override;
 
-  // Generic IBackend forward hook (converts LatentBuffer to/from tensor under the hood)
-  void perform_forward(std::vector<float *> &in_buffer,
-                       std::vector<float *> &out_buffer,
+  auto perform_forward(std::vector<float*>& in_buffer,
+                       std::vector<float*>& out_buffer,
                        int n_batches, int n_out_channels, int n_vec,
-                       IBackend::LatentHook latent_hook = nullptr) override;
+                       IBackend::LatentHook latent_hook = nullptr) -> void override;
 
-  // TorchLatentHook overload for perform_forward
-  void perform_forward(std::vector<float *> &in_buffer,
-                       std::vector<float *> &out_buffer,
-                       int n_batches, int n_out_channels, int n_vec,
-                       TorchLatentHook latent_hook);
+  auto perform_prior_decode(std::vector<float*>& out_buffer,
+                            int n_batches, int n_out_channels, int n_vec) -> void override;
 
-  void perform_forward_torch(std::vector<float *> &in_buffer,
-                             std::vector<float *> &out_buffer,
-                             int n_batches, int n_out_channels, int n_vec,
-                             TorchLatentHook latent_hook = nullptr);
-
-  void perform_prior_decode(std::vector<float *> &out_buffer,
-                            int n_batches, int n_out_channels, int n_vec) override;
-
-  // Generic IBackend decode gen hook
-  void perform_decode_gen(std::vector<float *> &out_buffer,
+  auto perform_decode_gen(std::vector<float*>& out_buffer,
                           int n_batches, int n_out_channels, int n_vec,
-                          IBackend::LatentHook latent_hook = nullptr) override;
+                          IBackend::LatentHook latent_hook = nullptr) -> void override;
 
-  // TorchLatentHook overload for perform_decode_gen
-  void perform_decode_gen(std::vector<float *> &out_buffer,
-                          int n_batches, int n_out_channels, int n_vec,
-                          TorchLatentHook latent_hook);
-
-  void perform_decode_gen_torch(std::vector<float *> &out_buffer,
-                                int n_batches, int n_out_channels, int n_vec,
-                                TorchLatentHook latent_hook = nullptr);
-
-  bool has_method(std::string method_name) override;
-  bool has_prior_decode() override;
-  bool has_autoencode() override;
-  std::vector<std::string> get_plugin_modes() override;
-  std::vector<int> get_mode_params(std::string mode) override;
-  bool has_settable_attribute(std::string attribute) override;
-  std::vector<std::string> get_available_methods(LockedModel *model = nullptr) override;
-  std::vector<std::string> get_available_attributes() override;
-  std::vector<std::string> get_settable_attributes() override;
-  std::vector<c10::IValue> get_attribute(std::string attribute_name);
-  std::string get_attribute_as_string(std::string attribute_name) override;
-  void set_attribute(std::string attribute_name,
-                     std::vector<std::string> attribute_args, 
-                     const BufferMap &buffer_array) override;
+  auto has_method(std::string method_name) -> bool override;
+  auto has_prior_decode() -> bool override;
+  auto has_autoencode() -> bool override;
+  auto get_plugin_modes() -> std::vector<std::string> override;
+  auto get_mode_params(std::string mode) -> std::vector<int> override;
+  auto has_settable_attribute(std::string attribute) -> bool override;
+  auto get_available_methods(LockedModel* model = nullptr) -> std::vector<std::string> override;
+  auto get_available_attributes() -> std::vector<std::string> override;
+  auto get_settable_attributes() -> std::vector<std::string> override;
+  auto get_attribute(std::string attribute_name) -> std::vector<c10::IValue>;
+  auto get_attribute_as_string(std::string attribute_name) -> std::string override;
+  auto set_attribute(std::string attribute_name,
+                     std::vector<std::string> attribute_args,
+                     const BufferMap& buffer_array) -> void override;
 
   // buffer attributes
-  bool is_buffer_element_of_attribute(std::string attribute_name, int attribute_elt_idx) override;
-  bool is_tensor_element_of_attribute(std::string attribute_name, int attribute_elt_idx) override;
-  std::string get_buffer_name(std::string attribute_name, int attribute_elt_idx) override;
-  int update_buffer(std::string buffer_id, StaticBuffer<float> &buffer) override;
-  int reset_buffer(std::string) override;
+  auto is_buffer_element_of_attribute(std::string attribute_name, int attribute_elt_idx) -> bool override;
+  auto is_tensor_element_of_attribute(std::string attribute_name, int attribute_elt_idx) -> bool override;
+  auto get_buffer_name(std::string attribute_name, int attribute_elt_idx) -> std::string override;
+  auto update_buffer(std::string buffer_id, StaticBuffer<float>& buffer) -> int override;
+  auto reset_buffer(std::string buffer_id) -> int override;
 
-  std::vector<int> get_method_params(std::string method) override;
-  int get_higher_ratio() override;
-  int load(std::string path, double sampleRate, const std::string* target_method = nullptr) override;
-  int reload() override;
-  void set_sample_rate(double sampleRate) override;
-  double get_sample_rate() override;
-  bool is_loaded() override;
-  torch::jit::script::Module get_model() { return m_model; }
-  void use_gpu(bool value) override;
-  std::vector<std::string> get_buffer_attributes() override;
+  auto get_method_params(std::string method) -> std::vector<int> override;
+  auto get_higher_ratio() -> int override;
+  auto load(std::string path, double sample_rate, const std::string* target_method = nullptr) -> int override;
+  auto reload() -> int override;
+  auto set_sample_rate(double sample_rate) -> void override;
+  auto get_sample_rate() -> double override;
+  auto is_loaded() -> bool override;
+  auto get_model() -> torch::jit::script::Module { return m_model; }
+  auto use_gpu(bool value) -> void override;
+  auto get_buffer_attributes() -> std::vector<std::string> override;
   
-  ArgsType empty_args() { return ArgsType(); }
-  KwargsType empty_kwargs() { return KwargsType(); }
-  std::pair<ArgsType, KwargsType> empty_inputs() {
+  auto empty_args() -> ArgsType { return ArgsType(); }
+  auto empty_kwargs() -> KwargsType { return KwargsType(); }
+  auto empty_inputs() -> std::pair<ArgsType, KwargsType> {
     return std::make_pair(empty_args(), empty_kwargs());
   } 
 
-  std::vector<std::string> get_available_layers() override;
-  std::vector<float> get_layer_weights(std::string layer_name) override;
-  std::vector<float> get_original_layer_weights(std::string layer_name) override;
-  std::vector<int64_t> get_layer_shape(std::string layer_name) override;
-  void set_layer_weights(std::string layer_name, const std::vector<float>& weights) override;
-  void reset_layer_weights(std::string layer_name) override;
-  void reset_all_layer_weights() override;
-  int save_model(std::string path) override;
+  auto get_available_layers() -> std::vector<std::string> override;
+  auto get_layer_weights(std::string layer_name) -> std::vector<float> override;
+  auto get_original_layer_weights(std::string layer_name) -> std::vector<float> override;
+  auto get_layer_shape(std::string layer_name) -> std::vector<int64_t> override;
+  auto set_layer_weights(std::string layer_name, const std::vector<float>& weights) -> void override;
+  auto reset_layer_weights(std::string layer_name) -> void override;
+  auto reset_all_layer_weights() -> void override;
+  auto save_model(std::string path) -> int override;
 
-  ModelInfo get_model_info() override;
+  auto get_model_info() -> ModelInfo override;
   const std::unordered_map<int, std::string> id_to_string_hash = {
     {0, "bool"}, 
     {1, "int"}, 

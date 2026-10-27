@@ -13,7 +13,7 @@
  */
 class BackendFactory {
 public:
-  static std::unique_ptr<IBackend> createForFile(const std::string& path) {
+  static auto create_for_file(const std::string& path) -> std::unique_ptr<IBackend> {
     std::string ext = "";
     size_t dot_pos = path.find_last_of('.');
     if (dot_pos != std::string::npos) {
@@ -29,7 +29,16 @@ public:
     return std::make_unique<TorchBackend>();
   }
 
-  static std::unique_ptr<IBackend> createDefault() {
+  static auto create_default() -> std::unique_ptr<IBackend> {
     return std::make_unique<TorchBackend>();
+  }
+
+  // Backward compatibility aliases
+  static auto createForFile(const std::string& path) -> std::unique_ptr<IBackend> {
+    return create_for_file(path);
+  }
+
+  static auto createDefault() -> std::unique_ptr<IBackend> {
+    return create_default();
   }
 };

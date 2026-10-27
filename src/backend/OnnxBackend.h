@@ -32,127 +32,114 @@ public:
     ~OnnxBackend() override;
 
     // Lifecycle
-    int load(std::string path, double sampleRate, const std::string* target_method = nullptr) override;
-    int reload() override;
-    bool is_loaded() override;
-    void set_sample_rate(double sampleRate) override;
-    double get_sample_rate() override;
-    void use_gpu(bool value) override;
-    std::string get_last_error() const override { return m_lastError; }
+    auto load(std::string path, double sample_rate, const std::string* target_method = nullptr) -> int override;
+    auto reload() -> int override;
+    auto is_loaded() -> bool override;
+    auto set_sample_rate(double sample_rate) -> void override;
+    auto get_sample_rate() -> double override;
+    auto use_gpu(bool value) -> void override;
+    auto get_last_error() const -> std::string override { return m_last_error; }
 
     // Inference Execution
-    void perform(std::vector<float*>& in_buffer,
+    auto perform(std::vector<float*>& in_buffer,
                  std::vector<float*>& out_buffer,
                  std::string method,
-                 int n_batches, int n_out_channels, int n_vec) override;
+                 int n_batches, int n_out_channels, int n_vec) -> void override;
 
-    void perform_forward(std::vector<float*>& in_buffer,
+    auto perform_forward(std::vector<float*>& in_buffer,
                          std::vector<float*>& out_buffer,
                          int n_batches, int n_out_channels, int n_vec,
-                         LatentHook latent_hook = nullptr) override;
+                         LatentHook latent_hook = nullptr) -> void override;
 
-    void perform_prior_decode(std::vector<float*>& out_buffer,
-                              int n_batches, int n_out_channels, int n_vec) override;
+    auto perform_prior_decode(std::vector<float*>& out_buffer,
+                              int n_batches, int n_out_channels, int n_vec) -> void override;
 
-    void perform_decode_gen(std::vector<float*>& out_buffer,
+    auto perform_decode_gen(std::vector<float*>& out_buffer,
                             int n_batches, int n_out_channels, int n_vec,
-                            LatentHook latent_hook = nullptr) override;
+                            LatentHook latent_hook = nullptr) -> void override;
 
     // Mode & Method Introspection
-    bool has_method(std::string method_name) override;
-    bool has_prior_decode() override;
-    bool has_autoencode() override;
-    std::vector<std::string> get_plugin_modes() override;
-    std::vector<int> get_mode_params(std::string mode) override;
-    std::vector<std::string> get_available_methods(LockedModel* model = nullptr) override;
-    std::vector<int> get_method_params(std::string method) override;
-    int get_higher_ratio() override;
+    auto has_method(std::string method_name) -> bool override;
+    auto has_prior_decode() -> bool override;
+    auto has_autoencode() -> bool override;
+    auto get_plugin_modes() -> std::vector<std::string> override;
+    auto get_mode_params(std::string mode) -> std::vector<int> override;
+    auto get_available_methods(LockedModel* model = nullptr) -> std::vector<std::string> override;
+    auto get_method_params(std::string method) -> std::vector<int> override;
+    auto get_higher_ratio() -> int override;
 
     // Parameter Introspection & Bending
-    std::vector<std::string> get_available_layers() override;
-    std::vector<float> get_layer_weights(std::string layer_name) override;
-    std::vector<float> get_original_layer_weights(std::string layer_name) override;
-    std::vector<int64_t> get_layer_shape(std::string layer_name) override;
-    void set_layer_weights(std::string layer_name, const std::vector<float>& weights) override;
-    void reset_layer_weights(std::string layer_name) override;
-    void reset_all_layer_weights() override;
-    int save_model(std::string path) override;
+    auto get_available_layers() -> std::vector<std::string> override;
+    auto get_layer_weights(std::string layer_name) -> std::vector<float> override;
+    auto get_original_layer_weights(std::string layer_name) -> std::vector<float> override;
+    auto get_layer_shape(std::string layer_name) -> std::vector<int64_t> override;
+    auto set_layer_weights(std::string layer_name, const std::vector<float>& weights) -> void override;
+    auto reset_layer_weights(std::string layer_name) -> void override;
+    auto reset_all_layer_weights() -> void override;
+    auto save_model(std::string path) -> int override;
 
     // Max/MSP & PureData Attributes
-    std::vector<std::string> get_available_attributes() override;
-    std::vector<std::string> get_settable_attributes() override;
-    bool has_settable_attribute(std::string attribute) override;
-    std::string get_attribute_as_string(std::string attribute_name) override;
-    void set_attribute(std::string attribute_name,
+    auto get_available_attributes() -> std::vector<std::string> override;
+    auto get_settable_attributes() -> std::vector<std::string> override;
+    auto has_settable_attribute(std::string attribute) -> bool override;
+    auto get_attribute_as_string(std::string attribute_name) -> std::string override;
+    auto set_attribute(std::string attribute_name,
                        std::vector<std::string> attribute_args,
-                       const BufferMap& buffer_array) override;
-    std::vector<std::string> get_buffer_attributes() override;
-    bool is_buffer_element_of_attribute(std::string attribute_name, int attribute_elt_idx) override;
-    bool is_tensor_element_of_attribute(std::string attribute_name, int attribute_elt_idx) override;
-    std::string get_buffer_name(std::string attribute_name, int attribute_elt_idx) override;
-    int update_buffer(std::string buffer_id, StaticBuffer<float>& buffer) override;
-    int reset_buffer(std::string buffer_id) override;
-    ModelInfo get_model_info() override;
+                       const BufferMap& buffer_array) -> void override;
+    auto get_buffer_attributes() -> std::vector<std::string> override;
+    auto is_buffer_element_of_attribute(std::string attribute_name, int attribute_elt_idx) -> bool override;
+    auto is_tensor_element_of_attribute(std::string attribute_name, int attribute_elt_idx) -> bool override;
+    auto get_buffer_name(std::string attribute_name, int attribute_elt_idx) -> std::string override;
+    auto update_buffer(std::string buffer_id, StaticBuffer<float>& buffer) -> int override;
+    auto reset_buffer(std::string buffer_id) -> int override;
+    auto get_model_info() -> ModelInfo override;
 
 private:
     struct ParameterInfo {
         std::string name;
         std::vector<int64_t> shape;
-        size_t totalElements { 0 };
-        size_t inputIndex { 0 };
-        std::vector<float> originalWeights;
-        std::vector<float> currentWeights;
-        bool isModified { false };
+        size_t total_elements { 0 };
+        size_t input_index { 0 };
+        std::vector<float> original_weights;
+        std::vector<float> current_weights;
+        bool is_modified { false };
     };
 
     struct StreamInfo {
         std::string name;
-        size_t inputIndex { 0 };
+        size_t input_index { 0 };
         std::vector<int64_t> shape;
     };
 
     std::string m_path;
-    double m_sampleRate { 44100.0 };
-    double m_modelSampleRate { 44100.0 };
+    double m_sample_rate { 44100.0 };
+    double m_model_sample_rate { 44100.0 };
     bool m_loaded { false };
-    bool m_useGpu { false };
-    std::string m_lastError;
-    std::mutex m_sessionMutex;
+    bool m_use_gpu { false };
+    std::string m_last_error;
+    std::mutex m_session_mutex;
 
     // Internal implementation pointers (PIMPL to keep ORT types out of public API)
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 
-    std::vector<std::string> m_availableLayers;
+    std::vector<std::string> m_available_layers;
     std::unordered_map<std::string, ParameterInfo> m_parameters;
-    std::vector<StreamInfo> m_audioInputs;
-    std::vector<StreamInfo> m_audioOutputs;
+    std::vector<StreamInfo> m_audio_inputs;
+    std::vector<StreamInfo> m_audio_outputs;
 
-    int m_inChannels { 1 };
-    int m_outChannels { 1 };
-    int m_higherRatio { 1 };
-    int m_latentDim { 64 };
+    int m_in_channels { 1 };
+    int m_out_channels { 1 };
+    int m_higher_ratio { 1 };
+    int m_latent_dim { 64 };
 
     // Receptive field history and output windowing offsets (declared via model metadata)
-    std::vector<std::vector<float>> m_audioHistory;
-    size_t m_historySamples { 0 };
-    size_t m_outputOffset { 0 };
+    std::vector<std::vector<float>> m_audio_history;
+    size_t m_history_samples { 0 };
+    size_t m_output_offset { 0 };
 
-    // Decode Gen output FIFO buffer per channel for gapless streaming
-    std::vector<std::vector<float>> m_decodeGenFifo;
-    size_t m_decodeGenFifoReadIdx { 0 };
-    std::vector<float> m_decodeGenLatentState;
-    std::vector<float> m_decodeGenLatentHistory;
-    void clearDecodeGenFifo() {
-        for (auto& ch : m_decodeGenFifo) ch.clear();
-        m_decodeGenFifo.clear();
-        m_decodeGenFifoReadIdx = 0;
-        m_decodeGenLatentState.clear();
-        m_decodeGenLatentHistory.clear();
-    }
+    std::vector<std::string> m_available_methods;
 
-    std::vector<std::string> m_availableMethods;
-
-    void introspectGraph();
+    auto introspect_graph() -> void;
 };
 

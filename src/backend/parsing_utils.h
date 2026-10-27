@@ -5,6 +5,6 @@
 #include <sstream>
 #include <string>
 
-bool to_bool(std::string str);
-int to_int(std::string str);
-float to_float(std::string str);
+auto to_bool(std::string str) -> bool;
+auto to_int(std::string str) -> int;
+auto to_float(std::string str) -> float;

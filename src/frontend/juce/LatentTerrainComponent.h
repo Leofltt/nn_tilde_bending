@@ -47,7 +47,6 @@ public:
     {
         auto bounds = getLocalBounds().toFloat();
 
-        // Deep canvas background
         g.setColour(juce::Colour::fromString("#ff0e0d13"));
         g.fillRect(bounds);
 
@@ -55,11 +54,9 @@ public:
         float pw = padArea.getWidth();
         float ph = padArea.getHeight();
 
-        // Inner pad background
         g.setColour(juce::Colour::fromString("#ff110f17"));
         g.fillRect(padArea);
 
-        // Border
         g.setColour(juce::Colour::fromString("#ff2d253d"));
         g.drawRect(padArea, 1.0f);
 
@@ -72,11 +69,10 @@ public:
             return;
         }
 
-        // Center crosshairs (0, 0)
         float cx = padArea.getX() + pw * 0.5f;
         float cy = padArea.getY() + ph * 0.5f;
 
-        // 1. Render multi-pole potential / topographic latent heat map via precomputed texture blit
+        // Render multi-pole potential / topographic latent heat map via precomputed texture blit
         {
             juce::Graphics::ScopedSaveState sss(g);
             g.reduceClipRegion(padArea.toNearestInt());
@@ -89,7 +85,6 @@ public:
             }
         }
 
-        // 2. Crisp precision coordinate grid
         {
             juce::Graphics::ScopedSaveState sss(g);
             g.reduceClipRegion(padArea.toNearestInt());
@@ -107,12 +102,10 @@ public:
             }
         }
 
-        // 3. Center crosshairs (0, 0)
         g.setColour(juce::Colour::fromString("#ff4c3d69").withAlpha(0.6f));
         g.drawHorizontalLine((int)cy, padArea.getX(), padArea.getRight());
         g.drawVerticalLine((int)cx, padArea.getY(), padArea.getBottom());
 
-        // 4. Concentric topographic radar contour rings & radial spokes
         float maxRadius = std::min(pw, ph) * 0.46f;
         for (int step = 1; step <= 4; ++step)
         {
@@ -120,14 +113,12 @@ public:
             g.setColour(juce::Colour::fromString("#ff58447d").withAlpha(step == 4 ? 0.55f : 0.30f));
             g.drawEllipse(cx - r, cy - r, r * 2.0f, r * 2.0f, step == 4 ? 1.2f : 0.8f);
 
-            // Subdued coordinate ring labels
             g.setColour(juce::Colours::white.withAlpha(0.28f));
             g.setFont(juce::FontOptions(9.0f));
             g.drawText(juce::String(step * 0.25f, 2),
                        (int)(cx + 4), (int)(cy - r - 6), 30, 12, juce::Justification::centredLeft);
         }
 
-        // Diagonal polar guidelines
         {
             g.setColour(juce::Colour::fromString("#ff3b3254").withAlpha(0.35f));
             float diagDist = maxRadius * 0.95f;
@@ -136,19 +127,15 @@ public:
             g.drawLine(cx - cos45, cy + cos45, cx + cos45, cy - cos45, 0.8f);
         }
 
-        // 5. Cursor Reticle Position & Vector Ray
         float cursorX = cx + m_x * (pw * 0.48f);
         float cursorY = cy - m_y * (ph * 0.48f);
 
-        // Vector ray from origin (0, 0) to cursor with distance magnitude
         {
             float distFromOrigin = std::sqrt(m_x * m_x + m_y * m_y);
-            juce::Colour rayColour = m_isEnabled ? juce::Colour::fromString("#ff06b6d4") // Bright cyan
+            juce::Colour rayColour = m_isEnabled ? juce::Colour::fromString("#ff06b6d4") 
                                                  : juce::Colour::fromString("#ff64748b");
             g.setColour(rayColour.withAlpha(0.40f));
             g.drawLine(cx, cy, cursorX, cursorY, 1.0f);
-
-            // Midpoint distance badge along vector ray if moved away from center
             if (distFromOrigin > 0.15f)
             {
                 float midX = (cx + cursorX) * 0.5f;
@@ -160,7 +147,6 @@ public:
             }
         }
 
-        // Motion trail breadcrumbs (shows recent gesture path)
         if (m_trail.size() >= 2)
         {
             juce::Path trailPath;
@@ -168,12 +154,10 @@ public:
             for (size_t i = 1; i < m_trail.size(); ++i)
                 trailPath.lineTo(m_trail[i].x, m_trail[i].y);
 
-            juce::Colour trailColour = m_isEnabled ? juce::Colour::fromString("#ffd946ef") // Neon magenta
+            juce::Colour trailColour = m_isEnabled ? juce::Colour::fromString("#ffd946ef")
                                                    : juce::Colour::fromString("#ff64748b");
             g.setColour(trailColour.withAlpha(0.35f));
             g.strokePath(trailPath, juce::PathStrokeType(1.2f));
-
-            // Fade trail points
             for (size_t i = 0; i < m_trail.size(); ++i)
             {
                 float alpha = (float)(i + 1) / (float)m_trail.size() * 0.5f;
@@ -182,9 +166,8 @@ public:
             }
         }
 
-        // Luminous radial glow around active reticle
-        juce::Colour glowColour = m_isEnabled ? juce::Colour::fromString("#ffd946ef") // Vivid neon fuchsia
-                                              : juce::Colour::fromString("#ff64748b"); // Slate standby
+        juce::Colour glowColour = m_isEnabled ? juce::Colour::fromString("#ffd946ef") 
+                                              : juce::Colour::fromString("#ff64748b"); 
         
         juce::ColourGradient glowGrad(
             glowColour.withAlpha(0.40f), cursorX, cursorY,
@@ -193,19 +176,15 @@ public:
         g.setGradientFill(glowGrad);
         g.fillEllipse(cursorX - 32.0f, cursorY - 32.0f, 64.0f, 64.0f);
 
-        // Reticle target concentric rings
         g.setColour(glowColour.withAlpha(0.95f));
         g.drawEllipse(cursorX - 10.0f, cursorY - 10.0f, 20.0f, 20.0f, 1.2f);
         g.drawEllipse(cursorX - 3.0f, cursorY - 3.0f, 6.0f, 6.0f, 1.8f);
-
-        // Cross lines through reticle
         g.setColour(juce::Colours::white.withAlpha(0.85f));
         g.drawHorizontalLine((int)cursorY, cursorX - 16.0f, cursorX - 5.0f);
         g.drawHorizontalLine((int)cursorY, cursorX + 5.0f, cursorX + 16.0f);
         g.drawVerticalLine((int)cursorX, cursorY - 16.0f, cursorY - 5.0f);
         g.drawVerticalLine((int)cursorX, cursorY + 5.0f, cursorY + 16.0f);
 
-        // Coordinate readout badge in bottom-left
         g.setFont(juce::FontOptions(11.0f));
         g.setColour(juce::Colours::white.withAlpha(0.85f));
         float mag = std::sqrt(m_x * m_x + m_y * m_y);
@@ -216,7 +195,6 @@ public:
         juce::String coordsText = juce::String::formatted("X: %+.3f   Y: %+.3f   |   Mag: %.3f   θ: %.1f°", m_x, m_y, mag, angleDeg);
         g.drawText(coordsText, padArea.reduced(10.0f, 6.0f).toNearestInt(), juce::Justification::bottomLeft, true);
 
-        // Top-right status readout badge
         juce::String modeText = m_isEnabled ? "LATENT HOOK: ACTIVE" : "STANDBY (Click to Modulate)";
         g.setColour(m_isEnabled ? juce::Colour::fromString("#ffd946ef") : juce::Colours::silver.withAlpha(0.6f));
         g.drawText(modeText, padArea.reduced(10.0f, 6.0f).toNearestInt(), juce::Justification::topRight, true);

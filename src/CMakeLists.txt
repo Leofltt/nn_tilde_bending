@@ -216,3 +216,13 @@ endif()
 
 # Unit tests
 add_subdirectory(tests)
+
+# Code Formatting Target
+find_program(CLANG_FORMAT_BIN clang-format)
+if (CLANG_FORMAT_BIN)
+    add_custom_target(format
+        COMMAND "${CMAKE_SOURCE_DIR}/../scripts/format.sh"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
+        COMMENT "Running clang-format on project source files..."
+    )
+endif()

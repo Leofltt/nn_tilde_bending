@@ -14,97 +14,97 @@
 
 struct OnnxBackend::Impl {
     Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "NetBender_OnnxBackend"};
-    Ort::SessionOptions sessionOptions;
+    Ort::SessionOptions session_options;
     std::unique_ptr<Ort::Session> session;
     Ort::AllocatorWithDefaultOptions allocator;
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
-    // Companion method sessions (e.g. encode, decode, prior)
+    // Companion method sessions (e.g. encode, decode)
     struct CompanionSession {
         std::unique_ptr<Ort::Session> session;
-        std::vector<std::string> inputNames;
-        std::vector<const char*> inputNamePtrs;
-        std::vector<std::string> outputNames;
-        std::vector<const char*> outputNamePtrs;
+        std::vector<std::string> input_names;
+        std::vector<const char*> input_name_ptrs;
+        std::vector<std::string> output_names;
+        std::vector<const char*> output_name_ptrs;
         std::vector<StreamInfo> inputs;
         std::vector<StreamInfo> outputs;
     };
     std::unordered_map<std::string, CompanionSession> companions;
 
     // Dynamic graph metadata for primary session (forward)
-    std::vector<std::string> inputNames;
-    std::vector<const char*> inputNamePtrs;
-    std::vector<std::string> outputNames;
-    std::vector<const char*> outputNamePtrs;
+    std::vector<std::string> input_names;
+    std::vector<const char*> input_name_ptrs;
+    std::vector<std::string> output_names;
+    std::vector<const char*> output_name_ptrs;
 
     // Preallocated tensor shape storage to avoid allocations on audio thread
-    std::vector<std::vector<int64_t>> inputShapes;
-    std::vector<std::vector<int64_t>> outputShapes;
+    std::vector<std::vector<int64_t>> input_shapes;
+    std::vector<std::vector<int64_t>> output_shapes;
 };
 
 OnnxBackend::OnnxBackend()
     : m_impl(std::make_unique<Impl>())
 {
     // Optimize session for multi-core audio thread execution
-    unsigned int hwThreads = std::thread::hardware_concurrency();
-    int intraThreads = std::max(1, (int)std::min(hwThreads, 4u));
-    m_impl->sessionOptions.SetIntraOpNumThreads(intraThreads);
-    m_impl->sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
+    unsigned int hw_threads = std::thread::hardware_concurrency();
+    int intra_threads = std::max(1, (int)std::min(hw_threads, 4u));
+    m_impl->session_options.SetIntraOpNumThreads(intra_threads);
+    m_impl->session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
 }
 
 OnnxBackend::~OnnxBackend() = default;
 
-int OnnxBackend::load(std::string path, double sampleRate, const std::string* target_method) {
-    std::lock_guard<std::mutex> lock(m_sessionMutex);
+auto OnnxBackend::load(std::string path, double sample_rate, const std::string* target_method) -> int {
+    std::lock_guard<std::mutex> lock(m_session_mutex);
     m_loaded = false;
     m_path = path;
-    m_sampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
-    m_modelSampleRate = m_sampleRate;
+    m_sample_rate = sample_rate > 0.0 ? sample_rate : 44100.0;
+    m_model_sample_rate = m_sample_rate;
     m_impl->companions.clear();
 
     try {
 #if defined(_WIN32)
         std::wstring wpath(path.begin(), path.end());
-        m_impl->session = std::make_unique<Ort::Session>(m_impl->env, wpath.c_str(), m_impl->sessionOptions);
+        m_impl->session = std::make_unique<Ort::Session>(m_impl->env, wpath.c_str(), m_impl->session_options);
 #else
-        m_impl->session = std::make_unique<Ort::Session>(m_impl->env, path.c_str(), m_impl->sessionOptions);
+        m_impl->session = std::make_unique<Ort::Session>(m_impl->env, path.c_str(), m_impl->session_options);
 #endif
-        introspectGraph();
+        introspect_graph();
 
         // Check for companion sessions in the same directory: _encode.onnx, _decode.onnx, _prior.onnx
         std::string base = path;
-        size_t dotPos = base.find_last_of('.');
-        if (dotPos != std::string::npos) base = base.substr(0, dotPos);
+        size_t dot_pos = base.find_last_of('.');
+        if (dot_pos != std::string::npos) base = base.substr(0, dot_pos);
 
-        const std::vector<std::string> potentialMethods = { "encode", "decode", "prior" };
-        for (const auto& meth : potentialMethods) {
-            std::string companionPath = base + "_" + meth + ".onnx";
-            std::ifstream testFile(companionPath);
-            if (testFile.good()) {
-                testFile.close();
+        const std::vector<std::string> potential_methods = { "encode", "decode", "prior" };
+        for (const auto& meth : potential_methods) {
+            std::string companion_path = base + "_" + meth + ".onnx";
+            std::ifstream test_file(companion_path);
+            if (test_file.good()) {
+                test_file.close();
                 try {
                     Impl::CompanionSession cs;
 #if defined(_WIN32)
-                    std::wstring wcomp(companionPath.begin(), companionPath.end());
-                    cs.session = std::make_unique<Ort::Session>(m_impl->env, wcomp.c_str(), m_impl->sessionOptions);
+                    std::wstring wcomp(companion_path.begin(), companion_path.end());
+                    cs.session = std::make_unique<Ort::Session>(m_impl->env, wcomp.c_str(), m_impl->session_options);
 #else
-                    cs.session = std::make_unique<Ort::Session>(m_impl->env, companionPath.c_str(), m_impl->sessionOptions);
+                    cs.session = std::make_unique<Ort::Session>(m_impl->env, companion_path.c_str(), m_impl->session_options);
 #endif
-                    size_t inCount = cs.session->GetInputCount();
-                    for (size_t i = 0; i < inCount; ++i) {
-                        auto inName = cs.session->GetInputNameAllocated(i, m_impl->allocator);
-                        cs.inputNames.push_back(inName.get());
+                    size_t in_count = cs.session->GetInputCount();
+                    for (size_t i = 0; i < in_count; ++i) {
+                        auto in_name = cs.session->GetInputNameAllocated(i, m_impl->allocator);
+                        cs.input_names.push_back(in_name.get());
                     }
 
-                    size_t outCount = cs.session->GetOutputCount();
-                    for (size_t i = 0; i < outCount; ++i) {
-                        auto outName = cs.session->GetOutputNameAllocated(i, m_impl->allocator);
-                        cs.outputNames.push_back(outName.get());
+                    size_t out_count = cs.session->GetOutputCount();
+                    for (size_t i = 0; i < out_count; ++i) {
+                        auto out_name = cs.session->GetOutputNameAllocated(i, m_impl->allocator);
+                        cs.output_names.push_back(out_name.get());
                     }
                     m_impl->companions[meth] = std::move(cs);
-                    std::cout << "[OnnxBackend] Loaded companion method '" << meth << "' from " << companionPath << std::endl;
+                    std::cout << "[OnnxBackend] Loaded companion method '" << meth << "' from " << companion_path << std::endl;
                 } catch (const std::exception& ce) {
-                    std::cerr << "[OnnxBackend] Note: Could not load companion " << companionPath << ": " << ce.what() << std::endl;
+                    std::cerr << "[OnnxBackend] Note: Could not load companion " << companion_path << ": " << ce.what() << std::endl;
                 }
             }
         }
@@ -112,24 +112,24 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
         // Re-anchor companion pointers across all loaded companions once map insertion is fully finished
         for (auto& pair : m_impl->companions) {
             auto& comp = pair.second;
-            comp.inputNamePtrs.clear();
-            for (const auto& n : comp.inputNames) {
-                comp.inputNamePtrs.push_back(n.c_str());
+            comp.input_name_ptrs.clear();
+            for (const auto& n : comp.input_names) {
+                comp.input_name_ptrs.push_back(n.c_str());
             }
-            comp.outputNamePtrs.clear();
-            for (const auto& n : comp.outputNames) {
-                comp.outputNamePtrs.push_back(n.c_str());
+            comp.output_name_ptrs.clear();
+            for (const auto& n : comp.output_names) {
+                comp.output_name_ptrs.push_back(n.c_str());
             }
         }
         std::cout << "[OnnxBackend] Finished companion loading." << std::endl;
 
-        // 1. Check for embedded model metadata properties (netbender.ratio, netbender.sample_rate, etc.)
+        // Check for embedded model metadata properties (netbender.ratio, netbender.sample_rate, etc.)
         if (m_impl->session) {
             try {
-                auto modelMetadata = m_impl->session->GetModelMetadata();
-                auto lookupMeta = [&](const char* key) -> std::string {
+                auto model_metadata = m_impl->session->GetModelMetadata();
+                auto lookup_meta = [&](const char* key) -> std::string {
                     try {
-                        auto val = modelMetadata.LookupCustomMetadataMapAllocated(key, m_impl->allocator);
+                        auto val = model_metadata.LookupCustomMetadataMapAllocated(key, m_impl->allocator);
                         return val ? std::string(val.get()) : std::string();
                     } catch (...) {
                         return std::string();
@@ -137,41 +137,41 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
                 };
 
                 try {
-                    std::string metaRatio = lookupMeta("netbender.ratio");
-                    if (!metaRatio.empty()) {
-                        m_higherRatio = std::max(1, std::stoi(metaRatio));
+                    std::string meta_ratio = lookup_meta("netbender.ratio");
+                    if (!meta_ratio.empty()) {
+                        m_higher_ratio = std::max(1, std::stoi(meta_ratio));
                     }
                 } catch (...) {}
 
                 try {
-                    std::string metaSr = lookupMeta("netbender.sample_rate");
-                    if (!metaSr.empty()) {
-                        double sr = std::stod(metaSr);
+                    std::string meta_sr = lookup_meta("netbender.sample_rate");
+                    if (!meta_sr.empty()) {
+                        double sr = std::stod(meta_sr);
                         if (sr > 0.0) {
-                            m_modelSampleRate = sr;
-                            m_sampleRate = sr;
+                            m_model_sample_rate = sr;
+                            m_sample_rate = sr;
                         }
                     }
                 } catch (...) {}
 
                 try {
-                    std::string metaLatent = lookupMeta("netbender.latent_dim");
-                    if (!metaLatent.empty()) {
-                        m_latentDim = std::max(1, std::stoi(metaLatent));
+                    std::string meta_latent = lookup_meta("netbender.latent_dim");
+                    if (!meta_latent.empty()) {
+                        m_latent_dim = std::max(1, std::stoi(meta_latent));
                     }
                 } catch (...) {}
 
                 try {
-                    std::string metaHist = lookupMeta("netbender.history_samples");
-                    if (!metaHist.empty()) {
-                        m_historySamples = (size_t)std::max(0, std::stoi(metaHist));
+                    std::string meta_hist = lookup_meta("netbender.history_samples");
+                    if (!meta_hist.empty()) {
+                        m_history_samples = (size_t)std::max(0, std::stoi(meta_hist));
                     }
                 } catch (...) {}
 
                 try {
-                    std::string metaOffset = lookupMeta("netbender.output_offset");
-                    if (!metaOffset.empty()) {
-                        m_outputOffset = (size_t)std::max(0, std::stoi(metaOffset));
+                    std::string meta_offset = lookup_meta("netbender.output_offset");
+                    if (!meta_offset.empty()) {
+                        m_output_offset = (size_t)std::max(0, std::stoi(meta_offset));
                     }
                 } catch (...) {}
             } catch (...) {
@@ -179,18 +179,18 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
             }
         }
 
-        // 2. Introspect latent dimensions from companion models if not already established
+        // Introspect latent dimensions from companion models if not already established
         try {
             if (m_impl->companions.find("decode") != m_impl->companions.end()) {
                 auto& dec = m_impl->companions["decode"];
                 if (dec.session && dec.session->GetInputCount() > 0) {
                     try {
-                        auto typeInfo = dec.session->GetInputTypeInfo(0);
-                        auto tInfo = typeInfo.GetTensorTypeAndShapeInfo();
-                        if (tInfo) {
-                            auto shp = tInfo.GetShape();
+                        auto type_info = dec.session->GetInputTypeInfo(0);
+                        auto t_info = type_info.GetTensorTypeAndShapeInfo();
+                        if (t_info) {
+                            auto shp = t_info.GetShape();
                             if (shp.size() >= 2 && shp[1] > 0) {
-                                m_latentDim = (int)shp[1];
+                                m_latent_dim = (int)shp[1];
                             }
                         }
                     } catch (...) {}
@@ -199,12 +199,12 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
                 auto& enc = m_impl->companions["encode"];
                 if (enc.session && enc.session->GetOutputCount() > 0) {
                     try {
-                        auto typeInfo = enc.session->GetOutputTypeInfo(0);
-                        auto tInfo = typeInfo.GetTensorTypeAndShapeInfo();
-                        if (tInfo) {
-                            auto shp = tInfo.GetShape();
+                        auto type_info = enc.session->GetOutputTypeInfo(0);
+                        auto t_info = type_info.GetTensorTypeAndShapeInfo();
+                        if (t_info) {
+                            auto shp = t_info.GetShape();
                             if (shp.size() >= 2 && shp[1] > 0) {
-                                m_latentDim = (int)shp[1];
+                                m_latent_dim = (int)shp[1];
                             }
                         }
                     } catch (...) {}
@@ -212,314 +212,313 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
             }
         } catch (...) {}
 
-        std::cout << "[OnnxBackend] Latent Dimension: " << m_latentDim
-                  << " | Stride / Higher Ratio: " << m_higherRatio 
-                  << " | Native Sample Rate: " << m_sampleRate << std::endl;
+        std::cout << "[OnnxBackend] Latent Dimension: " << m_latent_dim
+                  << " | Stride / Higher Ratio: " << m_higher_ratio 
+                  << " | Native Sample Rate: " << m_sample_rate << std::endl;
 
-        m_availableMethods.clear();
-        m_availableMethods.push_back("forward");
+        m_available_methods.clear();
+        m_available_methods.push_back("forward");
         for (const auto& pair : m_impl->companions) {
-            m_availableMethods.push_back(pair.first);
+            m_available_methods.push_back(pair.first);
         }
 
-        // Initialize history buffer and output windowing
-        m_audioHistory.clear();
+        m_audio_history.clear();
         
         // Backwards compatibility fallback if model does not contain explicit netbender.history_samples metadata
-        if (m_historySamples == 0 && m_outputOffset == 0) {
-            bool isRave = false;
+        if (m_history_samples == 0 && m_output_offset == 0) {
+            bool is_rave = false;
             for (const auto& pair : m_parameters) {
                 if (pair.first.find("rave") != std::string::npos || pair.first.find("_rave") != std::string::npos) {
-                    isRave = true;
+                    is_rave = true;
                     break;
                 }
             }
-            if (isRave && m_higherRatio >= 1024) {
-                m_historySamples = (m_latentDim >= 8) ? 28672 : 4096;
-                m_outputOffset = m_historySamples;
+            if (is_rave && m_higher_ratio >= 1024) {
+                m_history_samples = (m_latent_dim >= 8) ? 28672 : 4096;
+                m_output_offset = m_history_samples;
             }
-        } else if (m_outputOffset == 0 && m_historySamples > 0) {
-            m_outputOffset = m_historySamples;
+        } else if (m_output_offset == 0 && m_history_samples > 0) {
+            m_output_offset = m_history_samples;
         }
 
-        if (m_historySamples > 0) {
-            m_audioHistory.resize(std::max(1, m_inChannels), std::vector<float>(m_historySamples, 0.0f));
-            std::cout << "[OnnxBackend] Enabled " << m_historySamples << "-sample streaming history buffer (output offset: " << m_outputOffset << ")" << std::endl;
+        if (m_history_samples > 0) {
+            m_audio_history.resize(std::max(1, m_in_channels), std::vector<float>(m_history_samples, 0.0f));
+            std::cout << "[OnnxBackend] Enabled " << m_history_samples << "-sample streaming history buffer (output offset: " << m_output_offset << ")" << std::endl;
         } else {
-            std::cout << "[OnnxBackend] Zero-delay direct streaming enabled (output offset: " << m_outputOffset << ")" << std::endl;
+            std::cout << "[OnnxBackend] Zero-delay direct streaming enabled (output offset: " << m_output_offset << ")" << std::endl;
         }
 
         m_loaded = true;
-        clearDecodeGenFifo();
-        m_lastError.clear();
+        clear_decode_gen_fifo();
+        m_last_error.clear();
         std::cout << "[OnnxBackend] Finished load() successfully for " << path << std::endl;
         std::cout << std::flush;
         return 0;
     } catch (const std::exception& e) {
-        m_lastError = e.what();
+        m_last_error = e.what();
         std::cerr << "[OnnxBackend] Error loading model " << path << ": " << e.what() << std::endl;
         m_loaded = false;
         return -1;
     }
 }
 
-int OnnxBackend::reload() {
+auto OnnxBackend::reload() -> int {
     if (m_path.empty()) return -1;
-    return load(m_path, m_sampleRate);
+    return load(m_path, m_sample_rate);
 }
 
-bool OnnxBackend::is_loaded() {
+auto OnnxBackend::is_loaded() -> bool {
     return m_loaded;
 }
 
-void OnnxBackend::set_sample_rate(double sampleRate) {
-    if (sampleRate > 0.0) m_sampleRate = sampleRate;
+auto OnnxBackend::set_sample_rate(double sample_rate) -> void {
+    if (sample_rate > 0.0) m_sample_rate = sample_rate;
 }
 
-double OnnxBackend::get_sample_rate() {
-    return (m_modelSampleRate > 0.0) ? m_modelSampleRate : m_sampleRate;
+auto OnnxBackend::get_sample_rate() -> double {
+    return (m_model_sample_rate > 0.0) ? m_model_sample_rate : m_sample_rate;
 }
 
-void OnnxBackend::use_gpu(bool value) {
-    m_useGpu = value;
+auto OnnxBackend::use_gpu(bool value) -> void {
+    m_use_gpu = value;
 }
 
-void OnnxBackend::introspectGraph() {
+auto OnnxBackend::introspect_graph() -> void {
     if (!m_impl->session) return;
 
-    m_availableLayers.clear();
+    m_available_layers.clear();
     m_parameters.clear();
-    m_audioInputs.clear();
-    m_audioOutputs.clear();
-    m_impl->inputNames.clear();
-    m_impl->inputNamePtrs.clear();
-    m_impl->outputNames.clear();
-    m_impl->outputNamePtrs.clear();
+    m_audio_inputs.clear();
+    m_audio_outputs.clear();
+    m_impl->input_names.clear();
+    m_impl->input_name_ptrs.clear();
+    m_impl->output_names.clear();
+    m_impl->output_name_ptrs.clear();
 
-    size_t numInputs = m_impl->session->GetInputCount();
-    size_t numOutputs = m_impl->session->GetOutputCount();
-    size_t numOverridables = m_impl->session->GetOverridableInitializerCount();
+    size_t num_inputs = m_impl->session->GetInputCount();
+    size_t num_outputs = m_impl->session->GetOutputCount();
+    size_t num_overridables = m_impl->session->GetOverridableInitializerCount();
 
-    // 1. Process primary required graph inputs (audio stream)
-    for (size_t i = 0; i < numInputs; ++i) {
-        auto inputName = m_impl->session->GetInputNameAllocated(i, m_impl->allocator);
-        std::string name = inputName.get();
-        m_impl->inputNames.push_back(name);
+    // Process primary required graph inputs (audio stream)
+    for (size_t i = 0; i < num_inputs; ++i) {
+        auto input_name = m_impl->session->GetInputNameAllocated(i, m_impl->allocator);
+        std::string name = input_name.get();
+        m_impl->input_names.push_back(name);
 
         std::vector<int64_t> shape;
         try {
-            auto typeInfo = m_impl->session->GetInputTypeInfo(i);
-            auto tensorInfo = typeInfo.GetTensorTypeAndShapeInfo();
-            if (tensorInfo) {
-                shape = tensorInfo.GetShape();
+            auto type_info = m_impl->session->GetInputTypeInfo(i);
+            auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+            if (tensor_info) {
+                shape = tensor_info.GetShape();
             }
         } catch (...) {}
 
-        bool isAudioStream = (i == 0) || (shape.size() >= 3 && (shape.back() <= 0 || shape.back() > 2048));
+        bool is_audio_stream = (i == 0) || (shape.size() >= 3 && (shape.back() <= 0 || shape.back() > 2048));
 
-        if (isAudioStream && m_audioInputs.empty()) {
+        if (is_audio_stream && m_audio_inputs.empty()) {
             StreamInfo stream;
             stream.name = name;
-            stream.inputIndex = i;
+            stream.input_index = i;
             stream.shape = shape;
-            m_audioInputs.push_back(stream);
-            m_inChannels = (shape.size() >= 2 && shape[1] > 0) ? (int)shape[1] : 1;
+            m_audio_inputs.push_back(stream);
+            m_in_channels = (shape.size() >= 2 && shape[1] > 0) ? (int)shape[1] : 1;
         } else {
             // Free parameter input
             ParameterInfo param;
             param.name = name;
             param.shape = shape;
-            param.inputIndex = i;
+            param.input_index = i;
 
             size_t total = 1;
             for (auto d : shape) {
                 total *= (d > 0 ? d : 1);
             }
-            param.totalElements = total;
-            param.originalWeights.assign(total, 0.0f);
-            param.currentWeights.assign(total, 0.0f);
+            param.total_elements = total;
+            param.original_weights.assign(total, 0.0f);
+            param.current_weights.assign(total, 0.0f);
 
             m_parameters[name] = param;
-            m_availableLayers.push_back(name);
+            m_available_layers.push_back(name);
         }
     }
 
-    // 2. Process Overridable Initializers (Promoted layers with model baseline defaults)
-    for (size_t i = 0; i < numOverridables; ++i) {
-        auto initName = m_impl->session->GetOverridableInitializerNameAllocated(i, m_impl->allocator);
-        std::string name = initName.get();
+    // Process Overridable Initializers (Promoted layers with model baseline defaults)
+    for (size_t i = 0; i < num_overridables; ++i) {
+        auto init_name = m_impl->session->GetOverridableInitializerNameAllocated(i, m_impl->allocator);
+        std::string name = init_name.get();
 
         if (m_parameters.find(name) == m_parameters.end()) {
             try {
-                auto typeInfo = m_impl->session->GetOverridableInitializerTypeInfo(i);
-                auto tensorInfo = typeInfo.GetTensorTypeAndShapeInfo();
+                auto type_info = m_impl->session->GetOverridableInitializerTypeInfo(i);
+                auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
                 std::vector<int64_t> shape;
-                if (tensorInfo) {
-                    shape = tensorInfo.GetShape();
+                if (tensor_info) {
+                    shape = tensor_info.GetShape();
                 }
 
                 ParameterInfo param;
                 param.name = name;
                 param.shape = shape;
-                param.inputIndex = m_impl->inputNames.size();
+                param.input_index = m_impl->input_names.size();
 
                 size_t total = 1;
                 for (auto d : shape) {
                     total *= (d > 0 ? d : 1);
                 }
-                param.totalElements = total;
-                param.originalWeights.assign(total, 0.0f);
-                param.currentWeights.assign(total, 0.0f);
+                param.total_elements = total;
+                param.original_weights.assign(total, 0.0f);
+                param.current_weights.assign(total, 0.0f);
 
                 m_parameters[name] = param;
-                m_availableLayers.push_back(name);
+                m_available_layers.push_back(name);
             } catch (...) {}
         }
     }
 
-    // 3. Load initial baseline weights from high-speed binary sidecar (.bin) if available
-    std::string sidecarPath = m_path;
-    size_t extPos = sidecarPath.find_last_of('.');
-    if (extPos != std::string::npos) {
-        sidecarPath = sidecarPath.substr(0, extPos) + ".bin";
+    // Load initial baseline weights from high-speed binary sidecar (.bin) if available
+    std::string sidecar_path = m_path;
+    size_t ext_pos = sidecar_path.find_last_of('.');
+    if (ext_pos != std::string::npos) {
+        sidecar_path = sidecar_path.substr(0, ext_pos) + ".bin";
     } else {
-        sidecarPath += ".bin";
+        sidecar_path += ".bin";
     }
 
-    std::ifstream binFile(sidecarPath, std::ios::binary);
-    if (binFile.is_open()) {
+    std::ifstream bin_file(sidecar_path, std::ios::binary);
+    if (bin_file.is_open()) {
         char magic[4];
-        binFile.read(magic, 4);
+        bin_file.read(magic, 4);
         if (std::memcmp(magic, "NBND", 4) == 0) {
             uint32_t version = 0;
-            binFile.read(reinterpret_cast<char*>(&version), sizeof(version));
-            uint32_t numTensors = 0;
-            binFile.read(reinterpret_cast<char*>(&numTensors), sizeof(numTensors));
+            bin_file.read(reinterpret_cast<char*>(&version), sizeof(version));
+            uint32_t num_tensors = 0;
+            bin_file.read(reinterpret_cast<char*>(&num_tensors), sizeof(num_tensors));
 
-            for (uint32_t t = 0; t < numTensors; ++t) {
-                uint32_t nameLen = 0;
-                binFile.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
-                std::string tName(nameLen, '\0');
-                binFile.read(&tName[0], nameLen);
+            for (uint32_t t = 0; t < num_tensors; ++t) {
+                uint32_t name_len = 0;
+                bin_file.read(reinterpret_cast<char*>(&name_len), sizeof(name_len));
+                std::string t_name(name_len, '\0');
+                bin_file.read(&t_name[0], name_len);
 
-                uint32_t numDims = 0;
-                binFile.read(reinterpret_cast<char*>(&numDims), sizeof(numDims));
-                std::vector<int64_t> tShape(numDims);
-                for (uint32_t d = 0; d < numDims; ++d) {
-                    binFile.read(reinterpret_cast<char*>(&tShape[d]), sizeof(int64_t));
+                uint32_t num_dims = 0;
+                bin_file.read(reinterpret_cast<char*>(&num_dims), sizeof(num_dims));
+                std::vector<int64_t> t_shape(num_dims);
+                for (uint32_t d = 0; d < num_dims; ++d) {
+                    bin_file.read(reinterpret_cast<char*>(&t_shape[d]), sizeof(int64_t));
                 }
 
-                uint64_t numElems = 0;
-                binFile.read(reinterpret_cast<char*>(&numElems), sizeof(numElems));
+                uint64_t num_elems = 0;
+                bin_file.read(reinterpret_cast<char*>(&num_elems), sizeof(num_elems));
 
-                std::vector<float> data(numElems);
-                binFile.read(reinterpret_cast<char*>(data.data()), numElems * sizeof(float));
+                std::vector<float> data(num_elems);
+                bin_file.read(reinterpret_cast<char*>(data.data()), num_elems * sizeof(float));
 
-                auto it = m_parameters.find(tName);
+                auto it = m_parameters.find(t_name);
                 if (it != m_parameters.end()) {
-                    it->second.originalWeights = data;
-                    it->second.currentWeights = data;
-                    it->second.totalElements = numElems;
-                    it->second.shape = tShape;
+                    it->second.original_weights = data;
+                    it->second.current_weights = data;
+                    it->second.total_elements = num_elems;
+                    it->second.shape = t_shape;
                 }
             }
-            std::cout << "[OnnxBackend] Successfully loaded initial baseline weights from " << sidecarPath << std::endl;
+            std::cout << "[OnnxBackend] Successfully loaded initial baseline weights from " << sidecar_path << std::endl;
         }
     }
 
     // Refresh pointers after vector is fully populated
-    for (const auto& n : m_impl->inputNames) {
-        m_impl->inputNamePtrs.push_back(n.c_str());
+    for (const auto& n : m_impl->input_names) {
+        m_impl->input_name_ptrs.push_back(n.c_str());
     }
 
     // Outputs
-    for (size_t i = 0; i < numOutputs; ++i) {
-        auto outputName = m_impl->session->GetOutputNameAllocated(i, m_impl->allocator);
-        std::string name = outputName.get();
-        m_impl->outputNames.push_back(name);
+    for (size_t i = 0; i < num_outputs; ++i) {
+        auto output_name = m_impl->session->GetOutputNameAllocated(i, m_impl->allocator);
+        std::string name = output_name.get();
+        m_impl->output_names.push_back(name);
 
         std::vector<int64_t> shape;
         try {
-            auto typeInfo = m_impl->session->GetOutputTypeInfo(i);
-            auto tensorInfo = typeInfo.GetTensorTypeAndShapeInfo();
-            if (tensorInfo) {
-                shape = tensorInfo.GetShape();
+            auto type_info = m_impl->session->GetOutputTypeInfo(i);
+            auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+            if (tensor_info) {
+                shape = tensor_info.GetShape();
             }
         } catch (...) {}
 
         StreamInfo stream;
         stream.name = name;
-        stream.inputIndex = i;
+        stream.input_index = i;
         stream.shape = shape;
-        m_audioOutputs.push_back(stream);
+        m_audio_outputs.push_back(stream);
 
         if (i == 0) {
-            m_outChannels = (shape.size() >= 2 && shape[1] > 0) ? (int)shape[1] : 1;
+            m_out_channels = (shape.size() >= 2 && shape[1] > 0) ? (int)shape[1] : 1;
         }
     }
 
-    for (const auto& n : m_impl->outputNames) {
-        m_impl->outputNamePtrs.push_back(n.c_str());
+    for (const auto& n : m_impl->output_names) {
+        m_impl->output_name_ptrs.push_back(n.c_str());
     }
 
-    std::cout << "[OnnxBackend] Loaded " << m_path << " | Audio In: " << m_inChannels 
-              << " | Audio Out: " << m_outChannels << " | Bendable Layers: " 
-              << m_availableLayers.size() << std::endl;
+    std::cout << "[OnnxBackend] Loaded " << m_path << " | Audio In: " << m_in_channels 
+              << " | Audio Out: " << m_out_channels << " | Bendable Layers: " 
+              << m_available_layers.size() << std::endl;
 }
 
-void OnnxBackend::perform(std::vector<float*>& in_buffer,
+auto OnnxBackend::perform(std::vector<float*>& in_buffer,
                           std::vector<float*>& out_buffer,
                           std::string method,
-                          int n_batches, int n_out_channels, int n_vec) {
+                          int n_batches, int n_out_channels, int n_vec) -> void {
     if (!m_loaded) return;
-    std::unique_lock<std::mutex> lock(m_sessionMutex, std::try_to_lock);
+    std::unique_lock<std::mutex> lock(m_session_mutex, std::try_to_lock);
     if (!lock.owns_lock()) return;
 
     // Check if target method belongs to a companion session (e.g. encode, decode, prior)
-    auto compIt = m_impl->companions.find(method);
-    if (compIt != m_impl->companions.end()) {
-        auto& comp = compIt->second;
+    auto comp_it = m_impl->companions.find(method);
+    if (comp_it != m_impl->companions.end()) {
+        auto& comp = comp_it->second;
         if (!comp.session) return;
         try {
-            std::vector<const char*> compInNames = comp.inputNamePtrs;
-            std::vector<Ort::Value> compInTensors;
+            std::vector<const char*> comp_in_names = comp.input_name_ptrs;
+            std::vector<Ort::Value> comp_in_tensors;
 
             // Bind input stream
-            int inCh = std::min((int)in_buffer.size(), m_inChannels);
-            if (method == "decode") inCh = m_latentDim;
-            std::vector<int64_t> inShape = { 1, inCh, n_vec };
+            int in_ch = std::min((int)in_buffer.size(), m_in_channels);
+            if (method == "decode") in_ch = m_latent_dim;
+            std::vector<int64_t> in_shape = { 1, in_ch, n_vec };
 
-            float* inPtr = in_buffer.empty() ? nullptr : in_buffer[0];
-            if (inPtr && !compInNames.empty()) {
-                compInTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    inPtr,
-                    inCh * n_vec,
-                    inShape.data(),
-                    inShape.size()
+            float* in_ptr = in_buffer.empty() ? nullptr : in_buffer[0];
+            if (in_ptr && !comp_in_names.empty()) {
+                comp_in_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    in_ptr,
+                    in_ch * n_vec,
+                    in_shape.data(),
+                    in_shape.size()
                 ));
             }
 
-            auto compOutputs = comp.session->Run(
+            auto comp_outputs = comp.session->Run(
                 Ort::RunOptions{nullptr},
-                compInNames.data(),
-                compInTensors.data(),
-                compInTensors.size(),
-                comp.outputNamePtrs.data(),
-                comp.outputNamePtrs.size()
+                comp_in_names.data(),
+                comp_in_tensors.data(),
+                comp_in_tensors.size(),
+                comp.output_name_ptrs.data(),
+                comp.output_name_ptrs.size()
             );
 
-            if (!compOutputs.empty()) {
-                float* outData = compOutputs[0].GetTensorMutableData<float>();
-                auto outInfo = compOutputs[0].GetTensorTypeAndShapeInfo();
-                auto outShape = outInfo.GetShape();
-                int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
-                int copy_samples = std::min(n_vec, outSamples);
-                int outCh = std::min((int)out_buffer.size(), (int)n_out_channels);
+            if (!comp_outputs.empty()) {
+                float* out_data = comp_outputs[0].GetTensorMutableData<float>();
+                auto out_info = comp_outputs[0].GetTensorTypeAndShapeInfo();
+                auto out_shape = out_info.GetShape();
+                int out_samples = (out_shape.size() >= 3 && out_shape[2] > 0) ? (int)out_shape[2] : n_vec;
+                int copy_samples = std::min(n_vec, out_samples);
+                int out_ch = std::min((int)out_buffer.size(), (int)n_out_channels);
 
-                for (int c = 0; c < outCh; ++c) {
+                for (int c = 0; c < out_ch; ++c) {
                     if (out_buffer[c]) {
-                        std::memcpy(out_buffer[c], outData + (c * outSamples), copy_samples * sizeof(float));
+                        std::memcpy(out_buffer[c], out_data + (c * out_samples), copy_samples * sizeof(float));
                         if (copy_samples < n_vec) {
                             std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
                         }
@@ -533,57 +532,57 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
     }
 
     // If primary session has no audio inputs but companion encode/decode exist, route through autoencode
-    if (m_audioInputs.empty()) {
+    if (m_audio_inputs.empty()) {
         if (has_autoencode()) {
             auto& enc = m_impl->companions["encode"];
             auto& dec = m_impl->companions["decode"];
             if (!enc.session || !dec.session) return;
 
             try {
-                int inCh = std::min((int)in_buffer.size(), m_inChannels);
-                std::vector<int64_t> inShape = { 1, inCh, n_vec };
-                float* inPtr = in_buffer.empty() ? nullptr : in_buffer[0];
-                if (!inPtr || enc.inputNamePtrs.empty()) return;
+                int in_ch = std::min((int)in_buffer.size(), m_in_channels);
+                std::vector<int64_t> in_shape = { 1, in_ch, n_vec };
+                float* in_ptr = in_buffer.empty() ? nullptr : in_buffer[0];
+                if (!in_ptr || enc.input_name_ptrs.empty()) return;
 
-                std::vector<Ort::Value> encInTensors;
-                encInTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    inPtr,
-                    inCh * n_vec,
-                    inShape.data(),
-                    inShape.size()
+                std::vector<Ort::Value> enc_in_tensors;
+                enc_in_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    in_ptr,
+                    in_ch * n_vec,
+                    in_shape.data(),
+                    in_shape.size()
                 ));
 
-                auto encOutputs = enc.session->Run(
+                auto enc_outputs = enc.session->Run(
                     Ort::RunOptions{nullptr},
-                    enc.inputNamePtrs.data(),
-                    encInTensors.data(),
-                    encInTensors.size(),
-                    enc.outputNamePtrs.data(),
-                    enc.outputNamePtrs.size()
+                    enc.input_name_ptrs.data(),
+                    enc_in_tensors.data(),
+                    enc_in_tensors.size(),
+                    enc.output_name_ptrs.data(),
+                    enc.output_name_ptrs.size()
                 );
 
-                if (!encOutputs.empty() && !dec.inputNamePtrs.empty()) {
-                    auto decOutputs = dec.session->Run(
+                if (!enc_outputs.empty() && !dec.input_name_ptrs.empty()) {
+                    auto dec_outputs = dec.session->Run(
                         Ort::RunOptions{nullptr},
-                        dec.inputNamePtrs.data(),
-                        encOutputs.data(),
+                        dec.input_name_ptrs.data(),
+                        enc_outputs.data(),
                         1,
-                        dec.outputNamePtrs.data(),
-                        dec.outputNamePtrs.size()
+                        dec.output_name_ptrs.data(),
+                        dec.output_name_ptrs.size()
                     );
 
-                    if (!decOutputs.empty()) {
-                        float* outData = decOutputs[0].GetTensorMutableData<float>();
-                        auto outInfo = decOutputs[0].GetTensorTypeAndShapeInfo();
-                        auto outShape = outInfo.GetShape();
-                        int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
-                        int copy_samples = std::min(n_vec, outSamples);
-                        int outCh = std::min((int)out_buffer.size(), (int)n_out_channels);
+                    if (!dec_outputs.empty()) {
+                        float* out_data = dec_outputs[0].GetTensorMutableData<float>();
+                        auto out_info = dec_outputs[0].GetTensorTypeAndShapeInfo();
+                        auto out_shape = out_info.GetShape();
+                        int out_samples = (out_shape.size() >= 3 && out_shape[2] > 0) ? (int)out_shape[2] : n_vec;
+                        int copy_samples = std::min(n_vec, out_samples);
+                        int out_ch = std::min((int)out_buffer.size(), (int)n_out_channels);
 
-                        for (int c = 0; c < outCh; ++c) {
+                        for (int c = 0; c < out_ch; ++c) {
                             if (out_buffer[c]) {
-                                std::memcpy(out_buffer[c], outData + (c * outSamples), copy_samples * sizeof(float));
+                                std::memcpy(out_buffer[c], out_data + (c * out_samples), copy_samples * sizeof(float));
                                 if (copy_samples < n_vec) {
                                     std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
                                 }
@@ -602,56 +601,56 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
     if (!m_impl->session) return;
 
     try {
-        std::vector<const char*> runInputNames;
-        std::vector<Ort::Value> runInputTensors;
+        std::vector<const char*> run_input_names;
+        std::vector<Ort::Value> run_input_tensors;
 
         // 1. Bind audio input tensor (with causal receptive field history if required)
-        int inCh = std::min((int)in_buffer.size(), m_inChannels);
-        float* audioInputPtr = in_buffer.empty() ? nullptr : in_buffer[0];
+        int in_ch = std::min((int)in_buffer.size(), m_in_channels);
+        float* audio_input_ptr = in_buffer.empty() ? nullptr : in_buffer[0];
 
-        std::vector<float> compositeAudio;
-        int streamLen = n_vec;
-        if (audioInputPtr && !m_audioInputs.empty()) {
-            runInputNames.push_back(m_audioInputs[0].name.c_str());
+        std::vector<float> composite_audio;
+        int stream_len = n_vec;
+        if (audio_input_ptr && !m_audio_inputs.empty()) {
+            run_input_names.push_back(m_audio_inputs[0].name.c_str());
 
-            if (m_historySamples > 0 || inCh > 1) {
-                streamLen = (int)m_historySamples + n_vec;
-                compositeAudio.resize(inCh * streamLen);
-                for (int c = 0; c < inCh; ++c) {
-                    float* histData = (m_historySamples > 0 && c < (int)m_audioHistory.size()) ? m_audioHistory[c].data() : nullptr;
-                    float* inData = (c < (int)in_buffer.size()) ? in_buffer[c] : nullptr;
-                    float* dest = compositeAudio.data() + (c * streamLen);
+            if (m_history_samples > 0 || in_ch > 1) {
+                stream_len = (int)m_history_samples + n_vec;
+                composite_audio.resize(in_ch * stream_len);
+                for (int c = 0; c < in_ch; ++c) {
+                    float* hist_data = (m_history_samples > 0 && c < (int)m_audio_history.size()) ? m_audio_history[c].data() : nullptr;
+                    float* in_data = (c < (int)in_buffer.size()) ? in_buffer[c] : nullptr;
+                    float* dest = composite_audio.data() + (c * stream_len);
                     // Copy historical context
-                    if (m_historySamples > 0) {
-                        if (histData) {
-                            std::memcpy(dest, histData, m_historySamples * sizeof(float));
+                    if (m_history_samples > 0) {
+                        if (hist_data) {
+                            std::memcpy(dest, hist_data, m_history_samples * sizeof(float));
                         } else {
-                            std::memset(dest, 0, m_historySamples * sizeof(float));
+                            std::memset(dest, 0, m_history_samples * sizeof(float));
                         }
                     }
                     // Copy current block
-                    if (inData) {
-                        std::memcpy(dest + m_historySamples, inData, n_vec * sizeof(float));
+                    if (in_data) {
+                        std::memcpy(dest + m_history_samples, in_data, n_vec * sizeof(float));
                     } else {
-                        std::memset(dest + m_historySamples, 0, n_vec * sizeof(float));
+                        std::memset(dest + m_history_samples, 0, n_vec * sizeof(float));
                     }
                 }
-                std::vector<int64_t> inShape = { 1, inCh, (int64_t)streamLen };
-                runInputTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    compositeAudio.data(),
-                    compositeAudio.size(),
-                    inShape.data(),
-                    inShape.size()
+                std::vector<int64_t> in_shape = { 1, in_ch, (int64_t)stream_len };
+                run_input_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    composite_audio.data(),
+                    composite_audio.size(),
+                    in_shape.data(),
+                    in_shape.size()
                 ));
             } else {
-                std::vector<int64_t> inShape = { 1, inCh, n_vec };
-                runInputTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    audioInputPtr,
-                    inCh * n_vec,
-                    inShape.data(),
-                    inShape.size()
+                std::vector<int64_t> in_shape = { 1, in_ch, n_vec };
+                run_input_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    audio_input_ptr,
+                    in_ch * n_vec,
+                    in_shape.data(),
+                    in_shape.size()
                 ));
             }
         }
@@ -659,45 +658,45 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
         // 2. Bind parameter tensors (Only override initializers that have actually been modified/bent)
         for (auto& pair : m_parameters) {
             ParameterInfo& p = pair.second;
-            if (p.isModified) {
-                runInputNames.push_back(pair.first.c_str());
-                runInputTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    p.currentWeights.data(),
-                    p.totalElements,
+            if (p.is_modified) {
+                run_input_names.push_back(pair.first.c_str());
+                run_input_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    p.current_weights.data(),
+                    p.total_elements,
                     p.shape.data(),
                     p.shape.size()
                 ));
             }
         }
 
-        if (runInputNames.empty() || m_impl->outputNamePtrs.empty()) return;
+        if (run_input_names.empty() || m_impl->output_name_ptrs.empty()) return;
 
         // 3. Run session with dynamic feed list
-        auto outputTensors = m_impl->session->Run(
+        auto output_tensors = m_impl->session->Run(
             Ort::RunOptions{nullptr},
-            runInputNames.data(),
-            runInputTensors.data(),
-            runInputTensors.size(),
-            m_impl->outputNamePtrs.data(),
-            m_impl->outputNamePtrs.size()
+            run_input_names.data(),
+            run_input_tensors.data(),
+            run_input_tensors.size(),
+            m_impl->output_name_ptrs.data(),
+            m_impl->output_name_ptrs.size()
         );
 
         // 4. Copy computed output back to out_buffer
-        if (!outputTensors.empty()) {
-            float* outData = outputTensors[0].GetTensorMutableData<float>();
-            auto outInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
-            auto outShape = outInfo.GetShape();
-            int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : streamLen;
-            int offset = (int)m_outputOffset;
-            if (offset >= outSamples) offset = 0;
-            int copy_samples = std::min(n_vec, std::max(0, outSamples - offset));
-            int outCh = std::min((int)out_buffer.size(), m_outChannels);
+        if (!output_tensors.empty()) {
+            float* out_data = output_tensors[0].GetTensorMutableData<float>();
+            auto out_info = output_tensors[0].GetTensorTypeAndShapeInfo();
+            auto out_shape = out_info.GetShape();
+            int out_samples = (out_shape.size() >= 3 && out_shape[2] > 0) ? (int)out_shape[2] : stream_len;
+            int offset = (int)m_output_offset;
+            if (offset >= out_samples) offset = 0;
+            int copy_samples = std::min(n_vec, std::max(0, out_samples - offset));
+            int out_ch = std::min((int)out_buffer.size(), m_out_channels);
 
-            for (int c = 0; c < outCh; ++c) {
+            for (int c = 0; c < out_ch; ++c) {
                 if (out_buffer[c]) {
                     if (copy_samples > 0) {
-                        std::memcpy(out_buffer[c], outData + (c * outSamples) + offset, copy_samples * sizeof(float));
+                        std::memcpy(out_buffer[c], out_data + (c * out_samples) + offset, copy_samples * sizeof(float));
                     }
                     if (copy_samples < n_vec) {
                         std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
@@ -706,15 +705,15 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
             }
 
             // Update history buffer with current input audio for next block
-            if (m_historySamples > 0) {
-                for (int c = 0; c < inCh && c < (int)m_audioHistory.size(); ++c) {
+            if (m_history_samples > 0) {
+                for (int c = 0; c < in_ch && c < (int)m_audio_history.size(); ++c) {
                     if (in_buffer[c]) {
-                        if (n_vec >= (int)m_historySamples) {
-                            std::memcpy(m_audioHistory[c].data(), in_buffer[c] + (n_vec - m_historySamples), m_historySamples * sizeof(float));
+                        if (n_vec >= (int)m_history_samples) {
+                            std::memcpy(m_audio_history[c].data(), in_buffer[c] + (n_vec - m_history_samples), m_history_samples * sizeof(float));
                         } else {
-                            size_t shift = m_historySamples - n_vec;
-                            std::memmove(m_audioHistory[c].data(), m_audioHistory[c].data() + n_vec, shift * sizeof(float));
-                            std::memcpy(m_audioHistory[c].data() + shift, in_buffer[c], n_vec * sizeof(float));
+                            size_t shift = m_history_samples - n_vec;
+                            std::memmove(m_audio_history[c].data(), m_audio_history[c].data() + n_vec, shift * sizeof(float));
+                            std::memcpy(m_audio_history[c].data() + shift, in_buffer[c], n_vec * sizeof(float));
                         }
                     }
                 }
@@ -725,81 +724,81 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
     }
 }
 
-void OnnxBackend::perform_forward(std::vector<float*>& in_buffer,
+auto OnnxBackend::perform_forward(std::vector<float*>& in_buffer,
                                   std::vector<float*>& out_buffer,
                                   int n_batches, int n_out_channels, int n_vec,
-                                  LatentHook latent_hook) {
+                                  LatentHook latent_hook) -> void {
     if (latent_hook) {
-        auto encIt = m_impl->companions.find("encode");
-        auto decIt = m_impl->companions.find("decode");
-        if (encIt != m_impl->companions.end() && decIt != m_impl->companions.end() &&
-            encIt->second.session && decIt->second.session) {
-            std::unique_lock<std::mutex> lock(m_sessionMutex);
-            auto& encComp = encIt->second;
-            auto& decComp = decIt->second;
+        auto enc_it = m_impl->companions.find("encode");
+        auto dec_it = m_impl->companions.find("decode");
+        if (enc_it != m_impl->companions.end() && dec_it != m_impl->companions.end() &&
+            enc_it->second.session && dec_it->second.session) {
+            std::unique_lock<std::mutex> lock(m_session_mutex);
+            auto& enc_comp = enc_it->second;
+            auto& dec_comp = dec_it->second;
 
             try {
-                int inCh = std::min((int)in_buffer.size(), m_inChannels);
-                if (inCh <= 0 || n_vec <= 0) return;
+                int in_ch = std::min((int)in_buffer.size(), m_in_channels);
+                if (in_ch <= 0 || n_vec <= 0) return;
 
-                std::vector<float> audioIn(inCh * n_vec);
-                for (int c = 0; c < inCh; ++c) {
+                std::vector<float> audio_in(in_ch * n_vec);
+                for (int c = 0; c < in_ch; ++c) {
                     if (in_buffer[c]) {
-                        std::memcpy(audioIn.data() + (c * n_vec), in_buffer[c], n_vec * sizeof(float));
+                        std::memcpy(audio_in.data() + (c * n_vec), in_buffer[c], n_vec * sizeof(float));
                     } else {
-                        std::memset(audioIn.data() + (c * n_vec), 0, n_vec * sizeof(float));
+                        std::memset(audio_in.data() + (c * n_vec), 0, n_vec * sizeof(float));
                     }
                 }
-                std::vector<int64_t> inShape = { 1, inCh, (int64_t)n_vec };
-                std::vector<Ort::Value> encInTensors;
-                encInTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    audioIn.data(),
-                    audioIn.size(),
-                    inShape.data(),
-                    inShape.size()
+                std::vector<int64_t> in_shape = { 1, in_ch, (int64_t)n_vec };
+                std::vector<Ort::Value> enc_in_tensors;
+                enc_in_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    audio_in.data(),
+                    audio_in.size(),
+                    in_shape.data(),
+                    in_shape.size()
                 ));
 
-                auto encOutputs = encComp.session->Run(
+                auto enc_outputs = enc_comp.session->Run(
                     Ort::RunOptions{nullptr},
-                    encComp.inputNamePtrs.data(),
-                    encInTensors.data(),
-                    encInTensors.size(),
-                    encComp.outputNamePtrs.data(),
-                    encComp.outputNamePtrs.size()
+                    enc_comp.input_name_ptrs.data(),
+                    enc_in_tensors.data(),
+                    enc_in_tensors.size(),
+                    enc_comp.output_name_ptrs.data(),
+                    enc_comp.output_name_ptrs.size()
                 );
 
-                if (!encOutputs.empty()) {
-                    float* latentPtr = encOutputs[0].GetTensorMutableData<float>();
-                    auto latentInfo = encOutputs[0].GetTensorTypeAndShapeInfo();
-                    auto latentShape = latentInfo.GetShape();
-                    int64_t latDim = (latentShape.size() >= 2) ? latentShape[1] : 1;
-                    int64_t latSteps = (latentShape.size() >= 3) ? latentShape[2] : 1;
+                if (!enc_outputs.empty()) {
+                    float* latent_ptr = enc_outputs[0].GetTensorMutableData<float>();
+                    auto latent_info = enc_outputs[0].GetTensorTypeAndShapeInfo();
+                    auto latent_shape = latent_info.GetShape();
+                    int64_t lat_dim = (latent_shape.size() >= 2) ? latent_shape[1] : 1;
+                    int64_t lat_steps = (latent_shape.size() >= 3) ? latent_shape[2] : 1;
 
-                    LatentBuffer buf{ latentPtr, latDim, latSteps };
+                    LatentBuffer buf{ latent_ptr, lat_dim, lat_steps };
                     latent_hook(buf);
 
-                    auto decOutputs = decComp.session->Run(
+                    auto dec_outputs = dec_comp.session->Run(
                         Ort::RunOptions{nullptr},
-                        decComp.inputNamePtrs.data(),
-                        encOutputs.data(),
+                        dec_comp.input_name_ptrs.data(),
+                        enc_outputs.data(),
                         1,
-                        decComp.outputNamePtrs.data(),
-                        decComp.outputNamePtrs.size()
+                        dec_comp.output_name_ptrs.data(),
+                        dec_comp.output_name_ptrs.size()
                     );
 
-                    if (!decOutputs.empty()) {
-                        float* outData = decOutputs[0].GetTensorMutableData<float>();
-                        auto outInfo = decOutputs[0].GetTensorTypeAndShapeInfo();
-                        auto outShape = outInfo.GetShape();
-                        int numChannels = (outShape.size() >= 2 && outShape[1] > 0) ? (int)outShape[1] : 1;
-                        int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
-                        int copy_samples = std::min(n_vec, outSamples);
-                        int outCh = std::min((int)out_buffer.size(), std::min(numChannels, (int)n_out_channels));
+                    if (!dec_outputs.empty()) {
+                        float* out_data = dec_outputs[0].GetTensorMutableData<float>();
+                        auto out_info = dec_outputs[0].GetTensorTypeAndShapeInfo();
+                        auto out_shape = out_info.GetShape();
+                        int num_channels = (out_shape.size() >= 2 && out_shape[1] > 0) ? (int)out_shape[1] : 1;
+                        int out_samples = (out_shape.size() >= 3 && out_shape[2] > 0) ? (int)out_shape[2] : n_vec;
+                        int copy_samples = std::min(n_vec, out_samples);
+                        int out_ch = std::min((int)out_buffer.size(), std::min(num_channels, (int)n_out_channels));
 
-                        for (int c = 0; c < outCh; ++c) {
+                        for (int c = 0; c < out_ch; ++c) {
                             if (out_buffer[c]) {
-                                std::memcpy(out_buffer[c], outData + (c * outSamples), copy_samples * sizeof(float));
+                                std::memcpy(out_buffer[c], out_data + (c * out_samples), copy_samples * sizeof(float));
                                 if (copy_samples < n_vec) {
                                     std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
                                 }
@@ -817,66 +816,66 @@ void OnnxBackend::perform_forward(std::vector<float*>& in_buffer,
     perform(in_buffer, out_buffer, "forward", n_batches, n_out_channels, n_vec);
 }
 
-void OnnxBackend::perform_prior_decode(std::vector<float*>& out_buffer,
-                                       int n_batches, int n_out_channels, int n_vec) {
+auto OnnxBackend::perform_prior_decode(std::vector<float*>& out_buffer,
+                                       int n_batches, int n_out_channels, int n_vec) -> void {
     if (!m_loaded) return;
-    std::unique_lock<std::mutex> lock(m_sessionMutex);
+    std::unique_lock<std::mutex> lock(m_session_mutex);
 
-    auto priorIt = m_impl->companions.find("prior");
-    auto decIt = m_impl->companions.find("decode");
+    auto prior_it = m_impl->companions.find("prior");
+    auto dec_it = m_impl->companions.find("decode");
 
-    if (priorIt != m_impl->companions.end() && decIt != m_impl->companions.end() &&
-        priorIt->second.session && decIt->second.session) {
-        auto& priorComp = priorIt->second;
-        auto& decComp = decIt->second;
+    if (prior_it != m_impl->companions.end() && dec_it != m_impl->companions.end() &&
+        prior_it->second.session && dec_it->second.session) {
+        auto& prior_comp = prior_it->second;
+        auto& dec_comp = dec_it->second;
 
         try {
             // 1. Run Prior companion session to generate latents z
-            std::vector<Ort::Value> priorInTensors;
-            std::vector<float> dummyInput;
-            std::vector<int64_t> inShape = { 1, 1, (int64_t)n_vec };
-            if (!priorComp.inputNamePtrs.empty()) {
-                dummyInput.assign(n_vec, 0.0f);
-                priorInTensors.push_back(Ort::Value::CreateTensor<float>(
-                    m_impl->memoryInfo,
-                    dummyInput.data(),
-                    dummyInput.size(),
-                    inShape.data(),
-                    inShape.size()
+            std::vector<Ort::Value> prior_in_tensors;
+            std::vector<float> dummy_input;
+            std::vector<int64_t> in_shape = { 1, 1, (int64_t)n_vec };
+            if (!prior_comp.input_name_ptrs.empty()) {
+                dummy_input.assign(n_vec, 0.0f);
+                prior_in_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memory_info,
+                    dummy_input.data(),
+                    dummy_input.size(),
+                    in_shape.data(),
+                    in_shape.size()
                 ));
             }
 
-            auto priorOutputs = priorComp.session->Run(
+            auto prior_outputs = prior_comp.session->Run(
                 Ort::RunOptions{nullptr},
-                priorComp.inputNamePtrs.data(),
-                priorInTensors.data(),
-                priorInTensors.size(),
-                priorComp.outputNamePtrs.data(),
-                priorComp.outputNamePtrs.size()
+                prior_comp.input_name_ptrs.data(),
+                prior_in_tensors.data(),
+                prior_in_tensors.size(),
+                prior_comp.output_name_ptrs.data(),
+                prior_comp.output_name_ptrs.size()
             );
 
             // 2. Feed generated latents z into Decode companion session
-            if (!priorOutputs.empty() && !decComp.inputNamePtrs.empty()) {
-                auto decOutputs = decComp.session->Run(
+            if (!prior_outputs.empty() && !dec_comp.input_name_ptrs.empty()) {
+                auto dec_outputs = dec_comp.session->Run(
                     Ort::RunOptions{nullptr},
-                    decComp.inputNamePtrs.data(),
-                    priorOutputs.data(),
+                    dec_comp.input_name_ptrs.data(),
+                    prior_outputs.data(),
                     1,
-                    decComp.outputNamePtrs.data(),
-                    decComp.outputNamePtrs.size()
+                    dec_comp.output_name_ptrs.data(),
+                    dec_comp.output_name_ptrs.size()
                 );
 
-                if (!decOutputs.empty()) {
-                    float* outData = decOutputs[0].GetTensorMutableData<float>();
-                    auto outInfo = decOutputs[0].GetTensorTypeAndShapeInfo();
-                    auto outShape = outInfo.GetShape();
-                    int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
-                    int copy_samples = std::min(n_vec, outSamples);
-                    int outCh = std::min((int)out_buffer.size(), (int)n_out_channels);
+                if (!dec_outputs.empty()) {
+                    float* out_data = dec_outputs[0].GetTensorMutableData<float>();
+                    auto out_info = dec_outputs[0].GetTensorTypeAndShapeInfo();
+                    auto out_shape = out_info.GetShape();
+                    int out_samples = (out_shape.size() >= 3 && out_shape[2] > 0) ? (int)out_shape[2] : n_vec;
+                    int copy_samples = std::min(n_vec, out_samples);
+                    int out_ch = std::min((int)out_buffer.size(), (int)n_out_channels);
 
-                    for (int c = 0; c < outCh; ++c) {
+                    for (int c = 0; c < out_ch; ++c) {
                         if (out_buffer[c]) {
-                            std::memcpy(out_buffer[c], outData + (c * outSamples), copy_samples * sizeof(float));
+                            std::memcpy(out_buffer[c], out_data + (c * out_samples), copy_samples * sizeof(float));
                             if (copy_samples < n_vec) {
                                 std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
                             }
@@ -898,50 +897,50 @@ void OnnxBackend::perform_prior_decode(std::vector<float*>& out_buffer,
     perform_decode_gen(out_buffer, n_batches, n_out_channels, n_vec);
 }
 
-void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
+auto OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
                                      int n_batches, int n_out_channels, int n_vec,
-                                     LatentHook latent_hook) {
+                                     LatentHook latent_hook) -> void {
     if (!m_loaded) return;
 
-    auto compIt = m_impl->companions.find("decode");
-    if (compIt == m_impl->companions.end() || !compIt->second.session) return;
-    auto& comp = compIt->second;
+    auto comp_it = m_impl->companions.find("decode");
+    if (comp_it == m_impl->companions.end() || !comp_it->second.session) return;
+    auto& comp = comp_it->second;
 
-    int ratio = std::max(1, m_higherRatio);
-    int outCh = std::min((int)out_buffer.size(), (int)n_out_channels);
+    int ratio = std::max(1, m_higher_ratio);
+    int out_ch = std::min((int)out_buffer.size(), (int)n_out_channels);
 
     // Check available samples in FIFO buffer
-    size_t fifo_samples = (m_decodeGenFifo.empty() || m_decodeGenFifo[0].empty()) 
-        ? 0 : (m_decodeGenFifo[0].size() - m_decodeGenFifoReadIdx);
+    size_t fifo_samples = (m_decode_gen_fifo.empty() || m_decode_gen_fifo[0].empty()) 
+        ? 0 : (m_decode_gen_fifo[0].size() - m_decode_gen_fifo_read_idx);
 
     // If FIFO does not have enough samples to fulfill n_vec + crossfade cushion, synthesize another block
     const size_t kCrossfadeSamples = 256;
     if (fifo_samples < (size_t)(n_vec + kCrossfadeSamples)) {
-        std::unique_lock<std::mutex> lock(m_sessionMutex);
+        std::unique_lock<std::mutex> lock(m_session_mutex);
 
         // Compact FIFO by erasing already consumed samples
-        if (m_decodeGenFifoReadIdx > 0) {
-            for (auto& ch : m_decodeGenFifo) {
-                if (m_decodeGenFifoReadIdx < ch.size()) {
-                    ch.erase(ch.begin(), ch.begin() + m_decodeGenFifoReadIdx);
+        if (m_decode_gen_fifo_read_idx > 0) {
+            for (auto& ch : m_decode_gen_fifo) {
+                if (m_decode_gen_fifo_read_idx < ch.size()) {
+                    ch.erase(ch.begin(), ch.begin() + m_decode_gen_fifo_read_idx);
                 } else {
                     ch.clear();
                 }
             }
-            m_decodeGenFifoReadIdx = 0;
+            m_decode_gen_fifo_read_idx = 0;
         }
 
         int min_frames = 8;
-        if (m_higherRatio >= 1024 && m_latentDim >= 8) {
+        if (m_higher_ratio >= 1024 && m_latent_dim >= 8) {
             min_frames = 16;
         }
         int latent_steps = std::max(min_frames, (n_vec + (int)kCrossfadeSamples) / ratio);
-        int latent_dim = std::max(1, m_latentDim);
+        int latent_dim = std::max(1, m_latent_dim);
 
         float latent_scale = 1.0f;
-        if (m_latentDim >= 128 && m_higherRatio <= 640) {
+        if (m_latent_dim >= 128 && m_higher_ratio <= 640) {
             latent_scale = 5.0f; // EnCodec SEANet calibrated (prevents tripping 2.0 fuse)
-        } else if (m_higherRatio >= 1024) {
+        } else if (m_higher_ratio >= 1024) {
             latent_scale = 1.0f; // VAEs (Stable Audio 64-dim, Speech RAVE 8/16-dim) standard unit normal latents
         }
 
@@ -952,82 +951,82 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
         static std::mt19937 rng_gen(1337);
         std::normal_distribution<float> norm_dist(0.0f, latent_scale);
 
-        if (m_decodeGenLatentState.size() != (size_t)latent_dim) {
-            m_decodeGenLatentState.resize(latent_dim);
+        if (m_decode_gen_latent_state.size() != (size_t)latent_dim) {
+            m_decode_gen_latent_state.resize(latent_dim);
             for (int c = 0; c < latent_dim; ++c) {
-                m_decodeGenLatentState[c] = norm_dist(rng_gen);
+                m_decode_gen_latent_state[c] = norm_dist(rng_gen);
             }
         }
 
-        std::vector<float> latentData(latent_dim * latent_steps);
+        std::vector<float> latent_data(latent_dim * latent_steps);
         for (int c = 0; c < latent_dim; ++c) {
-            float prev = m_decodeGenLatentState[c];
-            float* ch_ptr = latentData.data() + (c * latent_steps);
+            float prev = m_decode_gen_latent_state[c];
+            float* ch_ptr = latent_data.data() + (c * latent_steps);
             for (int t = 0; t < latent_steps; ++t) {
                 float eps = norm_dist(rng_gen);
                 prev = alpha * prev + beta * eps;
                 ch_ptr[t] = prev;
             }
-            m_decodeGenLatentState[c] = prev;
+            m_decode_gen_latent_state[c] = prev;
         }
 
         // Apply latent hook directly on contiguous [latent_dim, latent_steps] buffer
         if (latent_hook) {
-            IBackend::LatentBuffer buf{ latentData.data(), (int64_t)latent_dim, (int64_t)latent_steps };
+            IBackend::LatentBuffer buf{ latent_data.data(), (int64_t)latent_dim, (int64_t)latent_steps };
             latent_hook(buf);
         }
 
         try {
-            std::vector<int64_t> inShape = { 1, (int64_t)latent_dim, (int64_t)latent_steps };
-            std::vector<Ort::Value> compInTensors;
-            compInTensors.push_back(Ort::Value::CreateTensor<float>(
-                m_impl->memoryInfo,
-                latentData.data(),
-                latentData.size(),
-                inShape.data(),
-                inShape.size()
+            std::vector<int64_t> in_shape = { 1, (int64_t)latent_dim, (int64_t)latent_steps };
+            std::vector<Ort::Value> comp_in_tensors;
+            comp_in_tensors.push_back(Ort::Value::CreateTensor<float>(
+                m_impl->memory_info,
+                latent_data.data(),
+                latent_data.size(),
+                in_shape.data(),
+                in_shape.size()
             ));
 
-            auto compOutputs = comp.session->Run(
+            auto comp_outputs = comp.session->Run(
                 Ort::RunOptions{nullptr},
-                comp.inputNamePtrs.data(),
-                compInTensors.data(),
-                compInTensors.size(),
-                comp.outputNamePtrs.data(),
-                comp.outputNamePtrs.size()
+                comp.input_name_ptrs.data(),
+                comp_in_tensors.data(),
+                comp_in_tensors.size(),
+                comp.output_name_ptrs.data(),
+                comp.output_name_ptrs.size()
             );
 
-            if (!compOutputs.empty()) {
-                float* outData = compOutputs[0].GetTensorMutableData<float>();
-                auto outInfo = compOutputs[0].GetTensorTypeAndShapeInfo();
-                auto outShape = outInfo.GetShape();
-                int numChannels = (outShape.size() >= 2) ? (int)outShape[1] : 1;
-                int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : (latent_steps * ratio);
+            if (!comp_outputs.empty()) {
+                float* out_data = comp_outputs[0].GetTensorMutableData<float>();
+                auto out_info = comp_outputs[0].GetTensorTypeAndShapeInfo();
+                auto out_shape = out_info.GetShape();
+                int num_channels = (out_shape.size() >= 2) ? (int)out_shape[1] : 1;
+                int out_samples = (out_shape.size() >= 3 && out_shape[2] > 0) ? (int)out_shape[2] : (latent_steps * ratio);
 
-                if (m_decodeGenFifo.size() < (size_t)numChannels) {
-                    m_decodeGenFifo.resize(numChannels);
+                if (m_decode_gen_fifo.size() < (size_t)num_channels) {
+                    m_decode_gen_fifo.resize(num_channels);
                 }
 
                 // Smoothly crossfade seam with previous unconsumed block in FIFO
-                size_t prevAvailable = m_decodeGenFifo[0].size();
-                size_t overlap = std::min(kCrossfadeSamples, std::min(prevAvailable, (size_t)outSamples / 2));
+                size_t prev_available = m_decode_gen_fifo[0].size();
+                size_t overlap = std::min(kCrossfadeSamples, std::min(prev_available, (size_t)out_samples / 2));
 
-                for (int c = 0; c < numChannels; ++c) {
+                for (int c = 0; c < num_channels; ++c) {
                     if (overlap > 0) {
-                        size_t tailIdx = prevAvailable - overlap;
+                        size_t tail_idx = prev_available - overlap;
                         for (size_t i = 0; i < overlap; ++i) {
                             float w = 0.5f - 0.5f * std::cos(3.14159265f * (float)(i + 0.5f) / (float)overlap);
-                            float old_s = m_decodeGenFifo[c][tailIdx + i];
-                            float new_s = outData[c * outSamples + i];
-                            m_decodeGenFifo[c][tailIdx + i] = old_s * (1.0f - w) + new_s * w;
+                            float old_s = m_decode_gen_fifo[c][tail_idx + i];
+                            float new_s = out_data[c * out_samples + i];
+                            m_decode_gen_fifo[c][tail_idx + i] = old_s * (1.0f - w) + new_s * w;
                         }
-                        m_decodeGenFifo[c].insert(m_decodeGenFifo[c].end(),
-                                                  outData + (c * outSamples) + overlap,
-                                                  outData + (c * outSamples) + outSamples);
+                        m_decode_gen_fifo[c].insert(m_decode_gen_fifo[c].end(),
+                                                  out_data + (c * out_samples) + overlap,
+                                                  out_data + (c * out_samples) + out_samples);
                     } else {
-                        m_decodeGenFifo[c].insert(m_decodeGenFifo[c].end(),
-                                                  outData + (c * outSamples),
-                                                  outData + (c * outSamples) + outSamples);
+                        m_decode_gen_fifo[c].insert(m_decode_gen_fifo[c].end(),
+                                                  out_data + (c * out_samples),
+                                                  out_data + (c * out_samples) + out_samples);
                     }
                 }
             }
@@ -1037,14 +1036,14 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
     }
 
     // Transfer n_vec samples from FIFO to destination out_buffer
-    int fifo_channels = (int)m_decodeGenFifo.size();
-    size_t available = (fifo_channels > 0) ? (m_decodeGenFifo[0].size() - m_decodeGenFifoReadIdx) : 0;
+    int fifo_channels = (int)m_decode_gen_fifo.size();
+    size_t available = (fifo_channels > 0) ? (m_decode_gen_fifo[0].size() - m_decode_gen_fifo_read_idx) : 0;
     int copy_samples = std::min((size_t)n_vec, available);
 
-    for (int c = 0; c < outCh; ++c) {
+    for (int c = 0; c < out_ch; ++c) {
         if (out_buffer[c]) {
             if (c < fifo_channels && copy_samples > 0) {
-                const float* src = m_decodeGenFifo[c].data() + m_decodeGenFifoReadIdx;
+                const float* src = m_decode_gen_fifo[c].data() + m_decode_gen_fifo_read_idx;
                 std::memcpy(out_buffer[c], src, copy_samples * sizeof(float));
                 if (copy_samples < n_vec) {
                     std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
@@ -1055,27 +1054,27 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
         }
     }
 
-    m_decodeGenFifoReadIdx += copy_samples;
-    if (fifo_channels > 0 && m_decodeGenFifoReadIdx >= m_decodeGenFifo[0].size()) {
-        for (auto& ch : m_decodeGenFifo) ch.clear();
-        m_decodeGenFifoReadIdx = 0;
+    m_decode_gen_fifo_read_idx += copy_samples;
+    if (fifo_channels > 0 && m_decode_gen_fifo_read_idx >= m_decode_gen_fifo[0].size()) {
+        for (auto& ch : m_decode_gen_fifo) ch.clear();
+        m_decode_gen_fifo_read_idx = 0;
     }
 }
 
-bool OnnxBackend::has_method(std::string method_name) {
-    if (method_name == "forward") return (m_impl->session != nullptr && !m_audioInputs.empty());
+auto OnnxBackend::has_method(std::string method_name) -> bool {
+    if (method_name == "forward") return (m_impl->session != nullptr && !m_audio_inputs.empty());
     return m_impl->companions.find(method_name) != m_impl->companions.end();
 }
 
-bool OnnxBackend::has_prior_decode() {
+auto OnnxBackend::has_prior_decode() -> bool {
     return has_method("prior");
 }
 
-bool OnnxBackend::has_autoencode() {
+auto OnnxBackend::has_autoencode() -> bool {
     return has_method("encode") && has_method("decode");
 }
 
-std::vector<std::string> OnnxBackend::get_plugin_modes() {
+auto OnnxBackend::get_plugin_modes() -> std::vector<std::string> {
     std::vector<std::string> modes;
     if (!is_loaded()) return modes;
 
@@ -1091,54 +1090,54 @@ std::vector<std::string> OnnxBackend::get_plugin_modes() {
     return modes;
 }
 
-std::vector<int> OnnxBackend::get_mode_params(std::string mode) {
+auto OnnxBackend::get_mode_params(std::string mode) -> std::vector<int> {
     // [in_dim, in_ratio, out_dim, out_ratio]
     if (mode == "forward") {
-        return { m_inChannels, 1, m_outChannels, 1 };
+        return { m_in_channels, 1, m_out_channels, 1 };
     } else if (mode == "decode gen" || mode == "prior") {
-        return { 0, 1, m_outChannels, 1 };
+        return { 0, 1, m_out_channels, 1 };
     } else if (mode == "encode") {
-        return { m_inChannels, 1, m_latentDim, m_higherRatio };
+        return { m_in_channels, 1, m_latent_dim, m_higher_ratio };
     } else if (mode == "decode") {
-        return { m_latentDim, m_higherRatio, m_outChannels, 1 };
+        return { m_latent_dim, m_higher_ratio, m_out_channels, 1 };
     }
-    return { m_inChannels, 1, m_outChannels, 1 };
+    return { m_in_channels, 1, m_out_channels, 1 };
 }
 
-std::vector<std::string> OnnxBackend::get_available_methods(LockedModel* model) {
-    return m_availableMethods;
+auto OnnxBackend::get_available_methods(LockedModel* model) -> std::vector<std::string> {
+    return m_available_methods;
 }
 
-std::vector<int> OnnxBackend::get_method_params(std::string method) {
+auto OnnxBackend::get_method_params(std::string method) -> std::vector<int> {
     return get_mode_params(method);
 }
 
-int OnnxBackend::get_higher_ratio() {
-    return m_higherRatio;
+auto OnnxBackend::get_higher_ratio() -> int {
+    return m_higher_ratio;
 }
 
 // Parameter Introspection & Bending
-std::vector<std::string> OnnxBackend::get_available_layers() {
-    return m_availableLayers;
+auto OnnxBackend::get_available_layers() -> std::vector<std::string> {
+    return m_available_layers;
 }
 
-std::vector<float> OnnxBackend::get_layer_weights(std::string layer_name) {
+auto OnnxBackend::get_layer_weights(std::string layer_name) -> std::vector<float> {
     auto it = m_parameters.find(layer_name);
     if (it != m_parameters.end()) {
-        return it->second.currentWeights;
+        return it->second.current_weights;
     }
     return {};
 }
 
-std::vector<float> OnnxBackend::get_original_layer_weights(std::string layer_name) {
+auto OnnxBackend::get_original_layer_weights(std::string layer_name) -> std::vector<float> {
     auto it = m_parameters.find(layer_name);
     if (it != m_parameters.end()) {
-        return it->second.originalWeights;
+        return it->second.original_weights;
     }
     return {};
 }
 
-std::vector<int64_t> OnnxBackend::get_layer_shape(std::string layer_name) {
+auto OnnxBackend::get_layer_shape(std::string layer_name) -> std::vector<int64_t> {
     auto it = m_parameters.find(layer_name);
     if (it != m_parameters.end()) {
         return it->second.shape;
@@ -1146,44 +1145,44 @@ std::vector<int64_t> OnnxBackend::get_layer_shape(std::string layer_name) {
     return {};
 }
 
-void OnnxBackend::set_layer_weights(std::string layer_name, const std::vector<float>& weights) {
+auto OnnxBackend::set_layer_weights(std::string layer_name, const std::vector<float>& weights) -> void {
     auto it = m_parameters.find(layer_name);
     if (it != m_parameters.end()) {
-        size_t count = std::min(it->second.currentWeights.size(), weights.size());
-        std::memcpy(it->second.currentWeights.data(), weights.data(), count * sizeof(float));
-        it->second.isModified = true;
+        size_t count = std::min(it->second.current_weights.size(), weights.size());
+        std::memcpy(it->second.current_weights.data(), weights.data(), count * sizeof(float));
+        it->second.is_modified = true;
     }
 }
 
-void OnnxBackend::reset_layer_weights(std::string layer_name) {
+auto OnnxBackend::reset_layer_weights(std::string layer_name) -> void {
     auto it = m_parameters.find(layer_name);
     if (it != m_parameters.end()) {
-        it->second.currentWeights = it->second.originalWeights;
-        it->second.isModified = false;
+        it->second.current_weights = it->second.original_weights;
+        it->second.is_modified = false;
     }
 }
 
-void OnnxBackend::reset_all_layer_weights() {
+auto OnnxBackend::reset_all_layer_weights() -> void {
     for (auto& pair : m_parameters) {
-        pair.second.currentWeights = pair.second.originalWeights;
-        pair.second.isModified = false;
+        pair.second.current_weights = pair.second.original_weights;
+        pair.second.is_modified = false;
     }
 }
 
-int OnnxBackend::save_model(std::string path) {
+auto OnnxBackend::save_model(std::string path) -> int {
     return 0; // Exporting mutated ONNX will be handled in Phase 5
 }
 
 // Stubs for Max/MSP & PureData Attributes
-std::vector<std::string> OnnxBackend::get_available_attributes() { return {}; }
-std::vector<std::string> OnnxBackend::get_settable_attributes() { return {}; }
-bool OnnxBackend::has_settable_attribute(std::string attribute) { return false; }
-std::string OnnxBackend::get_attribute_as_string(std::string attribute_name) { return ""; }
-void OnnxBackend::set_attribute(std::string, std::vector<std::string>, const BufferMap&) {}
-std::vector<std::string> OnnxBackend::get_buffer_attributes() { return {}; }
-bool OnnxBackend::is_buffer_element_of_attribute(std::string, int) { return false; }
-bool OnnxBackend::is_tensor_element_of_attribute(std::string, int) { return false; }
-std::string OnnxBackend::get_buffer_name(std::string, int) { return ""; }
-int OnnxBackend::update_buffer(std::string, StaticBuffer<float>&) { return 0; }
-int OnnxBackend::reset_buffer(std::string) { return 0; }
-ModelInfo OnnxBackend::get_model_info() { return {}; }
+auto OnnxBackend::get_available_attributes() -> std::vector<std::string> { return {}; }
+auto OnnxBackend::get_settable_attributes() -> std::vector<std::string> { return {}; }
+auto OnnxBackend::has_settable_attribute(std::string attribute) -> bool { return false; }
+auto OnnxBackend::get_attribute_as_string(std::string attribute_name) -> std::string { return ""; }
+auto OnnxBackend::set_attribute(std::string, std::vector<std::string>, const BufferMap&) -> void {}
+auto OnnxBackend::get_buffer_attributes() -> std::vector<std::string> { return {}; }
+auto OnnxBackend::is_buffer_element_of_attribute(std::string, int) -> bool { return false; }
+auto OnnxBackend::is_tensor_element_of_attribute(std::string, int) -> bool { return false; }
+auto OnnxBackend::get_buffer_name(std::string, int) -> std::string { return ""; }
+auto OnnxBackend::update_buffer(std::string, StaticBuffer<float>&) -> int { return 0; }
+auto OnnxBackend::reset_buffer(std::string) -> int { return 0; }
+auto OnnxBackend::get_model_info() -> ModelInfo { return {}; }
