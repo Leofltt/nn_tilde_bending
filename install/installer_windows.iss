@@ -23,7 +23,7 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf64}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputBaseFilename=nn_bending_Windows_x64_{#MyAppVersion}_setup
+OutputBaseFilename=NetBender_Windows_x64_{#MyAppVersion}_setup
 OutputDir=..\dist
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -49,11 +49,11 @@ Name: "standalone"; Description: "Standalone Application"; Types: full custom
 
 [Files]
 ; VST3 plugin bundle files (including bundled LibTorch DLLs)
-Source: "..\build\installer_stage_win\nn_bending_Windows_x64_{#MyAppVersion}\VST3\NetBender.vst3\*"; DestDir: "{commoncf64}\VST3\NetBender.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
+Source: "..\build\installer_stage_win\NetBender_Windows_x64_{#MyAppVersion}\VST3\NetBender.vst3\*"; DestDir: "{commoncf64}\VST3\NetBender.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
 
 #if HasStandalone
 ; Standalone application and runtime DLLs
-Source: "..\build\installer_stage_win\nn_bending_Windows_x64_{#MyAppVersion}\Standalone\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: standalone
+Source: "..\build\installer_stage_win\NetBender_Windows_x64_{#MyAppVersion}\Standalone\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: standalone
 #endif
 
 [Icons]

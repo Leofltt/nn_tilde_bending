@@ -33,10 +33,6 @@ configure_file(
     COPYONLY
 )
 
-configure_file(
-  "${CMAKE_SOURCE_DIR}/../install/patch_with_vst.sh" "${CMAKE_SOURCE_DIR}/extras"
-  COPYONLY
-)
 
 
 include(${CMAKE_SOURCE_DIR}/cmake/add_torch.cmake)
@@ -46,12 +42,18 @@ find_package(Torch REQUIRED PATHS ${torch_dir}/libtorch/lib)
 include(${CMAKE_SOURCE_DIR}/cmake/add_onnxruntime.cmake)
 
 if (APPLE)
-  # Automatically strip quarantine and ad-hoc sign torch dylibs to prevent Gatekeeper popups
+  # Automatically strip quarantine and ad-hoc sign torch, onnx, and support dylibs to prevent Gatekeeper popups
   if (EXISTS "${TORCH_INSTALL_PREFIX}/lib")
     execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${TORCH_INSTALL_PREFIX}/lib'/*.dylib 2>/dev/null; find '${TORCH_INSTALL_PREFIX}/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
   endif()
   if (EXISTS "${torch_dir}/libtorch/lib")
     execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${torch_dir}/libtorch/lib'/*.dylib 2>/dev/null; find '${torch_dir}/libtorch/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+  if (EXISTS "${ort_dir}")
+    execute_process(COMMAND sh -c "find '${ort_dir}' -name '*.dylib' -exec xattr -d com.apple.quarantine {} + 2>/dev/null; find '${ort_dir}' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+  if (EXISTS "${CMAKE_SOURCE_DIR}/support")
+    execute_process(COMMAND sh -c "find '${CMAKE_SOURCE_DIR}/support' -name '*.dylib' -exec xattr -d com.apple.quarantine {} + 2>/dev/null; find '${CMAKE_SOURCE_DIR}/support' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
   endif()
 endif()
 

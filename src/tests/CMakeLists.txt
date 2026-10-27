@@ -23,6 +23,6 @@ target_link_libraries(test_backends PRIVATE
 if (APPLE)
     set_target_properties(test_backends PROPERTIES
         BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${ort_extracted_dir}/lib;${CONDA_ENV_PATH}/lib;@loader_path/;@loader_path/../lib"
+        INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${ort_extracted_dir}/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/NetBender/lib;@loader_path/;@loader_path/../lib"
     )
 endif()

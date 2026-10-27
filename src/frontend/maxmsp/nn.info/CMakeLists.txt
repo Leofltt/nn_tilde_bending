@@ -87,7 +87,7 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 if (APPLE)
 	set_target_properties(${PROJECT_NAME} PROPERTIES
 		BUILD_WITH_INSTALL_RPATH TRUE
-		INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/../../support;@loader_path/../../../support;${CONDA_ENV_PATH}/lib"
+		INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/../../support;@loader_path/../../../support;/Library/Application Support/NetBender/lib;${CONDA_ENV_PATH}/lib"
 	)
 
 	if (BUNDLE_DEPENDENCIES)

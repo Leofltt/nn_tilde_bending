@@ -55,13 +55,13 @@ if [ -z "${VERSION}" ]; then
         VERSION="1.6.0"
     fi
 fi
-PKG_NAME="nn_bending_macOS_${VERSION}.pkg"
+PKG_NAME="NetBender_macOS_${VERSION}.pkg"
 
 # Dependencies bundling flag (1 to run dylib_fix.py, 0 to skip)
 BUNDLE_DEPS="${BUNDLE_DEPS:-1}"
 
 echo "=================================================================="
-echo " Packaging nn~ Bending macOS Installer"
+echo " Packaging NetBender macOS Installer"
 echo " Version:           ${VERSION}"
 echo " App Sign Identity: ${SIGN_ID}"
 echo " Pkg Sign Identity: ${INSTALLER_SIGN_ID:-<none (unsigned installer)>}"
@@ -102,7 +102,7 @@ done
 # 3. Prepare Staging Directory
 # ------------------------------------------------------------------------------
 rm -rf "${STAGE_DIR}"
-SHARED_LIB_DEST="/Library/Application Support/nn_bending/lib"
+SHARED_LIB_DEST="/Library/Application Support/NetBender/lib"
 mkdir -p "${STAGE_DIR}/support_root${SHARED_LIB_DEST}"
 mkdir -p "${STAGE_DIR}/vst3_root/Library/Audio/Plug-Ins/VST3"
 mkdir -p "${STAGE_DIR}/au_root/Library/Audio/Plug-Ins/Components"
@@ -123,16 +123,19 @@ STAGE_SUPPORT_LIB="${STAGE_DIR}/support_root${SHARED_LIB_DEST}"
 # ------------------------------------------------------------------------------
 # 4. Bundle Dynamic Dependencies (LibTorch, C10, etc.)
 # ------------------------------------------------------------------------------
-# We place shared LibTorch runtime dylibs in /Library/Application Support/nn_bending/lib
+# We place shared LibTorch runtime dylibs in /Library/Application Support/NetBender/lib
 # so that when a DAW loads both AU and VST3 in the same process, dyld resolves to
 # the exact same dylib instances and does not duplicate operator registrations.
 if [ "${BUNDLE_DEPS}" = "1" ]; then
     echo "==> Bundling shared runtime dependencies into ${SHARED_LIB_DEST}..."
     LIB_SEARCH_PATHS=(
+        "${REPO_ROOT}/src/support"
         "${REPO_ROOT}/libtorch"
         "${BUILD_DIR}/../torch/libtorch"
         "${BUILD_DIR}/_deps"
         "${REPO_ROOT}/env"
+        "${REPO_ROOT}/onnxruntime/onnxruntime-osx-universal2-1.18.0/lib"
+        "${BUILD_DIR}/../onnxruntime/onnxruntime-osx-universal2-1.18.0/lib"
         "$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
     )
 
@@ -287,7 +290,7 @@ cat <<EOF > "${STAGE_DIR}/distribution.xml"
         <line choice="choice_app"/>
     </choices-outline>
     
-    <choice id="choice_support" title="Shared AI Runtime" description="Installs shared LibTorch runtime libraries into /Library/Application Support/nn_bending/lib" visible="false" enabled="true" selected="true">
+    <choice id="choice_support" title="Shared AI Runtime" description="Installs shared LibTorch runtime libraries into /Library/Application Support/NetBender/lib" visible="false" enabled="true" selected="true">
         <pkg-ref id="${BUNDLE_PREFIX}.support"/>
     </choice>
 
