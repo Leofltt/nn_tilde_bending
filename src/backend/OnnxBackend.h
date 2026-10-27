@@ -135,6 +135,15 @@ private:
     std::vector<std::vector<float>> m_audioHistory;
     size_t m_historySamples { 0 };
 
+    // Decode Gen output FIFO buffer per channel for gapless streaming
+    std::vector<std::vector<float>> m_decodeGenFifo;
+    size_t m_decodeGenFifoReadIdx { 0 };
+    void clearDecodeGenFifo() {
+        for (auto& ch : m_decodeGenFifo) ch.clear();
+        m_decodeGenFifo.clear();
+        m_decodeGenFifoReadIdx = 0;
+    }
+
     std::vector<std::string> m_availableMethods;
 
     void introspectGraph();

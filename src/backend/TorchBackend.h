@@ -36,6 +36,15 @@ protected:
   torch::Tensor prepare_io_tensor(std::vector<float *> &in_buffer, int in_dim, int n_batches, int in_ratio, int n_vec);
   std::string m_last_error;
 
+  // Decode Gen output FIFO buffer per channel for gapless streaming
+  std::vector<std::vector<float>> m_decode_gen_fifo;
+  size_t m_decode_gen_fifo_read_idx = 0;
+  void clear_decode_gen_fifo() {
+    for (auto &ch : m_decode_gen_fifo) ch.clear();
+    m_decode_gen_fifo.clear();
+    m_decode_gen_fifo_read_idx = 0;
+  }
+
 public:
   std::string get_last_error() const override { return m_last_error; }
   using DataType = float; 

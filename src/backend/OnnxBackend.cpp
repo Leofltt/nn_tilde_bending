@@ -6,6 +6,8 @@
 #include <numeric>
 #include <cstdint>
 #include <cstring>
+#include <random>
+#include <thread>
 
 // Include official ONNX Runtime C++ API
 #include <onnxruntime_cxx_api.h>
@@ -43,8 +45,10 @@ struct OnnxBackend::Impl {
 OnnxBackend::OnnxBackend()
     : m_impl(std::make_unique<Impl>())
 {
-    // Optimize session for low latency audio threads
-    m_impl->sessionOptions.SetIntraOpNumThreads(1);
+    // Optimize session for multi-core audio thread execution
+    unsigned int hwThreads = std::thread::hardware_concurrency();
+    int intraThreads = std::max(1, (int)std::min(hwThreads, 4u));
+    m_impl->sessionOptions.SetIntraOpNumThreads(intraThreads);
     m_impl->sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
 }
 
@@ -216,6 +220,7 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
         }
 
         m_loaded = true;
+        clearDecodeGenFifo();
         m_lastError.clear();
         std::cout << "[OnnxBackend] Finished load() successfully for " << path << std::endl;
         std::cout << std::flush;
@@ -788,91 +793,122 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
                                      int n_batches, int n_out_channels, int n_vec,
                                      LatentHook latent_hook) {
     if (!m_loaded) return;
-    std::unique_lock<std::mutex> lock(m_sessionMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return;
 
     auto compIt = m_impl->companions.find("decode");
     if (compIt == m_impl->companions.end() || !compIt->second.session) return;
     auto& comp = compIt->second;
 
     int ratio = std::max(1, m_higherRatio);
-    // Enforce minimum frames for codecs with wide receptive field kernels
-    // Speech RAVE models (latentDim >= 8, ratio >= 1024) require 16 frames (32,768 samples)
-    // to warm up past the 13-frame group delay tail.
-    // Lighter RAVE models (latentDim <= 4) require 4 frames, and EnCodec requires 8 frames.
-    int min_frames = 4;
-    if (m_higherRatio >= 1024 && m_latentDim >= 8) {
-        min_frames = 16;
-    } else if (m_higherRatio <= 640 && m_latentDim >= 128) {
-        min_frames = 8;
-    }
-    int latent_steps = std::max(min_frames, n_vec / ratio);
-    int latent_dim = std::max(1, m_latentDim);
+    int outCh = std::min((int)out_buffer.size(), (int)n_out_channels);
 
-    // Determine nominal latent standard deviation based on codec architecture
-    // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; VAEs (Stable Audio, RAVE) operate at unit normal sigma ~ 1.0
-    float latent_scale = (m_latentDim >= 128 && m_higherRatio <= 640) ? 8.5f : 1.0f;
+    // Check available samples in FIFO buffer
+    size_t fifo_samples = (m_decodeGenFifo.empty() || m_decodeGenFifo[0].empty()) 
+        ? 0 : (m_decodeGenFifo[0].size() - m_decodeGenFifoReadIdx);
 
-    // Synthesize autonomous Gaussian latent excitation
-    static uint32_t rng_state = 1337;
-    std::vector<float> latentData(latent_dim * latent_steps);
-    for (size_t i = 0; i < latentData.size(); ++i) {
-        // Uniform to Gaussian via Box-Muller approximation
-        rng_state = rng_state * 1664525u + 1013904223u;
-        float u1 = std::max(1e-7f, (float)(rng_state & 0x00FFFFFF) / 16777216.0f);
-        rng_state = rng_state * 1664525u + 1013904223u;
-        float u2 = (float)(rng_state & 0x00FFFFFF) / 16777216.0f;
-        float z = std::sqrt(-2.0f * std::log(u1)) * std::cos(6.2831853f * u2);
-        latentData[i] = z * latent_scale;
-    }
+    // If FIFO does not have enough samples to fulfill n_vec, synthesize another block
+    if (fifo_samples < (size_t)n_vec) {
+        std::unique_lock<std::mutex> lock(m_sessionMutex);
 
-    if (latent_hook) {
-        IBackend::LatentBuffer buf{ latentData.data(), (int64_t)latent_dim, (int64_t)latent_steps };
-        latent_hook(buf);
-    }
-
-    try {
-        std::vector<int64_t> inShape = { 1, (int64_t)latent_dim, (int64_t)latent_steps };
-        std::vector<Ort::Value> compInTensors;
-        compInTensors.push_back(Ort::Value::CreateTensor<float>(
-            m_impl->memoryInfo,
-            latentData.data(),
-            latentData.size(),
-            inShape.data(),
-            inShape.size()
-        ));
-
-        auto compOutputs = comp.session->Run(
-            Ort::RunOptions{nullptr},
-            comp.inputNamePtrs.data(),
-            compInTensors.data(),
-            compInTensors.size(),
-            comp.outputNamePtrs.data(),
-            comp.outputNamePtrs.size()
-        );
-
-        if (!compOutputs.empty()) {
-            float* outData = compOutputs[0].GetTensorMutableData<float>();
-            auto outInfo = compOutputs[0].GetTensorTypeAndShapeInfo();
-            auto outShape = outInfo.GetShape();
-            int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
-            int copy_samples = std::min(n_vec, outSamples);
-            int outCh = std::min((int)out_buffer.size(), (int)n_out_channels);
-
-            // Extract from the warm tail of the synthesized stream past the initial receptive field latency
-            int offset = (outSamples > copy_samples) ? (outSamples - copy_samples) : 0;
-
-            for (int c = 0; c < outCh; ++c) {
-                if (out_buffer[c]) {
-                    std::memcpy(out_buffer[c], outData + (c * outSamples) + offset, copy_samples * sizeof(float));
-                    if (copy_samples < n_vec) {
-                        std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
-                    }
+        // Compact FIFO by erasing already consumed samples
+        if (m_decodeGenFifoReadIdx > 0) {
+            for (auto& ch : m_decodeGenFifo) {
+                if (m_decodeGenFifoReadIdx < ch.size()) {
+                    ch.erase(ch.begin(), ch.begin() + m_decodeGenFifoReadIdx);
+                } else {
+                    ch.clear();
                 }
             }
+            m_decodeGenFifoReadIdx = 0;
         }
-    } catch (const std::exception& ce) {
-        std::cerr << "[OnnxBackend::perform_decode_gen] Error: " << ce.what() << std::endl;
+
+        // Enforce minimum frames for codecs with wide receptive field kernels
+        int min_frames = 4;
+        if (m_higherRatio >= 1024 && m_latentDim >= 8) {
+            min_frames = 16;
+        } else if (m_higherRatio <= 640 && m_latentDim >= 128) {
+            min_frames = 8;
+        }
+        int latent_steps = std::max(min_frames, n_vec / ratio);
+        int latent_dim = std::max(1, m_latentDim);
+
+        float latent_scale = (m_latentDim >= 128 && m_higherRatio <= 640) ? 8.5f : 1.0f;
+
+        static std::mt19937 rng_gen(1337);
+        std::normal_distribution<float> norm_dist(0.0f, latent_scale);
+        std::vector<float> latentData(latent_dim * latent_steps);
+        for (size_t i = 0; i < latentData.size(); ++i) {
+            latentData[i] = norm_dist(rng_gen);
+        }
+
+        if (latent_hook) {
+            IBackend::LatentBuffer buf{ latentData.data(), (int64_t)latent_dim, (int64_t)latent_steps };
+            latent_hook(buf);
+        }
+
+        try {
+            std::vector<int64_t> inShape = { 1, (int64_t)latent_dim, (int64_t)latent_steps };
+            std::vector<Ort::Value> compInTensors;
+            compInTensors.push_back(Ort::Value::CreateTensor<float>(
+                m_impl->memoryInfo,
+                latentData.data(),
+                latentData.size(),
+                inShape.data(),
+                inShape.size()
+            ));
+
+            auto compOutputs = comp.session->Run(
+                Ort::RunOptions{nullptr},
+                comp.inputNamePtrs.data(),
+                compInTensors.data(),
+                compInTensors.size(),
+                comp.outputNamePtrs.data(),
+                comp.outputNamePtrs.size()
+            );
+
+            if (!compOutputs.empty()) {
+                float* outData = compOutputs[0].GetTensorMutableData<float>();
+                auto outInfo = compOutputs[0].GetTensorTypeAndShapeInfo();
+                auto outShape = outInfo.GetShape();
+                int numChannels = (outShape.size() >= 2) ? (int)outShape[1] : 1;
+                int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
+
+                // Append synthesized output into per-channel FIFO buffers
+                if (m_decodeGenFifo.size() < (size_t)numChannels) {
+                    m_decodeGenFifo.resize(numChannels);
+                }
+                for (int c = 0; c < numChannels; ++c) {
+                    const float* src = outData + (c * outSamples);
+                    m_decodeGenFifo[c].insert(m_decodeGenFifo[c].end(), src, src + outSamples);
+                }
+            }
+        } catch (const std::exception& ce) {
+            std::cerr << "[OnnxBackend::perform_decode_gen] Error: " << ce.what() << std::endl;
+        }
+    }
+
+    // Transfer n_vec samples from FIFO to destination out_buffer
+    int fifo_channels = (int)m_decodeGenFifo.size();
+    size_t available = (fifo_channels > 0) ? (m_decodeGenFifo[0].size() - m_decodeGenFifoReadIdx) : 0;
+    int copy_samples = std::min((size_t)n_vec, available);
+
+    for (int c = 0; c < outCh; ++c) {
+        if (out_buffer[c]) {
+            if (c < fifo_channels && copy_samples > 0) {
+                const float* src = m_decodeGenFifo[c].data() + m_decodeGenFifoReadIdx;
+                std::memcpy(out_buffer[c], src, copy_samples * sizeof(float));
+                if (copy_samples < n_vec) {
+                    std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+                }
+            } else {
+                std::memset(out_buffer[c], 0, n_vec * sizeof(float));
+            }
+        }
+    }
+
+    m_decodeGenFifoReadIdx += copy_samples;
+    if (fifo_channels > 0 && m_decodeGenFifoReadIdx >= m_decodeGenFifo[0].size()) {
+        for (auto& ch : m_decodeGenFifo) ch.clear();
+        m_decodeGenFifoReadIdx = 0;
     }
 }
 

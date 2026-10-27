@@ -353,79 +353,111 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
   int out_dim = decode_params[2];
   int out_ratio = decode_params[3];
 
-  int min_steps = (latent_ratio <= 640 && latent_dim >= 128) ? 8 : (latent_ratio >= 1024 && latent_dim >= 8 ? 16 : 4);
-  int latent_steps = std::max(min_steps, n_vec / std::max(1, latent_ratio));
+  // Check available samples in FIFO buffer
+  size_t fifo_samples = (m_decode_gen_fifo.empty() || m_decode_gen_fifo[0].empty())
+      ? 0 : (m_decode_gen_fifo[0].size() - m_decode_gen_fifo_read_idx);
 
-  at::Tensor latent_tensor;
-  std::string prior_method = has_method("prior") ? "prior" : (has_method("generate") ? "generate" : "");
+  // If FIFO does not have enough samples to fulfill n_vec, synthesize another block
+  if (fifo_samples < (size_t)n_vec) {
+    // Compact FIFO by erasing already consumed samples
+    if (m_decode_gen_fifo_read_idx > 0) {
+      for (auto &ch : m_decode_gen_fifo) {
+        if (m_decode_gen_fifo_read_idx < ch.size()) {
+          ch.erase(ch.begin(), ch.begin() + m_decode_gen_fifo_read_idx);
+        } else {
+          ch.clear();
+        }
+      }
+      m_decode_gen_fifo_read_idx = 0;
+    }
 
-  if (!prior_method.empty()) {
-    // If model has a learned prior (RAVE / Darbouka), seed base latents using prior!
-    auto prior_params = get_method_params(prior_method);
+    int min_steps = (latent_ratio <= 640 && latent_dim >= 128) ? 8 : (latent_ratio >= 1024 && latent_dim >= 8 ? 16 : 4);
+    int latent_steps = std::max(min_steps, n_vec / std::max(1, latent_ratio));
+
+    at::Tensor latent_tensor;
+    std::string prior_method = has_method("prior") ? "prior" : (has_method("generate") ? "generate" : "");
+
+    if (!prior_method.empty()) {
+      // If model has a learned prior (RAVE / Darbouka), seed base latents using prior!
+      auto prior_params = get_method_params(prior_method);
+      std::unique_lock<std::mutex> model_lock(m_model_mutex);
+      auto kwargs = empty_kwargs();
+      std::vector<torch::jit::IValue> prior_inputs;
+
+      if (!prior_params.empty() && prior_params[0] > 0) {
+        int p_in_dim = prior_params[0];
+        int p_in_ratio = prior_params[1];
+        std::vector<float*> empty_in;
+        auto cat_tensor_in = prepare_io_tensor(empty_in, p_in_dim, n_batches, p_in_ratio, n_vec).to(m_device);
+        prior_inputs.push_back(cat_tensor_in);
+      }
+
+      try {
+        latent_tensor = m_model.get_method(prior_method)(prior_inputs, kwargs).toTensor().to(m_device);
+      } catch (...) {
+        latent_tensor = at::Tensor();
+      }
+      model_lock.unlock();
+    }
+
+    // Fallback: If no prior or prior failed, synthesize base latent buffer with calibrated Gaussian excitation
+    // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; VAEs (Stable Audio, RAVE) operate at unit normal sigma ~ 1.0
+    if (!latent_tensor.defined() || latent_tensor.numel() == 0) {
+      float latent_scale = (latent_dim >= 128 && latent_ratio <= 640) ? 8.5f : 1.0f;
+      latent_tensor = torch::randn({n_batches, latent_dim, latent_steps},
+                                   torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * latent_scale;
+    }
+
+    // Apply latent hook (2D Latent Vector Pad, Drift, Harmonics, RFF Orbit)
+    if (latent_hook) {
+      try {
+        latent_tensor = latent_hook(latent_tensor);
+      } catch (const std::exception &e) {
+        std::cerr << "Decode Gen latent hook error: " << e.what() << '\n';
+      }
+    }
+
     std::unique_lock<std::mutex> model_lock(m_model_mutex);
     auto kwargs = empty_kwargs();
-    std::vector<torch::jit::IValue> prior_inputs;
-
-    if (!prior_params.empty() && prior_params[0] > 0) {
-      int p_in_dim = prior_params[0];
-      int p_in_ratio = prior_params[1];
-      std::vector<float*> empty_in;
-      auto cat_tensor_in = prepare_io_tensor(empty_in, p_in_dim, n_batches, p_in_ratio, n_vec).to(m_device);
-      prior_inputs.push_back(cat_tensor_in);
-    }
-
+    std::vector<torch::jit::IValue> decode_inputs = {latent_tensor.to(m_device)};
+    at::Tensor tensor_out;
     try {
-      latent_tensor = m_model.get_method(prior_method)(prior_inputs, kwargs).toTensor().to(m_device);
-    } catch (...) {
-      latent_tensor = at::Tensor();
+      tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
+      int effective_out_ratio = (out_ratio > 1 && tensor_out.size(-1) >= n_vec) ? 1 : out_ratio;
+      tensor_out = tensor_out.repeat_interleave(effective_out_ratio).reshape({n_batches, out_dim, -1});
+    } catch (const std::exception &e) {
+      std::cerr << "Decode Gen decode error: " << e.what() << '\n';
+      return;
     }
     model_lock.unlock();
-  }
 
-  // Fallback: If no prior or prior failed, synthesize base latent buffer with calibrated Gaussian excitation
-  // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; VAEs (Stable Audio, RAVE) operate at unit normal sigma ~ 1.0
-  if (!latent_tensor.defined() || latent_tensor.numel() == 0) {
-    float latent_scale = (latent_dim >= 128 && latent_ratio <= 640) ? 8.5f : 1.0f;
-    latent_tensor = torch::randn({n_batches, latent_dim, latent_steps},
-                                 torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * latent_scale;
-  }
+    int model_out_ch = tensor_out.size(1);
+    int new_samples = tensor_out.size(2);
+    tensor_out = tensor_out.contiguous().to(CPU);
+    const float* out_data = tensor_out.data_ptr<float>();
 
-  // Apply latent hook (2D Latent Vector Pad, Drift, Harmonics, RFF Orbit)
-  if (latent_hook) {
-    try {
-      latent_tensor = latent_hook(latent_tensor);
-    } catch (const std::exception &e) {
-      std::cerr << "Decode Gen latent hook error: " << e.what() << '\n';
+    // Append synthesized output into per-channel FIFO buffers
+    if (m_decode_gen_fifo.size() < (size_t)model_out_ch) {
+      m_decode_gen_fifo.resize(model_out_ch);
+    }
+    for (int c = 0; c < model_out_ch; ++c) {
+      const float* src = out_data + c * new_samples;
+      m_decode_gen_fifo[c].insert(m_decode_gen_fifo[c].end(), src, src + new_samples);
     }
   }
 
-  std::unique_lock<std::mutex> model_lock(m_model_mutex);
-  auto kwargs = empty_kwargs();
-  std::vector<torch::jit::IValue> decode_inputs = {latent_tensor.to(m_device)};
-  at::Tensor tensor_out;
-  try {
-    tensor_out = m_model.get_method("decode")(decode_inputs, kwargs).toTensor();
-    int effective_out_ratio = (out_ratio > 1 && tensor_out.size(-1) >= n_vec) ? 1 : out_ratio;
-    tensor_out = tensor_out.repeat_interleave(effective_out_ratio).reshape({n_batches, out_dim, -1});
-  } catch (const std::exception &e) {
-    std::cerr << "Decode Gen decode error: " << e.what() << '\n';
-    return;
-  }
-  model_lock.unlock();
+  // Transfer n_vec samples from FIFO to destination out_buffer
+  int fifo_channels = (int)m_decode_gen_fifo.size();
+  size_t available = (fifo_channels > 0) ? (m_decode_gen_fifo[0].size() - m_decode_gen_fifo_read_idx) : 0;
+  int copy_samples = std::min((size_t)n_vec, available);
 
-  int out_batches(tensor_out.size(0)), out_channels(tensor_out.size(1)),
-      out_n_vec(tensor_out.size(2));
-  tensor_out = tensor_out.contiguous().to(CPU);
-  const float* out_data = tensor_out.data_ptr<float>();
-
-  int copy_samples = std::min(n_vec, out_n_vec);
   for (int j = 0; j < n_batches; j++) {
-    for (int i = 0; i < n_out_channels; i++) {
-      float* dest = out_buffer[j * n_out_channels + i];
+    for (int c = 0; c < n_out_channels; c++) {
+      float* dest = out_buffer[j * n_out_channels + c];
       if (dest == nullptr) continue;
 
-      if (i < out_channels) {
-        const float* src = out_data + (j * out_channels + i) * out_n_vec;
+      if (c < fifo_channels && copy_samples > 0) {
+        const float* src = m_decode_gen_fifo[c].data() + m_decode_gen_fifo_read_idx;
         std::memcpy(dest, src, copy_samples * sizeof(float));
         if (copy_samples < n_vec) {
           std::memset(dest + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
@@ -434,6 +466,12 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
         std::memset(dest, 0, n_vec * sizeof(float));
       }
     }
+  }
+
+  m_decode_gen_fifo_read_idx += copy_samples;
+  if (fifo_channels > 0 && m_decode_gen_fifo_read_idx >= m_decode_gen_fifo[0].size()) {
+    for (auto &ch : m_decode_gen_fifo) ch.clear();
+    m_decode_gen_fifo_read_idx = 0;
   }
 }
 
@@ -520,6 +558,7 @@ int TorchBackend::load(std::string path, double sampleRate, const std::string* t
     m_path = path;
     set_sample_rate(sampleRate);
     m_loaded = 1;
+    clear_decode_gen_fifo();
 
     // Cache original weights and parameter tensor handles for bending / reset
     m_original_weights.clear();
