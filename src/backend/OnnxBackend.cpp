@@ -202,7 +202,14 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
 
         // Initialize history buffer for causal receptive field models (e.g. RAVE with ratio 2048)
         m_audioHistory.clear();
-        m_historySamples = (m_higherRatio >= 1024) ? 4096 : 0;
+        if (m_higherRatio >= 1024) {
+            // Adaptive pre-roll history: Deep architectures / speech models (latent_dim >= 8)
+            // have ~13 frames of group delay latency (26,624 samples), requiring 14 frames (28,672 samples).
+            // Lighter models like Darbouka (latent_dim <= 4) only require 2 frames (4,096 samples).
+            m_historySamples = (m_latentDim >= 8) ? 28672 : 4096;
+        } else {
+            m_historySamples = 0;
+        }
         if (m_historySamples > 0) {
             m_audioHistory.resize(std::max(1, m_inChannels), std::vector<float>(m_historySamples, 0.0f));
             std::cout << "[OnnxBackend] Enabled " << m_historySamples << "-sample streaming history buffer for causal receptive field" << std::endl;
@@ -789,8 +796,16 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
     auto& comp = compIt->second;
 
     int ratio = std::max(1, m_higherRatio);
-    // Enforce minimum frames for codecs with wide receptive field kernels (e.g. EnCodec reflect pad 6, RAVE causal delay)
-    int min_frames = (m_higherRatio <= 512 || m_latentDim >= 64) ? 8 : 4;
+    // Enforce minimum frames for codecs with wide receptive field kernels
+    // Speech RAVE models (latentDim >= 8, ratio >= 1024) require 16 frames (32,768 samples)
+    // to warm up past the 13-frame group delay tail.
+    // Lighter RAVE models (latentDim <= 4) require 4 frames, and EnCodec requires 8 frames.
+    int min_frames = 4;
+    if (m_higherRatio >= 1024 && m_latentDim >= 8) {
+        min_frames = 16;
+    } else if (m_higherRatio <= 512 || m_latentDim >= 64) {
+        min_frames = 8;
+    }
     int latent_steps = std::max(min_frames, n_vec / ratio);
     int latent_dim = std::max(1, m_latentDim);
 

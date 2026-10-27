@@ -137,7 +137,8 @@ int main(int argc, char** argv) {
         // -------------------------------------------------------------
         // 1. STREAMING FORWARD TEST (8 consecutive blocks of test audio)
         // -------------------------------------------------------------
-        std::cout << "  Testing perform_forward (8-block audio stream)..." << std::endl;
+        int numFwdBlocks = (res.latentDim >= 8 && res.ratio >= 1024) ? 16 : 8;
+        std::cout << "  Testing perform_forward (" << numFwdBlocks << "-block audio stream)..." << std::endl;
         try {
             float maxPeak = 0.0f;
             double sumSq = 0.0;
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
             bool hadNan = false;
             bool fuseTripped = false;
 
-            for (int b = 0; b < 8; ++b) {
+            for (int b = 0; b < numFwdBlocks; ++b) {
                 std::vector<float> inData(n_vec);
                 std::vector<float> outData(n_vec, 0.0f);
                 // Synthesize 100 Hz sine wave + periodic impulse transients at amplitude 0.7
