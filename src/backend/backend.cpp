@@ -353,7 +353,7 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
   int out_dim = decode_params[2];
   int out_ratio = decode_params[3];
 
-  int min_steps = (latent_ratio <= 512 || latent_dim >= 64) ? 8 : 1;
+  int min_steps = (latent_ratio <= 640 && latent_dim >= 128) ? 8 : (latent_ratio >= 1024 && latent_dim >= 8 ? 16 : 4);
   int latent_steps = std::max(min_steps, n_vec / std::max(1, latent_ratio));
 
   at::Tensor latent_tensor;
@@ -383,9 +383,9 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
   }
 
   // Fallback: If no prior or prior failed, synthesize base latent buffer with calibrated Gaussian excitation
-  // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; RAVE operates at sigma ~ 0.5
+  // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; VAEs (Stable Audio, RAVE) operate at unit normal sigma ~ 1.0
   if (!latent_tensor.defined() || latent_tensor.numel() == 0) {
-    float latent_scale = (latent_dim >= 64 || latent_ratio <= 512) ? 8.5f : 0.5f;
+    float latent_scale = (latent_dim >= 128 && latent_ratio <= 640) ? 8.5f : 1.0f;
     latent_tensor = torch::randn({n_batches, latent_dim, latent_steps},
                                  torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * latent_scale;
   }

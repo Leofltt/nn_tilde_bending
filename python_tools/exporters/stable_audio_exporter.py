@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional, List, Union, Tuple
 
 # Add project root to sys.path so direct script execution works
 project_root = str(Path(__file__).resolve().parents[2])
@@ -20,6 +21,7 @@ import torch
 import torch.nn as nn
 
 from python_tools.exporters.base_exporter import AudioCodecWrapper, export_torchscript
+from python_tools.stable_audio_ts_to_onnx import convert_stable_audio_ts_to_onnx
 
 
 class OobleckEncoderAdapter(nn.Module):
@@ -33,11 +35,6 @@ class OobleckEncoderAdapter(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.encoder(x)
-        # Handle dict / dataclass or raw tensor
-        if hasattr(out, "latent"):
-            return out.latent
-        if hasattr(out, "sample"):
-            return out.sample
         if isinstance(out, (tuple, list)):
             return out[0]
         return out
@@ -54,9 +51,6 @@ class OobleckDecoderAdapter(nn.Module):
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         out = self.decoder(z)
-        # Handle dict / dataclass or raw tensor
-        if hasattr(out, "sample"):
-            return out.sample
         if isinstance(out, (tuple, list)):
             return out[0]
         return out
@@ -139,16 +133,102 @@ def load_stable_audio_1_vae(
 
 def export_stable_audio(
     model_checkpoint_or_instance=None,
-    output_path: str = "models/stable_audio_1_vae.ts",
+    output_path: Optional[str] = None,
     sr: int = 44100,
     latent_dim: int = 64,
     ratio: int = 2048,
     repo_id: str = "stabilityai/stable-audio-open-1.0",
     download_dir: str = "models/checkpoints/stable_audio_1_vae",
-):
+    to_onnx: bool = False,
+    format: Optional[str] = None,
+    promote_for_bending: bool = True,
+    methods: Optional[List[str]] = None,
+    buffer_size: int = 8192,
+    channels: int = 2,
+    force: bool = False,
+    filename: Optional[str] = None,
+    verbose: bool = True,
+) -> Union[str, Tuple[str, str]]:
     """
-    Exports Stable Audio 1.0 / Open VAE to TorchScript (.ts).
+    Exports Stable Audio 1.0 / Open VAE to TorchScript (.ts), ONNX (.onnx), or both.
+    If an existing TorchScript model already exists or is provided, converts it directly
+    to ONNX without re-downloading or re-loading the heavy checkpoint.
     """
+    # 1. Determine requested format
+    target_format = "ts"
+    if format:
+        target_format = format.lower()
+    elif to_onnx or (output_path and output_path.endswith(".onnx")):
+        target_format = "onnx"
+
+    # 2. Determine target filepaths
+    default_base = "models/stable_audio_1_vae"
+    if output_path is None:
+        if target_format == "onnx":
+            output_path = f"{default_base}_bendable.onnx" if promote_for_bending else f"{default_base}.onnx"
+        else:
+            output_path = f"{default_base}.ts"
+
+    if output_path.endswith(".onnx"):
+        onnx_path = output_path
+        base = output_path.removesuffix(".onnx").removesuffix("_bendable").removesuffix("_raw")
+        ts_path = f"{base}.ts"
+    elif output_path.endswith(".ts"):
+        ts_path = output_path
+        base = output_path.removesuffix(".ts")
+        onnx_path = f"{base}_bendable.onnx" if promote_for_bending else f"{base}.onnx"
+    else:
+        ts_path = f"{output_path}.ts"
+        onnx_path = f"{output_path}_bendable.onnx" if promote_for_bending else f"{output_path}.onnx"
+
+    # 3. Check if input checkpoint is an existing TorchScript model file
+    if isinstance(model_checkpoint_or_instance, str) and os.path.isfile(model_checkpoint_or_instance):
+        is_ts_file = model_checkpoint_or_instance.endswith((".ts", ".pt"))
+        if is_ts_file and target_format in ("onnx", "both"):
+            if verbose:
+                logging.info(f"Input '{model_checkpoint_or_instance}' is an existing TorchScript model.")
+                logging.info(f"Converting directly to ONNX: {onnx_path}")
+            res_onnx = convert_stable_audio_ts_to_onnx(
+                ts_model_path=model_checkpoint_or_instance,
+                output_onnx_path=onnx_path,
+                buffer_size=buffer_size,
+                channels=channels,
+                promote_for_bending=promote_for_bending,
+                methods=methods,
+                verbose=verbose,
+            )
+            if target_format == "both":
+                return (model_checkpoint_or_instance, res_onnx)
+            return res_onnx
+        elif is_ts_file and target_format == "ts":
+            if verbose:
+                logging.info(f"Using existing TorchScript model at '{model_checkpoint_or_instance}'")
+            return model_checkpoint_or_instance
+
+    # 4. If ONNX is requested and a .ts model already exists on disk, convert directly!
+    if target_format in ("onnx", "both") and os.path.exists(ts_path) and not force and model_checkpoint_or_instance is None:
+        if verbose:
+            logging.info(f"Found existing TorchScript model at '{ts_path}'.")
+            logging.info(f"Converting directly to ONNX without re-downloading: {onnx_path}")
+        res_onnx = convert_stable_audio_ts_to_onnx(
+            ts_model_path=ts_path,
+            output_onnx_path=onnx_path,
+            buffer_size=buffer_size,
+            channels=channels,
+            promote_for_bending=promote_for_bending,
+            methods=methods,
+            verbose=verbose,
+        )
+        if target_format == "both":
+            return (ts_path, res_onnx)
+        return res_onnx
+
+    # 5. Otherwise, export/load the TorchScript model
+    if target_format == "ts" and os.path.exists(ts_path) and not force and model_checkpoint_or_instance is None:
+        if verbose:
+            logging.info(f"TorchScript model already exists at '{ts_path}'. Skipping export (use --force to overwrite).")
+        return ts_path
+
     if model_checkpoint_or_instance is None or isinstance(model_checkpoint_or_instance, str):
         path = model_checkpoint_or_instance or repo_id
         vae = load_stable_audio_1_vae(path, download_dir=download_dir)
@@ -161,25 +241,64 @@ def export_stable_audio(
         latent_dim=latent_dim,
         ratio=ratio,
     )
-    return export_torchscript(wrapper, output_path, test_buffer_size=8192)
+
+    if verbose:
+        logging.info(f"Exporting Stable Audio wrapper to TorchScript: {ts_path}...")
+    res_ts = export_torchscript(wrapper, ts_path, test_buffer_size=buffer_size)
+
+    # 6. If ONNX was also requested, convert the freshly exported TorchScript
+    if target_format in ("onnx", "both"):
+        if verbose:
+            logging.info(f"Converting freshly exported TorchScript to ONNX: {onnx_path}...")
+        res_onnx = convert_stable_audio_ts_to_onnx(
+            ts_model_path=ts_path,
+            output_onnx_path=onnx_path,
+            buffer_size=buffer_size,
+            channels=channels,
+            promote_for_bending=promote_for_bending,
+            methods=methods,
+            verbose=verbose,
+        )
+        if target_format == "both":
+            return (res_ts, res_onnx)
+        return res_onnx
+
+    return res_ts
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Stable Audio 1.0 / Open VAE for nn_tilde_bending")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Path or HF repo id (default: stabilityai/stable-audio-open-1.0)")
+    parser.add_argument("-i", "--input", "--checkpoint", dest="checkpoint", type=str, default=None,
+                        help="Path to checkpoint/model (.ts, .pt) or HF repo id (default: stabilityai/stable-audio-open-1.0)")
     parser.add_argument("--repo-id", type=str, default="stabilityai/stable-audio-open-1.0", help="Hugging Face repo id")
-    parser.add_argument("--output", type=str, default="models/stable_audio_1_vae.ts", help="Output .ts file")
-    parser.add_argument("--sr", type=int, default=44100, help="Sample rate")
-    parser.add_argument("--ratio", type=int, default=2048, help="Temporal compression ratio (2048 for SA 1.0/Open)")
-    parser.add_argument("--latent-dim", type=int, default=64, help="Latent dimensionality")
+    parser.add_argument("-o", "--output", type=str, default=None, help="Output file path (.ts or .onnx)")
+    parser.add_argument("--format", type=str, choices=["ts", "onnx", "both"], default=None,
+                        help="Export format: ts, onnx, or both (default: auto based on output extension or --onnx)")
+    parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
+    parser.add_argument("--no-bending", action="store_true", help="Skip promoting initializers for ONNX bending")
+    parser.add_argument("--methods", nargs="+", default=["all"],
+                        help="Companion methods for ONNX: all, forward, encode, decode (default: all)")
+    parser.add_argument("--buffer-size", type=int, default=8192, help="Buffer size (default: 8192)")
+    parser.add_argument("--channels", type=int, default=2, help="Channels (default: 2)")
+    parser.add_argument("--sr", type=int, default=44100, help="Sample rate (default: 44100)")
+    parser.add_argument("--ratio", type=int, default=2048, help="Temporal compression ratio (default: 2048)")
+    parser.add_argument("--latent-dim", type=int, default=64, help="Latent dimensionality (default: 64)")
+    parser.add_argument("--force", action="store_true", help="Force re-export even if model already exists")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     export_stable_audio(
-        model_checkpoint_or_instance=args.checkpoint or args.repo_id,
+        model_checkpoint_or_instance=args.checkpoint,
         output_path=args.output,
         sr=args.sr,
         latent_dim=args.latent_dim,
         ratio=args.ratio,
         repo_id=args.repo_id,
+        to_onnx=args.onnx,
+        format=args.format,
+        promote_for_bending=not args.no_bending,
+        methods=args.methods,
+        buffer_size=args.buffer_size,
+        channels=args.channels,
+        force=args.force,
     )

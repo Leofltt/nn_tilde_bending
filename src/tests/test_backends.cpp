@@ -26,10 +26,12 @@ int main(int argc, char** argv) {
             "models/darbouka.ts",
             "models/encodec_bendable.ts",
             "models/speech.ts",
+            "models/stable_audio_1_vae.ts",
             // ONNX bendable models
             "models/darbouka_bendable.onnx",
             "models/encodec_bendable.onnx",
-            "models/speech_bendable.onnx"
+            "models/speech_bendable.onnx",
+            "models/stable_audio_1_vae_bendable.onnx"
         };
     }
 
@@ -131,14 +133,27 @@ int main(int argc, char** argv) {
             if (!decParams.empty()) res.latentDim = decParams[0];
         }
 
+        int inCh = 1;
         int outCh = 1;
+        if (backend->has_method("forward")) {
+            auto fwdParams = backend->get_mode_params("forward");
+            if (fwdParams.size() >= 3) {
+                inCh = std::max(1, fwdParams[0]);
+                outCh = std::max(1, fwdParams[2]);
+            }
+        } else if (backend->has_method("decode")) {
+            auto decParams = backend->get_mode_params("decode");
+            if (decParams.size() >= 3) {
+                outCh = std::max(1, decParams[2]);
+            }
+        }
         int n_vec = 2048;
 
         // -------------------------------------------------------------
         // 1. STREAMING FORWARD TEST (8 consecutive blocks of test audio)
         // -------------------------------------------------------------
         int numFwdBlocks = (res.latentDim >= 8 && res.ratio >= 1024) ? 16 : 8;
-        std::cout << "  Testing perform_forward (" << numFwdBlocks << "-block audio stream)..." << std::endl;
+        std::cout << "  Testing perform_forward (" << numFwdBlocks << "-block audio stream, " << inCh << "->" << outCh << " ch)..." << std::endl;
         try {
             float maxPeak = 0.0f;
             double sumSq = 0.0;
@@ -147,30 +162,35 @@ int main(int argc, char** argv) {
             bool fuseTripped = false;
 
             for (int b = 0; b < numFwdBlocks; ++b) {
-                std::vector<float> inData(n_vec);
-                std::vector<float> outData(n_vec, 0.0f);
-                // Synthesize 100 Hz sine wave + periodic impulse transients at amplitude 0.7
-                for (int i = 0; i < n_vec; ++i) {
-                    float t = (float)(b * n_vec + i) / 44100.0f;
-                    inData[i] = std::sin(6.2831853f * 100.0f * t) * 0.7f;
-                    if (i % 512 == 0) inData[i] += 0.2f;
+                std::vector<std::vector<float>> inChannels(inCh, std::vector<float>(n_vec));
+                std::vector<std::vector<float>> outChannels(outCh, std::vector<float>(n_vec, 0.0f));
+                for (int c = 0; c < inCh; ++c) {
+                    for (int i = 0; i < n_vec; ++i) {
+                        float t = (float)(b * n_vec + i) / 44100.0f;
+                        inChannels[c][i] = std::sin(6.2831853f * (100.0f + c * 50.0f) * t) * 0.7f;
+                        if (i % 512 == 0) inChannels[c][i] += 0.2f;
+                    }
                 }
 
-                std::vector<float*> inPtrs = { inData.data() };
-                std::vector<float*> outPtrs = { outData.data() };
+                std::vector<float*> inPtrs(inCh);
+                std::vector<float*> outPtrs(outCh);
+                for (int c = 0; c < inCh; ++c) inPtrs[c] = inChannels[c].data();
+                for (int c = 0; c < outCh; ++c) outPtrs[c] = outChannels[c].data();
 
                 backend->perform_forward(inPtrs, outPtrs, 1, outCh, n_vec, nullptr);
 
-                for (int i = 0; i < n_vec; ++i) {
-                    float s = outData[i];
-                    if (std::isnan(s) || std::isinf(s)) {
-                        hadNan = true;
-                    } else {
-                        float abs_s = std::abs(s);
-                        if (abs_s > maxPeak) maxPeak = abs_s;
-                        if (abs_s > 2.0f) fuseTripped = true;
-                        sumSq += (double)s * (double)s;
-                        totalSamples++;
+                for (int c = 0; c < outCh; ++c) {
+                    for (int i = 0; i < n_vec; ++i) {
+                        float s = outChannels[c][i];
+                        if (std::isnan(s) || std::isinf(s)) {
+                            hadNan = true;
+                        } else {
+                            float abs_s = std::abs(s);
+                            if (abs_s > maxPeak) maxPeak = abs_s;
+                            if (abs_s > 2.0f) fuseTripped = true;
+                            sumSq += (double)s * (double)s;
+                            totalSamples++;
+                        }
                     }
                 }
             }
@@ -219,21 +239,24 @@ int main(int argc, char** argv) {
                 bool fuseTripped = false;
 
                 for (int b = 0; b < 4; ++b) {
-                    std::vector<float> outData(n_vec, 0.0f);
-                    std::vector<float*> outPtrs = { outData.data() };
+                    std::vector<std::vector<float>> outChannels(outCh, std::vector<float>(n_vec, 0.0f));
+                    std::vector<float*> outPtrs(outCh);
+                    for (int c = 0; c < outCh; ++c) outPtrs[c] = outChannels[c].data();
 
                     backend->perform_decode_gen(outPtrs, 1, outCh, n_vec, nullptr);
 
-                    for (int i = 0; i < n_vec; ++i) {
-                        float s = outData[i];
-                        if (std::isnan(s) || std::isinf(s)) {
-                            hadNan = true;
-                        } else {
-                            float abs_s = std::abs(s);
-                            if (abs_s > maxPeak) maxPeak = abs_s;
-                            if (abs_s > 2.0f) fuseTripped = true;
-                            sumSq += (double)s * (double)s;
-                            totalSamples++;
+                    for (int c = 0; c < outCh; ++c) {
+                        for (int i = 0; i < n_vec; ++i) {
+                            float s = outChannels[c][i];
+                            if (std::isnan(s) || std::isinf(s)) {
+                                hadNan = true;
+                            } else {
+                                float abs_s = std::abs(s);
+                                if (abs_s > maxPeak) maxPeak = abs_s;
+                                if (abs_s > 2.0f) fuseTripped = true;
+                                sumSq += (double)s * (double)s;
+                                totalSamples++;
+                            }
                         }
                     }
                 }
@@ -283,21 +306,24 @@ int main(int argc, char** argv) {
                 bool fuseTripped = false;
 
                 for (int b = 0; b < 4; ++b) {
-                    std::vector<float> outData(n_vec, 0.0f);
-                    std::vector<float*> outPtrs = { outData.data() };
+                    std::vector<std::vector<float>> outChannels(outCh, std::vector<float>(n_vec, 0.0f));
+                    std::vector<float*> outPtrs(outCh);
+                    for (int c = 0; c < outCh; ++c) outPtrs[c] = outChannels[c].data();
 
                     backend->perform_prior_decode(outPtrs, 1, outCh, n_vec);
 
-                    for (int i = 0; i < n_vec; ++i) {
-                        float s = outData[i];
-                        if (std::isnan(s) || std::isinf(s)) {
-                            hadNan = true;
-                        } else {
-                            float abs_s = std::abs(s);
-                            if (abs_s > maxPeak) maxPeak = abs_s;
-                            if (abs_s > 2.0f) fuseTripped = true;
-                            sumSq += (double)s * (double)s;
-                            totalSamples++;
+                    for (int c = 0; c < outCh; ++c) {
+                        for (int i = 0; i < n_vec; ++i) {
+                            float s = outChannels[c][i];
+                            if (std::isnan(s) || std::isinf(s)) {
+                                hadNan = true;
+                            } else {
+                                float abs_s = std::abs(s);
+                                if (abs_s > maxPeak) maxPeak = abs_s;
+                                if (abs_s > 2.0f) fuseTripped = true;
+                                sumSq += (double)s * (double)s;
+                                totalSamples++;
+                            }
                         }
                     }
                 }

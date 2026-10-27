@@ -803,15 +803,15 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
     int min_frames = 4;
     if (m_higherRatio >= 1024 && m_latentDim >= 8) {
         min_frames = 16;
-    } else if (m_higherRatio <= 512 || m_latentDim >= 64) {
+    } else if (m_higherRatio <= 640 && m_latentDim >= 128) {
         min_frames = 8;
     }
     int latent_steps = std::max(min_frames, n_vec / ratio);
     int latent_dim = std::max(1, m_latentDim);
 
     // Determine nominal latent standard deviation based on codec architecture
-    // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; RAVE operates at sigma ~ 1.0
-    float latent_scale = (m_latentDim >= 64 || m_higherRatio <= 512) ? 8.5f : 1.0f;
+    // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; VAEs (Stable Audio, RAVE) operate at unit normal sigma ~ 1.0
+    float latent_scale = (m_latentDim >= 128 && m_higherRatio <= 640) ? 8.5f : 1.0f;
 
     // Synthesize autonomous Gaussian latent excitation
     static uint32_t rng_state = 1337;
