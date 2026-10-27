@@ -231,11 +231,14 @@ def convert_stable_audio_ts_to_onnx(
         print("  -> Exported standard ONNX successfully.")
 
     extra_meta = {
+        "netbender.architecture": "stable_audio",
         "netbender.sample_rate": str(sr),
         "netbender.ratio": str(ratio),
         "netbender.latent_dim": str(latent_dim),
         "netbender.in_channels": str(in_channels),
         "netbender.out_channels": str(out_channels),
+        "netbender.history_samples": "0",
+        "netbender.output_offset": "0",
     }
 
     if promote_for_bending:

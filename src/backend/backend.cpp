@@ -6,6 +6,7 @@
 #include <exception>
 #include <stdio.h>
 #include <stdlib.h>
+#include <random>
 
 #define CPU torch::kCPU
 #define CUDA torch::kCUDA
@@ -400,12 +401,40 @@ void TorchBackend::perform_decode_gen_torch(std::vector<float *> &out_buffer,
       model_lock.unlock();
     }
 
-    // Fallback: If no prior or prior failed, synthesize base latent buffer with calibrated Gaussian excitation
+    // Fallback: If no prior or prior failed, synthesize base latent buffer with continuous Ornstein-Uhlenbeck walk
     // EnCodec SEANet operates at sigma ~ 8.5 to 10.0; VAEs (Stable Audio, RAVE) operate at unit normal sigma ~ 1.0
     if (!latent_tensor.defined() || latent_tensor.numel() == 0) {
       float latent_scale = (latent_dim >= 128 && latent_ratio <= 640) ? 8.5f : 1.0f;
-      latent_tensor = torch::randn({n_batches, latent_dim, latent_steps},
-                                   torch::TensorOptions().dtype(torch::kFloat32).device(m_device)) * latent_scale;
+      const float alpha = (latent_ratio <= 640) ? 0.94f : 0.86f;
+      const float beta = std::sqrt(1.0f - alpha * alpha);
+
+      static std::mt19937 rng_gen(1337);
+      std::normal_distribution<float> norm_dist(0.0f, latent_scale);
+
+      if (m_decode_gen_latent_state.size() != (size_t)latent_dim) {
+        m_decode_gen_latent_state.resize(latent_dim);
+        for (int c = 0; c < latent_dim; ++c) {
+          m_decode_gen_latent_state[c] = norm_dist(rng_gen);
+        }
+      }
+
+      auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+      auto cpu_latent = torch::empty({n_batches, latent_dim, latent_steps}, options);
+      float* ldata = cpu_latent.data_ptr<float>();
+
+      for (int b = 0; b < n_batches; ++b) {
+        for (int c = 0; c < latent_dim; ++c) {
+          float prev = m_decode_gen_latent_state[c];
+          float* ch_ptr = ldata + (b * latent_dim + c) * latent_steps;
+          for (int t = 0; t < latent_steps; ++t) {
+            float eps = norm_dist(rng_gen);
+            prev = alpha * prev + beta * eps;
+            ch_ptr[t] = prev;
+          }
+          if (b == 0) m_decode_gen_latent_state[c] = prev;
+        }
+      }
+      latent_tensor = cpu_latent.to(m_device);
     }
 
     // Apply latent hook (2D Latent Vector Pad, Drift, Harmonics, RFF Orbit)

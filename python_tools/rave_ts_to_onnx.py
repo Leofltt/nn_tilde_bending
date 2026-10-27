@@ -214,12 +214,16 @@ def convert_rave_ts_to_onnx(
     except Exception:
         pass
 
+    history_samples = 4096
     extra_meta = {
+        "netbender.architecture": "rave",
         "netbender.sample_rate": str(sr),
         "netbender.ratio": str(ratio),
         "netbender.latent_dim": str(latent_dim),
         "netbender.in_channels": str(in_channels),
         "netbender.out_channels": str(in_channels),
+        "netbender.history_samples": str(history_samples),
+        "netbender.output_offset": str(history_samples),
     }
 
     if promote_for_bending:

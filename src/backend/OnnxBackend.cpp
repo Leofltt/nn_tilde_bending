@@ -59,6 +59,7 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
     m_loaded = false;
     m_path = path;
     m_sampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
+    m_modelSampleRate = m_sampleRate;
     m_impl->companions.clear();
 
     try {
@@ -146,7 +147,10 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
                     std::string metaSr = lookupMeta("netbender.sample_rate");
                     if (!metaSr.empty()) {
                         double sr = std::stod(metaSr);
-                        if (sr > 0.0) m_sampleRate = sr;
+                        if (sr > 0.0) {
+                            m_modelSampleRate = sr;
+                            m_sampleRate = sr;
+                        }
                     }
                 } catch (...) {}
 
@@ -154,6 +158,20 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
                     std::string metaLatent = lookupMeta("netbender.latent_dim");
                     if (!metaLatent.empty()) {
                         m_latentDim = std::max(1, std::stoi(metaLatent));
+                    }
+                } catch (...) {}
+
+                try {
+                    std::string metaHist = lookupMeta("netbender.history_samples");
+                    if (!metaHist.empty()) {
+                        m_historySamples = (size_t)std::max(0, std::stoi(metaHist));
+                    }
+                } catch (...) {}
+
+                try {
+                    std::string metaOffset = lookupMeta("netbender.output_offset");
+                    if (!metaOffset.empty()) {
+                        m_outputOffset = (size_t)std::max(0, std::stoi(metaOffset));
                     }
                 } catch (...) {}
             } catch (...) {
@@ -204,19 +222,31 @@ int OnnxBackend::load(std::string path, double sampleRate, const std::string* ta
             m_availableMethods.push_back(pair.first);
         }
 
-        // Initialize history buffer for causal receptive field models (e.g. RAVE with ratio 2048)
+        // Initialize history buffer and output windowing
         m_audioHistory.clear();
-        if (m_higherRatio >= 1024) {
-            // Adaptive pre-roll history: Deep architectures / speech models (latent_dim >= 8)
-            // have ~13 frames of group delay latency (26,624 samples), requiring 14 frames (28,672 samples).
-            // Lighter models like Darbouka (latent_dim <= 4) only require 2 frames (4,096 samples).
-            m_historySamples = (m_latentDim >= 8) ? 28672 : 4096;
-        } else {
-            m_historySamples = 0;
+        
+        // Backwards compatibility fallback if model does not contain explicit netbender.history_samples metadata
+        if (m_historySamples == 0 && m_outputOffset == 0) {
+            bool isRave = false;
+            for (const auto& pair : m_parameters) {
+                if (pair.first.find("rave") != std::string::npos || pair.first.find("_rave") != std::string::npos) {
+                    isRave = true;
+                    break;
+                }
+            }
+            if (isRave && m_higherRatio >= 1024) {
+                m_historySamples = (m_latentDim >= 8) ? 28672 : 4096;
+                m_outputOffset = m_historySamples;
+            }
+        } else if (m_outputOffset == 0 && m_historySamples > 0) {
+            m_outputOffset = m_historySamples;
         }
+
         if (m_historySamples > 0) {
             m_audioHistory.resize(std::max(1, m_inChannels), std::vector<float>(m_historySamples, 0.0f));
-            std::cout << "[OnnxBackend] Enabled " << m_historySamples << "-sample streaming history buffer for causal receptive field" << std::endl;
+            std::cout << "[OnnxBackend] Enabled " << m_historySamples << "-sample streaming history buffer (output offset: " << m_outputOffset << ")" << std::endl;
+        } else {
+            std::cout << "[OnnxBackend] Zero-delay direct streaming enabled (output offset: " << m_outputOffset << ")" << std::endl;
         }
 
         m_loaded = true;
@@ -247,7 +277,7 @@ void OnnxBackend::set_sample_rate(double sampleRate) {
 }
 
 double OnnxBackend::get_sample_rate() {
-    return m_sampleRate;
+    return (m_modelSampleRate > 0.0) ? m_modelSampleRate : m_sampleRate;
 }
 
 void OnnxBackend::use_gpu(bool value) {
@@ -584,18 +614,20 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
         if (audioInputPtr && !m_audioInputs.empty()) {
             runInputNames.push_back(m_audioInputs[0].name.c_str());
 
-            if (m_historySamples > 0) {
+            if (m_historySamples > 0 || inCh > 1) {
                 streamLen = (int)m_historySamples + n_vec;
                 compositeAudio.resize(inCh * streamLen);
                 for (int c = 0; c < inCh; ++c) {
-                    float* histData = (c < (int)m_audioHistory.size()) ? m_audioHistory[c].data() : nullptr;
-                    float* inData = in_buffer[c];
+                    float* histData = (m_historySamples > 0 && c < (int)m_audioHistory.size()) ? m_audioHistory[c].data() : nullptr;
+                    float* inData = (c < (int)in_buffer.size()) ? in_buffer[c] : nullptr;
                     float* dest = compositeAudio.data() + (c * streamLen);
                     // Copy historical context
-                    if (histData) {
-                        std::memcpy(dest, histData, m_historySamples * sizeof(float));
-                    } else {
-                        std::memset(dest, 0, m_historySamples * sizeof(float));
+                    if (m_historySamples > 0) {
+                        if (histData) {
+                            std::memcpy(dest, histData, m_historySamples * sizeof(float));
+                        } else {
+                            std::memset(dest, 0, m_historySamples * sizeof(float));
+                        }
                     }
                     // Copy current block
                     if (inData) {
@@ -627,15 +659,7 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
         // 2. Bind parameter tensors (Only override initializers that have actually been modified/bent)
         for (auto& pair : m_parameters) {
             ParameterInfo& p = pair.second;
-            // Check if parameter has been bent/modified away from original weights
-            bool isModified = false;
-            if (p.currentWeights.size() == p.originalWeights.size() && !p.currentWeights.empty()) {
-                if (std::memcmp(p.currentWeights.data(), p.originalWeights.data(), p.currentWeights.size() * sizeof(float)) != 0) {
-                    isModified = true;
-                }
-            }
-
-            if (isModified) {
+            if (p.isModified) {
                 runInputNames.push_back(pair.first.c_str());
                 runInputTensors.push_back(Ort::Value::CreateTensor<float>(
                     m_impl->memoryInfo,
@@ -665,15 +689,16 @@ void OnnxBackend::perform(std::vector<float*>& in_buffer,
             auto outInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
             auto outShape = outInfo.GetShape();
             int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : streamLen;
-            int copy_samples = std::min(n_vec, outSamples);
+            int offset = (int)m_outputOffset;
+            if (offset >= outSamples) offset = 0;
+            int copy_samples = std::min(n_vec, std::max(0, outSamples - offset));
             int outCh = std::min((int)out_buffer.size(), m_outChannels);
-
-            // Receptive field compensation: extract the latest n_vec samples from the synthesized stream
-            int offset = (outSamples > copy_samples) ? (outSamples - copy_samples) : 0;
 
             for (int c = 0; c < outCh; ++c) {
                 if (out_buffer[c]) {
-                    std::memcpy(out_buffer[c], outData + (c * outSamples) + offset, copy_samples * sizeof(float));
+                    if (copy_samples > 0) {
+                        std::memcpy(out_buffer[c], outData + (c * outSamples) + offset, copy_samples * sizeof(float));
+                    }
                     if (copy_samples < n_vec) {
                         std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
                     }
@@ -704,14 +729,98 @@ void OnnxBackend::perform_forward(std::vector<float*>& in_buffer,
                                   std::vector<float*>& out_buffer,
                                   int n_batches, int n_out_channels, int n_vec,
                                   LatentHook latent_hook) {
+    if (latent_hook) {
+        auto encIt = m_impl->companions.find("encode");
+        auto decIt = m_impl->companions.find("decode");
+        if (encIt != m_impl->companions.end() && decIt != m_impl->companions.end() &&
+            encIt->second.session && decIt->second.session) {
+            std::unique_lock<std::mutex> lock(m_sessionMutex);
+            auto& encComp = encIt->second;
+            auto& decComp = decIt->second;
+
+            try {
+                int inCh = std::min((int)in_buffer.size(), m_inChannels);
+                if (inCh <= 0 || n_vec <= 0) return;
+
+                std::vector<float> audioIn(inCh * n_vec);
+                for (int c = 0; c < inCh; ++c) {
+                    if (in_buffer[c]) {
+                        std::memcpy(audioIn.data() + (c * n_vec), in_buffer[c], n_vec * sizeof(float));
+                    } else {
+                        std::memset(audioIn.data() + (c * n_vec), 0, n_vec * sizeof(float));
+                    }
+                }
+                std::vector<int64_t> inShape = { 1, inCh, (int64_t)n_vec };
+                std::vector<Ort::Value> encInTensors;
+                encInTensors.push_back(Ort::Value::CreateTensor<float>(
+                    m_impl->memoryInfo,
+                    audioIn.data(),
+                    audioIn.size(),
+                    inShape.data(),
+                    inShape.size()
+                ));
+
+                auto encOutputs = encComp.session->Run(
+                    Ort::RunOptions{nullptr},
+                    encComp.inputNamePtrs.data(),
+                    encInTensors.data(),
+                    encInTensors.size(),
+                    encComp.outputNamePtrs.data(),
+                    encComp.outputNamePtrs.size()
+                );
+
+                if (!encOutputs.empty()) {
+                    float* latentPtr = encOutputs[0].GetTensorMutableData<float>();
+                    auto latentInfo = encOutputs[0].GetTensorTypeAndShapeInfo();
+                    auto latentShape = latentInfo.GetShape();
+                    int64_t latDim = (latentShape.size() >= 2) ? latentShape[1] : 1;
+                    int64_t latSteps = (latentShape.size() >= 3) ? latentShape[2] : 1;
+
+                    LatentBuffer buf{ latentPtr, latDim, latSteps };
+                    latent_hook(buf);
+
+                    auto decOutputs = decComp.session->Run(
+                        Ort::RunOptions{nullptr},
+                        decComp.inputNamePtrs.data(),
+                        encOutputs.data(),
+                        1,
+                        decComp.outputNamePtrs.data(),
+                        decComp.outputNamePtrs.size()
+                    );
+
+                    if (!decOutputs.empty()) {
+                        float* outData = decOutputs[0].GetTensorMutableData<float>();
+                        auto outInfo = decOutputs[0].GetTensorTypeAndShapeInfo();
+                        auto outShape = outInfo.GetShape();
+                        int numChannels = (outShape.size() >= 2 && outShape[1] > 0) ? (int)outShape[1] : 1;
+                        int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
+                        int copy_samples = std::min(n_vec, outSamples);
+                        int outCh = std::min((int)out_buffer.size(), std::min(numChannels, (int)n_out_channels));
+
+                        for (int c = 0; c < outCh; ++c) {
+                            if (out_buffer[c]) {
+                                std::memcpy(out_buffer[c], outData + (c * outSamples), copy_samples * sizeof(float));
+                                if (copy_samples < n_vec) {
+                                    std::memset(out_buffer[c] + copy_samples, 0, (n_vec - copy_samples) * sizeof(float));
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "[OnnxBackend::perform_forward] Latent hook encode/decode error: " << e.what() << std::endl;
+            }
+        }
+    }
+
     perform(in_buffer, out_buffer, "forward", n_batches, n_out_channels, n_vec);
 }
 
 void OnnxBackend::perform_prior_decode(std::vector<float*>& out_buffer,
                                        int n_batches, int n_out_channels, int n_vec) {
     if (!m_loaded) return;
-    std::unique_lock<std::mutex> lock(m_sessionMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return;
+    std::unique_lock<std::mutex> lock(m_sessionMutex);
 
     auto priorIt = m_impl->companions.find("prior");
     auto decIt = m_impl->companions.find("decode");
@@ -805,8 +914,9 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
     size_t fifo_samples = (m_decodeGenFifo.empty() || m_decodeGenFifo[0].empty()) 
         ? 0 : (m_decodeGenFifo[0].size() - m_decodeGenFifoReadIdx);
 
-    // If FIFO does not have enough samples to fulfill n_vec, synthesize another block
-    if (fifo_samples < (size_t)n_vec) {
+    // If FIFO does not have enough samples to fulfill n_vec + crossfade cushion, synthesize another block
+    const size_t kCrossfadeSamples = 256;
+    if (fifo_samples < (size_t)(n_vec + kCrossfadeSamples)) {
         std::unique_lock<std::mutex> lock(m_sessionMutex);
 
         // Compact FIFO by erasing already consumed samples
@@ -821,25 +931,47 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
             m_decodeGenFifoReadIdx = 0;
         }
 
-        // Enforce minimum frames for codecs with wide receptive field kernels
-        int min_frames = 4;
+        int min_frames = 8;
         if (m_higherRatio >= 1024 && m_latentDim >= 8) {
             min_frames = 16;
-        } else if (m_higherRatio <= 640 && m_latentDim >= 128) {
-            min_frames = 8;
         }
-        int latent_steps = std::max(min_frames, n_vec / ratio);
+        int latent_steps = std::max(min_frames, (n_vec + (int)kCrossfadeSamples) / ratio);
         int latent_dim = std::max(1, m_latentDim);
 
-        float latent_scale = (m_latentDim >= 128 && m_higherRatio <= 640) ? 8.5f : 1.0f;
+        float latent_scale = 1.0f;
+        if (m_latentDim >= 128 && m_higherRatio <= 640) {
+            latent_scale = 5.0f; // EnCodec SEANet calibrated (prevents tripping 2.0 fuse)
+        } else if (m_higherRatio >= 1024) {
+            latent_scale = 1.0f; // VAEs (Stable Audio 64-dim, Speech RAVE 8/16-dim) standard unit normal latents
+        }
+
+        // Continuous Ornstein-Uhlenbeck smooth latent random walk
+        const float alpha = (ratio <= 640) ? 0.94f : 0.86f;
+        const float beta = std::sqrt(1.0f - alpha * alpha);
 
         static std::mt19937 rng_gen(1337);
         std::normal_distribution<float> norm_dist(0.0f, latent_scale);
-        std::vector<float> latentData(latent_dim * latent_steps);
-        for (size_t i = 0; i < latentData.size(); ++i) {
-            latentData[i] = norm_dist(rng_gen);
+
+        if (m_decodeGenLatentState.size() != (size_t)latent_dim) {
+            m_decodeGenLatentState.resize(latent_dim);
+            for (int c = 0; c < latent_dim; ++c) {
+                m_decodeGenLatentState[c] = norm_dist(rng_gen);
+            }
         }
 
+        std::vector<float> latentData(latent_dim * latent_steps);
+        for (int c = 0; c < latent_dim; ++c) {
+            float prev = m_decodeGenLatentState[c];
+            float* ch_ptr = latentData.data() + (c * latent_steps);
+            for (int t = 0; t < latent_steps; ++t) {
+                float eps = norm_dist(rng_gen);
+                prev = alpha * prev + beta * eps;
+                ch_ptr[t] = prev;
+            }
+            m_decodeGenLatentState[c] = prev;
+        }
+
+        // Apply latent hook directly on contiguous [latent_dim, latent_steps] buffer
         if (latent_hook) {
             IBackend::LatentBuffer buf{ latentData.data(), (int64_t)latent_dim, (int64_t)latent_steps };
             latent_hook(buf);
@@ -870,15 +1002,33 @@ void OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
                 auto outInfo = compOutputs[0].GetTensorTypeAndShapeInfo();
                 auto outShape = outInfo.GetShape();
                 int numChannels = (outShape.size() >= 2) ? (int)outShape[1] : 1;
-                int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : n_vec;
+                int outSamples = (outShape.size() >= 3 && outShape[2] > 0) ? (int)outShape[2] : (latent_steps * ratio);
 
-                // Append synthesized output into per-channel FIFO buffers
                 if (m_decodeGenFifo.size() < (size_t)numChannels) {
                     m_decodeGenFifo.resize(numChannels);
                 }
+
+                // Smoothly crossfade seam with previous unconsumed block in FIFO
+                size_t prevAvailable = m_decodeGenFifo[0].size();
+                size_t overlap = std::min(kCrossfadeSamples, std::min(prevAvailable, (size_t)outSamples / 2));
+
                 for (int c = 0; c < numChannels; ++c) {
-                    const float* src = outData + (c * outSamples);
-                    m_decodeGenFifo[c].insert(m_decodeGenFifo[c].end(), src, src + outSamples);
+                    if (overlap > 0) {
+                        size_t tailIdx = prevAvailable - overlap;
+                        for (size_t i = 0; i < overlap; ++i) {
+                            float w = 0.5f - 0.5f * std::cos(3.14159265f * (float)(i + 0.5f) / (float)overlap);
+                            float old_s = m_decodeGenFifo[c][tailIdx + i];
+                            float new_s = outData[c * outSamples + i];
+                            m_decodeGenFifo[c][tailIdx + i] = old_s * (1.0f - w) + new_s * w;
+                        }
+                        m_decodeGenFifo[c].insert(m_decodeGenFifo[c].end(),
+                                                  outData + (c * outSamples) + overlap,
+                                                  outData + (c * outSamples) + outSamples);
+                    } else {
+                        m_decodeGenFifo[c].insert(m_decodeGenFifo[c].end(),
+                                                  outData + (c * outSamples),
+                                                  outData + (c * outSamples) + outSamples);
+                    }
                 }
             }
         } catch (const std::exception& ce) {
@@ -1001,6 +1151,7 @@ void OnnxBackend::set_layer_weights(std::string layer_name, const std::vector<fl
     if (it != m_parameters.end()) {
         size_t count = std::min(it->second.currentWeights.size(), weights.size());
         std::memcpy(it->second.currentWeights.data(), weights.data(), count * sizeof(float));
+        it->second.isModified = true;
     }
 }
 
@@ -1008,12 +1159,14 @@ void OnnxBackend::reset_layer_weights(std::string layer_name) {
     auto it = m_parameters.find(layer_name);
     if (it != m_parameters.end()) {
         it->second.currentWeights = it->second.originalWeights;
+        it->second.isModified = false;
     }
 }
 
 void OnnxBackend::reset_all_layer_weights() {
     for (auto& pair : m_parameters) {
         pair.second.currentWeights = pair.second.originalWeights;
+        pair.second.isModified = false;
     }
 }
 

@@ -155,6 +155,13 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    const juce::ScopedTryLock sl (getCallbackLock());
+    if (!sl.isLocked())
+    {
+        buffer.clear();
+        return;
+    }
+
     // Process incoming MIDI triggers (Note On kicks momentary glitch; Note Off releases)
     for (const auto metadata : midiMessages)
     {
@@ -252,14 +259,14 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     {
                         int targetSamples = std::min(numModelSamples, (int)m_resampled_in_scratch[c].size());
 
-                        int actualWritten = m_input_resamplers[c].process(
+                        m_input_resamplers[c].process(
                             inRatio,
                             inPtr,
                             m_resampled_in_scratch[c].data(),
                             targetSamples
                         );
 
-                        m_in_buffers[c].put(m_resampled_in_scratch[c].data(), actualWritten);
+                        m_in_buffers[c].put(m_resampled_in_scratch[c].data(), targetSamples);
                     }
                 }
             }
@@ -307,26 +314,36 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     if (resampling && hostSr > 0.0 && modelSr > 0.0)
     {
         double outRatio = modelSr / hostSr;
-        int numModelToRead = (int)std::ceil(numSamples * outRatio) + 4;
+        int masterConsumed = 0;
 
         for (int c = 0; c < n_outs; ++c)
         {
             if (c < (int)m_output_resamplers.size() && c < (int)m_resampled_out_scratch.size())
             {
-                int samplesToRead = std::min(numModelToRead, (int)m_resampled_out_scratch[c].size());
+                int maxScratch = (int)m_resampled_out_scratch[c].size();
+                m_out_buffers[c].peek(m_resampled_out_scratch[c].data(), maxScratch);
 
-                m_out_buffers[c].get(m_resampled_out_scratch[c].data(), samplesToRead);
-
-                m_output_resamplers[c].process(
+                int consumed = m_output_resamplers[c].process(
                     outRatio,
                     m_resampled_out_scratch[c].data(),
                     buffer.getWritePointer(c),
                     numSamples
                 );
+
+                if (c == 0) masterConsumed = consumed;
             }
             else
             {
                 buffer.clear(c, 0, numSamples);
+            }
+        }
+
+        // Lock sample consumption across all channels to maintain strict stereo phase alignment
+        for (int c = 0; c < n_outs; ++c)
+        {
+            if (c < (int)m_output_resamplers.size() && c < (int)m_resampled_out_scratch.size())
+            {
+                m_out_buffers[c].drop(masterConsumed);
             }
         }
     }
@@ -514,14 +531,16 @@ void NNBendingAudioProcessor::setCurrentMethod(const juce::String& method)
 
     if (isValidMode)
     {
+        m_model_thread.stop();
+
         m_currentMethod = method;
         auto params = m_backend->get_mode_params(methodStr);
         if (params.size() >= 4)
         {
             m_model_in = params[0];
             m_model_out = params[2];
-            initBuffers();
         }
+        initBuffers();
     }
 }
 
@@ -538,6 +557,7 @@ void NNBendingAudioProcessor::initBuffers()
 {
     m_model_thread.stop();
     
+    const juce::ScopedLock sl (getCallbackLock());
     std::lock_guard<std::mutex> lock(m_staging_mutex);
     
     int n_in = std::max(1, m_model_in);
@@ -605,6 +625,12 @@ void NNBendingAudioProcessor::initBuffers()
         m_out_buffers[i].init(m_bufferSize);
         m_staging_out[i].assign(m_bufferSize, 0.0f);
         m_worker_out[i].assign(m_bufferSize, 0.0f);
+        // Pre-fill output buffer with 1 buffer of latency cushion in forward mode
+        // to prevent starvation during background model inference and align with dry delay buffer
+        if (m_model_in > 0)
+        {
+            m_out_buffers[i].put(nullptr, m_bufferSize);
+        }
     }
     
     m_output_ready.store(false);
@@ -832,10 +858,12 @@ void NNBendingAudioProcessor::runInference()
     std::vector<float*> in_ptrs;
     std::vector<float*> out_ptrs;
     
-    for (int c = 0; c < m_model_in; ++c)
+    int numIn = std::min(m_model_in, (int)m_worker_in.size());
+    for (int c = 0; c < numIn; ++c)
         in_ptrs.push_back(m_worker_in[c].data());
         
-    for (int c = 0; c < m_model_out; ++c)
+    int numOut = std::min(m_model_out, (int)m_worker_out.size());
+    for (int c = 0; c < numOut; ++c)
         out_ptrs.push_back(m_worker_out[c].data());
         
     std::string modeStr = m_currentMethod.toStdString();
@@ -920,10 +948,23 @@ void NNBendingAudioProcessor::runInference()
             };
         }
 
+        IBackend::LatentHook backendLatentHook = nullptr;
+        if (activeHook)
+        {
+            backendLatentHook = [&activeHook](IBackend::LatentBuffer& buf) {
+                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
+                auto res = activeHook(z);
+                if (res.data_ptr<float>() != buf.data)
+                {
+                    std::memcpy(buf.data, res.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
+                }
+            };
+        }
+
         if (auto* torchBackend = getTorchBackend())
             torchBackend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
         else if (m_backend)
-            m_backend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, nullptr);
+            m_backend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, backendLatentHook);
     }
     else if (modeStr == "decode gen")
     {
@@ -997,10 +1038,23 @@ void NNBendingAudioProcessor::runInference()
             };
         }
 
+        IBackend::LatentHook backendLatentHook = nullptr;
+        if (activeHook)
+        {
+            backendLatentHook = [&activeHook](IBackend::LatentBuffer& buf) {
+                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
+                auto res = activeHook(z);
+                if (res.data_ptr<float>() != buf.data)
+                {
+                    std::memcpy(buf.data, res.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
+                }
+            };
+        }
+
         if (auto* torchBackend = getTorchBackend())
             torchBackend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
         else if (m_backend)
-            m_backend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, nullptr);
+            m_backend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, backendLatentHook);
     }
     else if (modeStr == "prior" || modeStr == "generate")
     {

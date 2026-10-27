@@ -39,10 +39,12 @@ protected:
   // Decode Gen output FIFO buffer per channel for gapless streaming
   std::vector<std::vector<float>> m_decode_gen_fifo;
   size_t m_decode_gen_fifo_read_idx = 0;
+  std::vector<float> m_decode_gen_latent_state;
   void clear_decode_gen_fifo() {
     for (auto &ch : m_decode_gen_fifo) ch.clear();
     m_decode_gen_fifo.clear();
     m_decode_gen_fifo_read_idx = 0;
+    m_decode_gen_latent_state.clear();
   }
 
 public:

@@ -102,6 +102,7 @@ private:
         size_t inputIndex { 0 };
         std::vector<float> originalWeights;
         std::vector<float> currentWeights;
+        bool isModified { false };
     };
 
     struct StreamInfo {
@@ -112,6 +113,7 @@ private:
 
     std::string m_path;
     double m_sampleRate { 44100.0 };
+    double m_modelSampleRate { 44100.0 };
     bool m_loaded { false };
     bool m_useGpu { false };
     std::string m_lastError;
@@ -131,17 +133,22 @@ private:
     int m_higherRatio { 1 };
     int m_latentDim { 64 };
 
-    // Causal receptive field history buffer for stateless ONNX models (e.g. RAVE)
+    // Receptive field history and output windowing offsets (declared via model metadata)
     std::vector<std::vector<float>> m_audioHistory;
     size_t m_historySamples { 0 };
+    size_t m_outputOffset { 0 };
 
     // Decode Gen output FIFO buffer per channel for gapless streaming
     std::vector<std::vector<float>> m_decodeGenFifo;
     size_t m_decodeGenFifoReadIdx { 0 };
+    std::vector<float> m_decodeGenLatentState;
+    std::vector<float> m_decodeGenLatentHistory;
     void clearDecodeGenFifo() {
         for (auto& ch : m_decodeGenFifo) ch.clear();
         m_decodeGenFifo.clear();
         m_decodeGenFifoReadIdx = 0;
+        m_decodeGenLatentState.clear();
+        m_decodeGenLatentHistory.clear();
     }
 
     std::vector<std::string> m_availableMethods;

@@ -94,6 +94,29 @@ public:
     
     int getAvailable() const { return m_available.load(); }
     
+    int peek(float* dest, int numSamples) const {
+        if (m_capacity <= 0 || numSamples <= 0 || dest == nullptr) return 0;
+        int avail = m_available.load();
+        int toRead = std::min(numSamples, avail);
+
+        if (toRead > 0) {
+            int firstPart = std::min(toRead, m_capacity - m_readIndex);
+            std::memcpy(dest, m_buffer.data() + m_readIndex, firstPart * sizeof(float));
+            if (toRead > firstPart) {
+                std::memcpy(dest + firstPart, m_buffer.data(), (toRead - firstPart) * sizeof(float));
+            }
+        }
+        return toRead;
+    }
+
+    void drop(int numSamples) {
+        if (m_capacity <= 0 || numSamples <= 0) return;
+        int avail = m_available.load();
+        int toDrop = std::min(numSamples, avail);
+        m_readIndex = (m_readIndex + toDrop) & m_mask;
+        m_available.fetch_sub(toDrop);
+    }
+    
     void clear() {
         if (m_capacity > 0)
             std::fill(m_buffer.begin(), m_buffer.end(), 0.0f);

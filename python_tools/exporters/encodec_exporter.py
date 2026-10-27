@@ -147,11 +147,14 @@ def export_encodec(
             logging.info(f"Promoting Encodec parameters for NetBender real-time bending: {output_path}...")
             from python_tools.onnx_bend_prep import promote_initializers_to_inputs
             extra_meta = {
+                "netbender.architecture": "encodec",
                 "netbender.sample_rate": str(sr),
                 "netbender.ratio": str(ratio),
                 "netbender.latent_dim": str(latent_dim),
                 "netbender.in_channels": str(channels),
                 "netbender.out_channels": str(channels),
+                "netbender.history_samples": "0",
+                "netbender.output_offset": "0",
             }
             promote_initializers_to_inputs(raw_onnx, output_path, verbose=True, extra_metadata=extra_meta)
             if raw_onnx != output_path and os.path.exists(raw_onnx):

@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> testModels;
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
-            testModels.push_back(argv[i]);
+            testModels.emplace_back(argv[i]);
         }
     } else {
         testModels = {
@@ -161,6 +161,9 @@ int main(int argc, char** argv) {
             bool hadNan = false;
             bool fuseTripped = false;
 
+            float maxFwdSeamJump = 0.0f;
+            std::vector<float> prevLastSample(outCh, 0.0f);
+
             for (int b = 0; b < numFwdBlocks; ++b) {
                 std::vector<std::vector<float>> inChannels(inCh, std::vector<float>(n_vec));
                 std::vector<std::vector<float>> outChannels(outCh, std::vector<float>(n_vec, 0.0f));
@@ -180,6 +183,13 @@ int main(int argc, char** argv) {
                 backend->perform_forward(inPtrs, outPtrs, 1, outCh, n_vec, nullptr);
 
                 for (int c = 0; c < outCh; ++c) {
+                    int warmupBlocks = (res.latentDim >= 8 && res.ratio >= 1024) ? 14 : 1;
+                    if (b > warmupBlocks) { // evaluate after receptive field warm-up
+                        float seamJump = std::abs(outChannels[c][0] - prevLastSample[c]);
+                        if (seamJump > maxFwdSeamJump) maxFwdSeamJump = seamJump;
+                    }
+                    prevLastSample[c] = outChannels[c][n_vec - 1];
+
                     for (int i = 0; i < n_vec; ++i) {
                         float s = outChannels[c][i];
                         if (std::isnan(s) || std::isinf(s)) {
@@ -202,14 +212,15 @@ int main(int argc, char** argv) {
 
             std::cout << "    Forward: Peak=" << std::fixed << std::setprecision(4) << maxPeak
                       << " | RMS=" << res.fwdRms << " | NaN=" << (hadNan ? "YES" : "NO")
-                      << " | FuseCutoff(>2.0)=" << (fuseTripped ? "💥 BLOWN" : "OK") << std::endl;
+                      << " | MaxSeamJump=" << maxFwdSeamJump
+                      << " | FuseCutoff(>2.0)=" << (fuseTripped ? "BLOWN" : "OK") << std::endl;
 
             if (hadNan) {
-                res.fwdStatus = "❌ FAIL (NaN)";
+                res.fwdStatus = "FAIL (NaN)";
                 res.failureDetails += "Forward produced NaN/Inf\n";
                 failures++;
             } else if (fuseTripped) {
-                res.fwdStatus = "💥 BLOWN FUSE";
+                res.fwdStatus = "BLOWN FUSE";
                 res.failureDetails += "Forward peak (" + std::to_string(maxPeak) + ") exceeded 2.0 safety fuse\n";
                 failures++;
             } else if (res.fwdRms < 1e-5f) {
@@ -221,7 +232,7 @@ int main(int argc, char** argv) {
             }
         } catch (const std::exception& e) {
             std::cerr << "  FAILED: perform_forward exception: " << e.what() << std::endl;
-            res.fwdStatus = "❌ FAIL";
+            res.fwdStatus = "FAIL";
             res.failureDetails += std::string("perform_forward error: ") + e.what() + "\n";
             failures++;
         }
@@ -238,7 +249,10 @@ int main(int argc, char** argv) {
                 bool hadNan = false;
                 bool fuseTripped = false;
 
-                for (int b = 0; b < 4; ++b) {
+                float maxDecSeamJump = 0.0f;
+                std::vector<float> prevDecLastSample(outCh, 0.0f);
+
+                for (int b = 0; b < 6; ++b) {
                     std::vector<std::vector<float>> outChannels(outCh, std::vector<float>(n_vec, 0.0f));
                     std::vector<float*> outPtrs(outCh);
                     for (int c = 0; c < outCh; ++c) outPtrs[c] = outChannels[c].data();
@@ -246,6 +260,12 @@ int main(int argc, char** argv) {
                     backend->perform_decode_gen(outPtrs, 1, outCh, n_vec, nullptr);
 
                     for (int c = 0; c < outCh; ++c) {
+                        if (b > 1) { // evaluate after initial warm-up
+                            float seamJump = std::abs(outChannels[c][0] - prevDecLastSample[c]);
+                            if (seamJump > maxDecSeamJump) maxDecSeamJump = seamJump;
+                        }
+                        prevDecLastSample[c] = outChannels[c][n_vec - 1];
+
                         for (int i = 0; i < n_vec; ++i) {
                             float s = outChannels[c][i];
                             if (std::isnan(s) || std::isinf(s)) {
@@ -268,14 +288,15 @@ int main(int argc, char** argv) {
 
                 std::cout << "    Decode Gen: Peak=" << std::fixed << std::setprecision(4) << maxPeak
                           << " | RMS=" << res.decRms << " | NaN=" << (hadNan ? "YES" : "NO")
-                          << " | FuseCutoff(>2.0)=" << (fuseTripped ? "💥 BLOWN" : "OK") << std::endl;
+                          << " | MaxSeamJump=" << maxDecSeamJump
+                          << " | FuseCutoff(>2.0)=" << (fuseTripped ? "BLOWN" : "OK") << std::endl;
 
                 if (hadNan) {
-                    res.decStatus = "❌ FAIL (NaN)";
+                    res.decStatus = "FAIL (NaN)";
                     res.failureDetails += "Decode Gen produced NaN/Inf\n";
                     failures++;
                 } else if (fuseTripped) {
-                    res.decStatus = "💥 BLOWN FUSE";
+                    res.decStatus = "BLOWN FUSE";
                     res.failureDetails += "Decode Gen peak (" + std::to_string(maxPeak) + ") exceeded 2.0 safety fuse\n";
                     failures++;
                 } else if (res.decRms < 1e-5f) {
@@ -287,7 +308,7 @@ int main(int argc, char** argv) {
                 }
             } catch (const std::exception& e) {
                 std::cerr << "  FAILED: perform_decode_gen exception: " << e.what() << std::endl;
-                res.decStatus = "❌ FAIL";
+                res.decStatus = "FAIL";
                 res.failureDetails += std::string("perform_decode_gen error: ") + e.what() + "\n";
                 failures++;
             }
@@ -335,14 +356,14 @@ int main(int argc, char** argv) {
 
                 std::cout << "    Prior: Peak=" << std::fixed << std::setprecision(4) << maxPeak
                           << " | RMS=" << res.priorRms << " | NaN=" << (hadNan ? "YES" : "NO")
-                          << " | FuseCutoff(>2.0)=" << (fuseTripped ? "💥 BLOWN" : "OK") << std::endl;
+                          << " | FuseCutoff(>2.0)=" << (fuseTripped ? "BLOWN" : "OK") << std::endl;
 
                 if (hadNan) {
-                    res.priorStatus = "❌ FAIL (NaN)";
+                    res.priorStatus = "FAIL (NaN)";
                     res.failureDetails += "Prior produced NaN/Inf\n";
                     failures++;
                 } else if (fuseTripped) {
-                    res.priorStatus = "💥 BLOWN FUSE";
+                    res.priorStatus = "BLOWN FUSE";
                     res.failureDetails += "Prior peak (" + std::to_string(maxPeak) + ") exceeded 2.0 safety fuse\n";
                     failures++;
                 } else if (res.priorRms < 1e-5f) {
@@ -354,7 +375,7 @@ int main(int argc, char** argv) {
                 }
             } catch (const std::exception& e) {
                 std::cerr << "  FAILED: perform_prior_decode exception: " << e.what() << std::endl;
-                res.priorStatus = "❌ FAIL";
+                res.priorStatus = "FAIL";
                 res.failureDetails += std::string("perform_prior_decode error: ") + e.what() + "\n";
                 failures++;
             }
@@ -369,7 +390,7 @@ int main(int argc, char** argv) {
 
     for (const auto& r : results) {
         if (!r.loadSuccess) {
-            report << "| `" << r.path << "` | " << r.backendType << " | ❌ LOAD FAIL | - | - | - |\n";
+            report << "| `" << r.path << "` | " << r.backendType << " | LOAD FAIL | - | - | - |\n";
         } else {
             auto fmtStat = [](const std::string& st, float peak, float rms) {
                 if (st == "N/A") return std::string("N/A");
@@ -414,7 +435,7 @@ int main(int argc, char** argv) {
     report << "\n## Summary\n\n";
     if (failures == 0) {
         std::cout << "ALL BACKEND TESTS PASSED!" << std::endl;
-        report << "**Result**: 🎉 **ALL TESTS PASSED WITH REAL AUDIO VALIDATION**\n";
+        report << "**Result**: **ALL TESTS PASSED WITH REAL AUDIO VALIDATION**\n";
         report.close();
         std::cout << "Saved test report to: " << reportPath << std::endl;
         return 0;
