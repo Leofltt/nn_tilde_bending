@@ -500,10 +500,10 @@ private:
     std::atomic<float>       m_latentY { 0.0f };
     std::atomic<float>       m_latentDepth { 0.5f };
     std::atomic<float>       m_latentSlew { 0.0f };
-    at::Tensor               m_prevLatentTensor;
-    at::Tensor               m_rffMatrix; // Random Fourier Feature projection matrix B [D/2, 2]
-    at::Tensor               m_coordsTensor; // Preallocated [2, 1] tensor for zero-alloc projection
+    std::vector<float>       m_prevLatentBuffer;
+    std::vector<float>       m_rffMatrix; // Random Fourier Feature projection matrix B [D/2 * 2]
     int                      m_cachedLatentDim { 0 };
+    void applyLatentTerrainHook(IBackend::LatentBuffer& buf);
 
     // Safety Sentry state
     std::atomic<bool> m_blownFuse { false };

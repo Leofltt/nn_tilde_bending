@@ -1,6 +1,12 @@
 #pragma once
 #include <vector>
+#include <array>
+#include <memory>
+#include <algorithm>
+#include <cstddef>
+#if !defined(NETBENDER_NO_TORCH_HEADERS)
 #include <torch/torch.h>
+#endif
 
 
 template <typename data_type> 
@@ -57,10 +63,12 @@ public:
         std::fill(_data.get()->begin(), _data.get()->end(), 0.0f);
     };
 
+#if !defined(NETBENDER_NO_TORCH_HEADERS)
     torch::Tensor to_tensor() {
         auto obj = torch::from_blob(_data.get()->data(), {(long long)_dims[0], (long long)_dims[1]}, torch::kFloat);
         return obj;
     };
+#endif
 
     float& at(const size_t dim1, const size_t dim2) {
         return _data.get()->at(dim1 * _dims[0] + dim2);

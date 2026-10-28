@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(C74_MIN_API_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../min-api)
 include(${C74_MIN_API_DIR}/script/min-pretarget.cmake)
+set("${PROJECT_NAME}_EXTERN_OUTPUT_NAME" "netBender.info" CACHE STRING "External output name" FORCE)
 
 if (APPLE)
 	set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")

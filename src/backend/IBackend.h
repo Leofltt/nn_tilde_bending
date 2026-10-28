@@ -49,6 +49,13 @@ public:
   virtual auto get_sample_rate() -> double = 0;
   virtual auto use_gpu(bool value) -> void = 0;
   virtual auto get_last_error() const -> std::string { return ""; }
+  virtual auto get_backend_name() const -> std::string { return "Generic"; }
+  virtual auto get_input_label(const std::string& method, int index) -> std::string {
+    return "(signal) model input " + std::to_string(index);
+  }
+  virtual auto get_output_label(const std::string& method, int index) -> std::string {
+    return "(signal) model output " + std::to_string(index);
+  }
 
   // Latent Hook Abstraction (backend agnostic: operates on raw float pointer, channels, length)
   struct LatentBuffer {
@@ -101,6 +108,7 @@ public:
   virtual auto set_layer_weights(std::string layer_name, const std::vector<float>& weights) -> void = 0;
   virtual auto reset_layer_weights(std::string layer_name) -> void = 0;
   virtual auto reset_all_layer_weights() -> void = 0;
+  virtual auto reset_all_weights() -> void { reset_all_layer_weights(); }
   virtual auto save_model(std::string path) -> int = 0;
 
   // Attributes & Buffer Management (Max/MSP & PureData compatibility)

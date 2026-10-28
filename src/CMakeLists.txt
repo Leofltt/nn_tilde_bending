@@ -1,5 +1,27 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
-project(nn_tilde)
+
+# Derive unified version from the latest git tag (e.g. v0.1.0 -> 0.1.0), fallback to 0.1.0
+execute_process(
+  COMMAND git describe --tags
+  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+  OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+if ("${GIT_DESCRIBE_VERSION}" STREQUAL "")
+  set(GIT_DESCRIBE_VERSION "v0.1.0")
+endif()
+string(REGEX MATCH "[0-9]+\\.[0-9]+(\\.[0-9]+)?" NETBENDER_SEMVER "${GIT_DESCRIBE_VERSION}")
+if ("${NETBENDER_SEMVER}" STREQUAL "")
+  set(NETBENDER_SEMVER "0.1.0")
+endif()
+if (NOT NETBENDER_SEMVER MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  set(NETBENDER_SEMVER "${NETBENDER_SEMVER}.0")
+endif()
+
+project(nn_tilde VERSION ${NETBENDER_SEMVER})
+set(VERSION "${GIT_DESCRIBE_VERSION}")
+add_compile_definitions(NETBENDER_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -40,6 +62,7 @@ list(PREPEND CMAKE_PREFIX_PATH "${torch_dir}/libtorch")
 find_package(Torch REQUIRED PATHS ${torch_dir}/libtorch/lib)
 
 include(${CMAKE_SOURCE_DIR}/cmake/add_onnxruntime.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/add_executorch.cmake)
 
 if (APPLE)
   # Automatically strip quarantine and ad-hoc sign torch, onnx, and support dylibs to prevent Gatekeeper popups
@@ -133,13 +156,6 @@ endif()
 
 add_subdirectory(backend) # DEEP LEARNING BACKEND
 
-execute_process(
-		COMMAND git describe --tags
-		WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-		OUTPUT_VARIABLE VERSION
-		OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
 option(BUILD_MAXMSP "Build MaxMSP targets" ON)
 option(BUILD_PUREDATA "Build PureData targets" ON)
 option(BUILD_JUCE_PLUGIN "Build JUCE VST3/AU audio plugin" ON)
@@ -181,7 +197,7 @@ endif()
 
 if (BUILD_PUREDATA AND NO_PUREDATA EQUAL 0)
     add_custom_target(puredata)
-    add_dependencies(puredata nn)
+    add_dependencies(puredata netBender)
 endif()
 
 if (BUILD_JUCE_PLUGIN)

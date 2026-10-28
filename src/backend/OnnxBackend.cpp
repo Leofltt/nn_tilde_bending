@@ -11,6 +11,9 @@
 
 // Include official ONNX Runtime C++ API
 #include <onnxruntime_cxx_api.h>
+#if defined(__APPLE__)
+#include <coreml_provider_factory.h>
+#endif
 
 struct OnnxBackend::Impl {
     Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "NetBender_OnnxBackend"};
@@ -280,7 +283,31 @@ auto OnnxBackend::get_sample_rate() -> double {
 }
 
 auto OnnxBackend::use_gpu(bool value) -> void {
+    if (m_use_gpu == value) return;
     m_use_gpu = value;
+
+    m_impl->session_options = Ort::SessionOptions();
+    unsigned int hw_threads = std::thread::hardware_concurrency();
+    int intra_threads = std::max(1, (int)std::min(hw_threads, 4u));
+    m_impl->session_options.SetIntraOpNumThreads(intra_threads);
+    m_impl->session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
+
+#if defined(__APPLE__)
+    if (m_use_gpu) {
+        uint32_t coreml_flags = COREML_FLAG_ENABLE_ON_SUBGRAPH;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CoreML(m_impl->session_options, coreml_flags);
+        if (status != nullptr) {
+            std::cerr << "[OnnxBackend] Warning: CoreML EP could not be enabled, falling back to CPU." << std::endl;
+            Ort::GetApi().ReleaseStatus(status);
+        } else {
+            std::cout << "[OnnxBackend] CoreML Execution Provider enabled." << std::endl;
+        }
+    }
+#endif
+
+    if (m_loaded && !m_path.empty()) {
+        reload();
+    }
 }
 
 auto OnnxBackend::introspect_graph() -> void {
@@ -931,10 +958,15 @@ auto OnnxBackend::perform_decode_gen(std::vector<float*>& out_buffer,
         }
 
         int min_frames = 8;
-        if (m_higher_ratio >= 1024 && m_latent_dim >= 8) {
+        if (m_higher_ratio >= 1024 && m_latent_dim >= 8 && m_history_samples > 4096) {
             min_frames = 16;
         }
         int latent_steps = std::max(min_frames, (n_vec + (int)kCrossfadeSamples) / ratio);
+        if (m_use_gpu && ratio > 0) {
+            // CoreML Execution Provider has a 16,384-sample dynamic sequence limit on 1D ConvTranspose layers
+            int max_coreml_frames = std::max(1, 16384 / ratio);
+            latent_steps = std::min(latent_steps, max_coreml_frames);
+        }
         int latent_dim = std::max(1, m_latent_dim);
 
         float latent_scale = 1.0f;

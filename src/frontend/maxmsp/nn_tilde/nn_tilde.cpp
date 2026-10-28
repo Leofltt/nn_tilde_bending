@@ -67,13 +67,13 @@ void model_perform_async(nn_class *nn_instance) {
 class nn: public nn_base<nn, vector_operator<>> {
 
 public:
-    MIN_DESCRIPTION{"Interface for deep learning models"};
-    MIN_TAGS{"audio, deep learning, ai"};
-    MIN_AUTHOR{"Antoine Caillon & Axel Chemla--Romeu-Santos"};
-    MIN_RELATED{"nn.info, mc.nn~, mcs.nn~"};
+    MIN_DESCRIPTION{"Interface for deep learning models and live circuit bending"};
+    MIN_TAGS{"audio, deep learning, ai, bending"};
+    MIN_AUTHOR{"NetBender / Antoine Caillon & Axel Chemla--Romeu-Santos"};
+    MIN_RELATED{"netBender.info, mc.netBender~, mcs.netBender~"};
 
     static std::string get_external_name() {
-       return std::string("nn~");
+       return std::string("netBender~");
     } 
     nn(const atoms &args = {}) {
         init_external(args); 
@@ -110,9 +110,8 @@ public:
     message<> maxclass_setup{
       this, "maxclass_setup",
       [this](const c74::min::atoms &args, const int inlet) -> c74::min::atoms {
-        cout << "nn~ " << VERSION << " - torch " << TORCH_VERSION
-             << " - 2023-2025 - Antoine Caillon & Axel Chemla--Romeu-Santos" << endl;
-        cout << "visit https://www.github.com/acids-ircam" << endl;
+        cout << "netBender~ " << VERSION << " (ExecuTorch / ONNX / Torch " << TORCH_VERSION
+             << ") - NetBender / ACIDS" << endl;
         return {};
       }};
       

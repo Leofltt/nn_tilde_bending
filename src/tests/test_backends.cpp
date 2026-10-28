@@ -16,11 +16,18 @@ int main(int argc, char** argv) {
     std::cout << "==========================================" << std::endl;
 
     std::vector<std::string> testModels;
+    bool useGpu = false;
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
-            testModels.emplace_back(argv[i]);
+            std::string arg = argv[i];
+            if (arg == "--gpu" || arg == "-g") {
+                useGpu = true;
+            } else {
+                testModels.emplace_back(arg);
+            }
         }
-    } else {
+    }
+    if (testModels.empty()) {
         testModels = {
             // TorchScript reference models
             "models/darbouka.ts",
@@ -33,6 +40,25 @@ int main(int argc, char** argv) {
             "models/speech_bendable.onnx",
             "models/stable_audio_1_vae_bendable.onnx"
         };
+        const std::vector<std::string> pteModels = useGpu
+            ? std::vector<std::string>{
+                "models/darbouka_coreml.pte",
+                "models/encodec_coreml.pte",
+                "models/speech_coreml.pte",
+                "models/stable_audio_1_vae_coreml.pte"
+            }
+            : std::vector<std::string>{
+                "models/darbouka_xnnpack.pte",
+                "models/encodec_xnnpack.pte",
+                "models/speech_xnnpack.pte",
+                "models/stable_audio_1_vae_xnnpack.pte"
+            };
+        for (const auto& pte : pteModels) {
+            std::ifstream f(pte);
+            if (f.good()) {
+                testModels.push_back(pte);
+            }
+        }
     }
 
     int failures = 0;
@@ -86,9 +112,6 @@ int main(int argc, char** argv) {
         ModelTestResult res;
         res.path = path;
 
-        bool isTorch = (path.size() >= 3 && path.substr(path.size() - 3) == ".ts");
-        res.backendType = isTorch ? "TorchScript" : "ONNX Runtime";
-
         auto backend = BackendFactory::createForFile(path);
         if (!backend) {
             res.loadSuccess = false;
@@ -97,10 +120,15 @@ int main(int argc, char** argv) {
             failures++;
             continue;
         }
+        res.backendType = backend->get_backend_name();
 
         int loadRet = -1;
         try {
             loadRet = backend->load(path, 44100.0);
+            if (loadRet == 0 && useGpu) {
+                backend->use_gpu(true);
+                res.backendType = backend->get_backend_name() + " [GPU/CoreML]";
+            }
         } catch (const std::exception& e) {
             res.loadError = e.what();
             loadRet = -1;
@@ -128,7 +156,7 @@ int main(int argc, char** argv) {
         res.bendableLayers = layers;
 
         res.modes = backend->get_plugin_modes();
-        if (backend->has_method("decode")) {
+        {
             auto decParams = backend->get_mode_params("decode");
             if (!decParams.empty()) res.latentDim = decParams[0];
         }

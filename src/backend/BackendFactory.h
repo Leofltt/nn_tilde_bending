@@ -2,6 +2,7 @@
 #include "IBackend.h"
 #include "backend.h"
 #include "OnnxBackend.h"
+#include "ExecuTorchBackend.h"
 #include <memory>
 #include <string>
 #include <algorithm>
@@ -9,7 +10,7 @@
 /**
  * BackendFactory
  * Responsible for instantiating the appropriate neural inference backend
- * based on model file extension (.ts -> TorchBackend, .onnx -> OnnxBackend).
+ * based on model file extension (.pte -> ExecuTorchBackend, .onnx -> OnnxBackend, .ts -> TorchBackend).
  */
 class BackendFactory {
 public:
@@ -21,6 +22,9 @@ public:
       std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     }
 
+    if (ext == ".pte") {
+      return std::make_unique<ExecuTorchBackend>();
+    }
     if (ext == ".onnx") {
       return std::make_unique<OnnxBackend>();
     }

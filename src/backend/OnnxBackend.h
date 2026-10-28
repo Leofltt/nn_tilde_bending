@@ -39,6 +39,9 @@ public:
     auto get_sample_rate() -> double override;
     auto use_gpu(bool value) -> void override;
     auto get_last_error() const -> std::string override { return m_last_error; }
+    auto get_backend_name() const -> std::string override {
+        return m_use_gpu ? "ONNX (CoreML)" : "ONNX Runtime";
+    }
 
     // Inference Execution
     auto perform(std::vector<float*>& in_buffer,

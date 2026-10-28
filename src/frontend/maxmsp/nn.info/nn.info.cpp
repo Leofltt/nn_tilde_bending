@@ -1,4 +1,5 @@
 #include "../../../backend/backend.h"
+#include "../../../backend/BackendFactory.h"
 #include "../shared/max_model_download.h"
 #include "../shared/buffer_tools.h"
 #include "../shared/dict_utils.h"
@@ -18,9 +19,9 @@ using namespace c74::min;
 class nn_info : public object<nn_info>, public vector_operator<> {
 public:
   MIN_DESCRIPTION{"Fetching information from deep learning models"};
-  MIN_TAGS{"audio, deep learning, ai"};
-  MIN_AUTHOR{"Axel Chemla--Romeu-Santos"};
-  MIN_RELATED{ "nn~, mc.nn~, mcs.nn~"};
+  MIN_TAGS{"audio, deep learning, ai, bending"};
+  MIN_AUTHOR{"NetBender / Axel Chemla--Romeu-Santos"};
+  MIN_RELATED{ "netBender~, mc.netBender~, mcs.netBender~"};
 
   nn_info(const atoms &args = {});
   ~nn_info();
@@ -62,9 +63,8 @@ public:
   message<> maxclass_setup{
       this, "maxclass_setup",
       [this](const c74::min::atoms &args, const int inlet) -> c74::min::atoms {
-        cout << "nn.info " << VERSION << " - torch " << TORCH_VERSION
-             << " - 2025 - Antoine Caillon & Axel Chemla--Romeu-Santos" << endl;
-        cout << "visit https://forum.ircam.fr" << endl;
+        cout << "netBender.info " << VERSION << " (ExecuTorch / ONNX / Torch " << TORCH_VERSION
+             << ") - NetBender / ACIDS" << endl;
         return {};
       }};
 
@@ -316,15 +316,15 @@ void nn_info::bind_dictionary(const std::string& dict_name) {
 void nn_info::scan_model(path path) {
   std::string model_path = path;
   cout << "parsing model : " << model_path << endl; 
-  auto m_model = Backend();
-  if (m_model.load(model_path, samplerate())) {
+  auto m_model = BackendFactory::create_for_file(model_path);
+  if (m_model->load(model_path, samplerate())) {
     // cerr << "error loading path " << model_path << endl;
     throw "error loading path " + model_path;
     return;
   }
   // parse things
   try {
-    m_model_info = m_model.get_model_info();
+    m_model_info = m_model->get_model_info();
     has_model = true; 
     m_path = model_path;
     update_dictionary();
@@ -336,8 +336,32 @@ void nn_info::scan_model(path path) {
 void nn_info::set_model_path(const std::string& model_path) {
   auto model_path_checked = model_path;
   try {
-    if (model_path.substr(model_path.length() - 3) != ".ts")
-      model_path_checked = model_path_checked + ".ts";
+    auto has_ext = [](const std::string& p) {
+      if (p.length() >= 4 && p.substr(p.length() - 4) == ".pte") return true;
+      if (p.length() >= 5 && p.substr(p.length() - 5) == ".onnx") return true;
+      if (p.length() >= 3 && p.substr(p.length() - 3) == ".ts") return true;
+      return false;
+    };
+    if (!has_ext(model_path_checked)) {
+      const std::vector<std::string> exts = {".pte", ".onnx", ".ts"};
+      bool found = false;
+      for (const auto& ext : exts) {
+        std::string cand = model_path_checked + ext;
+        if (m_downloader && std::filesystem::exists(m_downloader->get_download_path() / cand)) {
+          model_path_checked = cand;
+          found = true;
+          break;
+        }
+        if (std::filesystem::exists(cand)) {
+          model_path_checked = cand;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        model_path_checked = model_path_checked + ".ts";
+      }
+    }
     min::path current_path; 
     if (m_downloader) {
       auto download_path = m_downloader->get_download_path() / model_path_checked; 

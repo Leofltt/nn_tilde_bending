@@ -38,6 +38,23 @@ protected:
 
 public:
   auto get_last_error() const -> std::string override { return m_last_error; }
+  auto get_backend_name() const -> std::string override {
+    return m_use_gpu ? "TorchScript (GPU)" : "TorchScript";
+  }
+  auto get_input_label(const std::string& method, int index) -> std::string override {
+    try {
+      return m_model.attr(method + "_input_labels").toList().get(index).toStringRef();
+    } catch (...) {
+      return "(signal) model input " + std::to_string(index);
+    }
+  }
+  auto get_output_label(const std::string& method, int index) -> std::string override {
+    try {
+      return m_model.attr(method + "_output_labels").toList().get(index).toStringRef();
+    } catch (...) {
+      return "(signal) model output " + std::to_string(index);
+    }
+  }
   using DataType = float; 
   using ArgsType = std::vector<c10::IValue>;
   using KwargsType = std::unordered_map<std::string, c10::IValue>;

@@ -31,7 +31,7 @@ if (-not $Version) {
         # Git failed, fallback
     }
     if (-not $Version) {
-        $Version = "1.6.0"
+        $Version = "0.1.0"
     }
 }
 

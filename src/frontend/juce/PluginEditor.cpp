@@ -864,9 +864,9 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     else if (button == &loadButton)
     {
         fileChooser = std::make_unique<juce::FileChooser> (
-            "Select a Neural Audio Model (.ts, .onnx)...",
+            "Select a Neural Audio Model (.pte, .onnx, .ts)...",
             juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-            "*.ts;*.onnx"
+            "*.pte;*.onnx;*.ts"
         );
         
         auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
@@ -1199,7 +1199,8 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         if (audioProcessor.isResamplingActive())
             srStr += " [Resampled -> " + juce::String ((int)audioProcessor.getSampleRate()) + "Hz]";
 
-        statusLabel.setText ("Loaded: " + file.getFileName() + srStr, juce::dontSendNotification);
+        juce::String backendName (audioProcessor.getBackend().get_backend_name());
+        statusLabel.setText ("Loaded: " + file.getFileName() + " [" + backendName + "]" + srStr, juce::dontSendNotification);
         statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
 
         // Update Buffer readout badge
@@ -1619,9 +1620,10 @@ void NNBendingAudioProcessorEditor::saveModelToFile()
         return;
     }
 
+    bool isPte = audioProcessor.getModelPath().endsWithIgnoreCase (".pte");
     bool isOnnx = audioProcessor.getModelPath().endsWithIgnoreCase (".onnx");
-    juce::String defaultName = isOnnx ? "bended_model.onnx" : "bended_model.ts";
-    juce::String filePattern = isOnnx ? "*.onnx" : "*.ts";
+    juce::String defaultName = isPte ? "bended_model.pte" : (isOnnx ? "bended_model.onnx" : "bended_model.ts");
+    juce::String filePattern = isPte ? "*.pte" : (isOnnx ? "*.onnx" : "*.ts");
 
     fileChooser = std::make_unique<juce::FileChooser> (
         "Save Bended Model (" + filePattern + ")...",

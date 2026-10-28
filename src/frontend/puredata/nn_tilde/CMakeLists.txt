@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(nn_tilde_pd)
+project(netBender_tilde_pd)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,11 +9,11 @@ find_package(Torch REQUIRED)
 
 file(GLOB SRC *.cpp)
 
-add_library(nn SHARED ${SRC})
+add_library(netBender SHARED ${SRC})
 
 if (MSVC)
-	set_property(TARGET nn PROPERTY CXX_STANDARD 20)
-	target_compile_features(nn PUBLIC "cxx_std_20")
+	set_property(TARGET netBender PROPERTY CXX_STANDARD 20)
+	target_compile_features(netBender PUBLIC "cxx_std_20")
 endif()
 
 # Get version from git for all platforms
@@ -29,10 +29,10 @@ if(VERSION)
 endif()
 
 # COPY HELP FILES
-add_custom_command(TARGET nn POST_BUILD
+add_custom_command(TARGET netBender POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/frontend/puredata/nn_tilde/nn~-help.pd"
-        "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/nn~-help.pd"
+        "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/netBender~-help.pd"
     COMMENT "Copy Help File"
 )
 
@@ -40,7 +40,7 @@ if (APPLE)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -undefined dynamic_lookup")
 
-    set_target_properties(nn PROPERTIES
+    set_target_properties(netBender PROPERTIES
         PREFIX ""
         SUFFIX "~.pd_darwin"
         BUILD_WITH_INSTALL_RPATH TRUE
@@ -49,7 +49,7 @@ if (APPLE)
 
     if (BUNDLE_DEPENDENCIES)
         add_custom_command(
-            TARGET nn
+            TARGET netBender
             POST_BUILD
             COMMAND cp "${TORCH_INSTALL_PREFIX}/lib/*.dylib" "${CMAKE_CURRENT_BINARY_DIR}/"
             COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../install/dylib_fix.py -p "${CMAKE_CURRENT_BINARY_DIR}/*.pd_darwin" -l "${CMAKE_CURRENT_BINARY_DIR}/" "${CMAKE_BINARY_DIR}/_deps"  "${CMAKE_SOURCE_DIR}/../env" 
@@ -57,10 +57,10 @@ if (APPLE)
         )
     else()
         add_custom_command(
-            TARGET nn
+            TARGET netBender
             POST_BUILD
-            COMMAND xattr -cr "$<TARGET_FILE:nn>"
-            COMMAND codesign --force --sign "${SIGN_ID}" "$<TARGET_FILE:nn>"
+            COMMAND xattr -cr "$<TARGET_FILE:netBender>"
+            COMMAND codesign --force --sign "${SIGN_ID}" "$<TARGET_FILE:netBender>"
             COMMENT "De-quarantining and codesigning PureData external"
             VERBATIM
         )
@@ -141,9 +141,9 @@ if (UNIX AND NOT APPLE)
         endif()
     endforeach()
 
-    add_dependencies(nn copy_torch_libs)
+    add_dependencies(netBender copy_torch_libs)
 
-    set_target_properties(nn PROPERTIES 
+    set_target_properties(netBender PROPERTIES 
         PREFIX ""
         SUFFIX "~.pd_linux"
         BUILD_WITH_INSTALL_RPATH TRUE
@@ -152,7 +152,7 @@ if (UNIX AND NOT APPLE)
     )
 
     # Add libgomp as a link dependency
-    target_link_libraries(nn PRIVATE gomp)
+    target_link_libraries(netBender PRIVATE gomp)
 endif()
 
 if(MSVC)
@@ -203,7 +203,7 @@ if(MSVC)
                 get_filename_component(DLL_NAME ${CUDA_DLL} NAME)
                 foreach(REQUIRED_DLL ${REQUIRED_DLLS})
                     if(DLL_NAME STREQUAL REQUIRED_DLL)
-                        add_custom_command(TARGET nn POST_BUILD
+                        add_custom_command(TARGET netBender POST_BUILD
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                                 "${CUDA_DLL}"
                                 "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/${DLL_NAME}"
@@ -218,7 +218,7 @@ if(MSVC)
     # Copy libtorch DLLs
     foreach(DLL ${REQUIRED_DLLS})
         if(EXISTS "${TORCH_INSTALL_PREFIX}/lib/${DLL}")
-            add_custom_command(TARGET nn POST_BUILD
+            add_custom_command(TARGET netBender POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${TORCH_INSTALL_PREFIX}/lib/${DLL}"
                     "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/${DLL}"
@@ -227,20 +227,20 @@ if(MSVC)
         endif()
     endforeach()
 
-    set_target_properties(nn PROPERTIES PREFIX "" SUFFIX "~.dll")
+    set_target_properties(netBender PROPERTIES PREFIX "" SUFFIX "~.dll")
 endif()
 
 if(NOT $ENV{PD_EXTERNAL_PATH} STREQUAL "")
     add_custom_command(
-        TARGET nn
+        TARGET netBender
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory  "${CMAKE_CURRENT_BINARY_DIR}" "$ENV{PD_EXTERNAL_PATH}/nn_tilde"
-        COMMENT "Copying ${CMAKE_CURRENT_BINARY_DIR} to $ENV{PD_EXTERNAL_PATH}/nn_tilde"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory  "${CMAKE_CURRENT_BINARY_DIR}" "$ENV{PD_EXTERNAL_PATH}/netBender_tilde"
+        COMMENT "Copying ${CMAKE_CURRENT_BINARY_DIR} to $ENV{PD_EXTERNAL_PATH}/netBender_tilde"
     )
 endif()
 
-target_link_libraries(nn PRIVATE backend)
-target_include_directories(nn PRIVATE "${PUREDATA_INCLUDE_DIR}")
+target_link_libraries(netBender PRIVATE backend)
+target_include_directories(netBender PRIVATE "${PUREDATA_INCLUDE_DIR}")
 
 
 if (NOT CURL_LIBRARY)
@@ -257,16 +257,16 @@ endif()
 
 if (UNIX AND NOT APPLE)
     add_custom_command(
-        TARGET nn
+        TARGET netBender
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy ${CURL_LIBRARY} "${CMAKE_BINARY_DIR}/frontend/puredata/nn_tilde/"
     )
 endif()
 
 include_directories(${CURL_INCLUDE_DIR})
-target_link_libraries(nn PRIVATE ${CURL_LIBRARY})
+target_link_libraries(netBender PRIVATE ${CURL_LIBRARY})
 
-target_link_libraries(nn PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(netBender PRIVATE nlohmann_json::nlohmann_json)
 if (MSVC)
-    target_link_libraries(nn PRIVATE "${PUREDATA_BIN_DIR}/pd.lib" shlwapi.lib)
+    target_link_libraries(netBender PRIVATE "${PUREDATA_BIN_DIR}/pd.lib" shlwapi.lib)
 endif()

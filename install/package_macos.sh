@@ -52,7 +52,7 @@ if [ -z "${VERSION}" ]; then
     if git -C "${REPO_ROOT}" describe --tags --always >/dev/null 2>&1; then
         VERSION="$(git -C "${REPO_ROOT}" describe --tags --always | sed 's/^v//')"
     else
-        VERSION="1.6.0"
+        VERSION="0.1.0"
     fi
 fi
 PKG_NAME="NetBender_macOS_${VERSION}.pkg"

@@ -213,10 +213,7 @@ def convert_stable_audio_ts_to_onnx(
         print(f"[2/3] Exporting to standard ONNX (opset {opset_version}): {std_onnx_path}...")
         print(f"      Channels: {in_channels} -> {out_channels} | Latent Dim: {latent_dim} | Ratio: {ratio} | SR: {sr} Hz")
 
-    torch.onnx.export(
-        model,
-        (dummy_audio,),
-        std_onnx_path,
+    export_kwargs = dict(
         input_names=["audio_in"],
         output_names=["audio_out"],
         dynamic_axes={
@@ -226,6 +223,10 @@ def convert_stable_audio_ts_to_onnx(
         opset_version=opset_version,
         do_constant_folding=True,
     )
+    import inspect
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+    torch.onnx.export(model, (dummy_audio,), std_onnx_path, **export_kwargs)
 
     if verbose:
         print("  -> Exported standard ONNX successfully.")

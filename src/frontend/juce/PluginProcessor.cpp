@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <random>
+#include <cmath>
 
 //==============================================================================
 ModelThread::ModelThread(NNBendingAudioProcessor& processor)
@@ -502,8 +504,8 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
         m_bufferSize = std::max(minBufferForRatio, reqSize * 2);
         
         // Reset latent terrain cached matrices on new model load
-        m_rffMatrix = at::Tensor();
-        m_prevLatentTensor = at::Tensor();
+        m_rffMatrix.clear();
+        m_prevLatentBuffer.clear();
         m_cachedLatentDim = 0;
 
         // Query model sample rate vs host sample rate
@@ -871,80 +873,7 @@ void NNBendingAudioProcessor::runInference()
         if (!activeHook && m_latentEnabled.load())
         {
             activeHook = [this](IBackend::LatentBuffer& buf) {
-                if (buf.data == nullptr || buf.channels <= 0 || buf.length <= 0) return;
-                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
-
-                // Sync automatable parameters
-                float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
-                float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
-                float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
-                auto mode = m_latentMode.load();
-
-                int64_t latentDim = buf.channels;
-
-                if (mode == LatentMode::FourierOrbit)
-                {
-                    // Generate or reuse deterministic Random Fourier Feature projection matrix B: [latentDim / 2, 2]
-                    int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
-                    if (!m_rffMatrix.defined() || m_cachedLatentDim != (int)latentDim)
-                    {
-                        // Deterministic seed for reproducible timbral coordinates
-                        torch::manual_seed(42);
-                        m_rffMatrix = torch::randn({numHarmonics, 2}, z.options()) * 2.5f; // Spatial frequency scaling
-                        m_cachedLatentDim = (int)latentDim;
-                    }
-
-                    if (!m_coordsTensor.defined() || m_coordsTensor.device() != z.device() || m_coordsTensor.dtype() != z.dtype())
-                    {
-                        m_coordsTensor = torch::empty({2, 1}, z.options());
-                    }
-                    float* coordsPtr = m_coordsTensor.data_ptr<float>();
-                    coordsPtr[0] = lx;
-                    coordsPtr[1] = ly;
-
-                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), m_coordsTensor); // [numHarmonics, 1]
-
-                    // Compute sin and cos components for smooth, infinite-resolution harmonic orbits
-                    auto cosFeat = torch::cos(proj);
-                    auto sinFeat = torch::sin(proj);
-                    auto rffVec = torch::cat({cosFeat, sinFeat}, 0).reshape({1, -1, 1}); // [1, latentDim, 1]
-
-                    // If latentDim is odd, pad 0
-                    if (rffVec.size(1) < latentDim)
-                    {
-                        auto pad = torch::zeros({1, latentDim - rffVec.size(1), 1}, z.options());
-                        rffVec = torch::cat({rffVec, pad}, 1);
-                    }
-                    else if (rffVec.size(1) > latentDim)
-                    {
-                        rffVec = rffVec.slice(1, 0, latentDim);
-                    }
-
-                    // Additive injection of Fourier timbral orbit, normalized by sqrt(latentDim)
-                    // so high-dimensional codecs (D=64..128) maintain consistent perceptual sensitivity
-                    float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
-                    z = z + normDepth * rffVec;
-                }
-                else if (mode == LatentMode::LatentSlew)
-                {
-                    float slew = m_latentSlew.load();
-                    if (m_prevLatentTensor.defined() && m_prevLatentTensor.sizes() == z.sizes())
-                    {
-                        z = (1.0f - slew) * z + slew * m_prevLatentTensor;
-                    }
-                    m_prevLatentTensor = z.clone();
-                }
-                else if (mode == LatentMode::Quantize)
-                {
-                    // Latent bitcrush / quantization step
-                    float qStep = std::max(0.01f, depth * 0.5f);
-                    z = torch::round(z / qStep) * qStep;
-                }
-
-                if (z.data_ptr<float>() != buf.data)
-                {
-                    std::memcpy(buf.data, z.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
-                }
+                applyLatentTerrainHook(buf);
             };
         }
 
@@ -958,72 +887,7 @@ void NNBendingAudioProcessor::runInference()
         if (!activeHook)
         {
             activeHook = [this](IBackend::LatentBuffer& buf) {
-                if (buf.data == nullptr || buf.channels <= 0 || buf.length <= 0) return;
-                auto z = torch::from_blob(buf.data, {1, buf.channels, buf.length}, torch::kFloat);
-
-                float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
-                float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
-                float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
-                auto mode = m_latentMode.load();
-
-                int64_t latentDim = buf.channels;
-
-                if (mode == LatentMode::FourierOrbit)
-                {
-                    int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
-                    if (!m_rffMatrix.defined() || m_cachedLatentDim != (int)latentDim)
-                    {
-                        torch::manual_seed(42);
-                        m_rffMatrix = torch::randn({numHarmonics, 2}, z.options()) * 2.5f;
-                        m_cachedLatentDim = (int)latentDim;
-                    }
-
-                    if (!m_coordsTensor.defined() || m_coordsTensor.device() != z.device() || m_coordsTensor.dtype() != z.dtype())
-                    {
-                        m_coordsTensor = torch::empty({2, 1}, z.options());
-                    }
-                    float* coordsPtr = m_coordsTensor.data_ptr<float>();
-                    coordsPtr[0] = lx;
-                    coordsPtr[1] = ly;
-
-                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), m_coordsTensor);
-
-                    auto cosFeat = torch::cos(proj);
-                    auto sinFeat = torch::sin(proj);
-                    auto rffVec = torch::cat({cosFeat, sinFeat}, 0).reshape({1, -1, 1});
-
-                    if (rffVec.size(1) < latentDim)
-                    {
-                        auto pad = torch::zeros({1, latentDim - rffVec.size(1), 1}, z.options());
-                        rffVec = torch::cat({rffVec, pad}, 1);
-                    }
-                    else if (rffVec.size(1) > latentDim)
-                    {
-                        rffVec = rffVec.slice(1, 0, latentDim);
-                    }
-
-                    float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
-                    z = z + normDepth * rffVec;
-                }
-                else if (mode == LatentMode::LatentSlew)
-                {
-                    float slew = m_latentSlew.load();
-                    if (m_prevLatentTensor.defined() && m_prevLatentTensor.sizes() == z.sizes())
-                    {
-                        z = (1.0f - slew) * z + slew * m_prevLatentTensor;
-                    }
-                    m_prevLatentTensor = z.clone();
-                }
-                else if (mode == LatentMode::Quantize)
-                {
-                    float qStep = std::max(0.01f, depth * 0.5f);
-                    z = torch::round(z / qStep) * qStep;
-                }
-
-                if (z.data_ptr<float>() != buf.data)
-                {
-                    std::memcpy(buf.data, z.contiguous().data_ptr<float>(), buf.channels * buf.length * sizeof(float));
-                }
+                applyLatentTerrainHook(buf);
             };
         }
 
@@ -1054,6 +918,81 @@ void NNBendingAudioProcessor::runInference()
     }
     
     m_output_ready.store(true);
+}
+
+void NNBendingAudioProcessor::applyLatentTerrainHook(IBackend::LatentBuffer& buf)
+{
+    if (buf.data == nullptr || buf.channels <= 0 || buf.length <= 0)
+        return;
+
+    float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
+    float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
+    float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
+    auto mode = m_latentMode.load();
+
+    int64_t latentDim = buf.channels;
+    int64_t length = buf.length;
+    size_t totalElems = (size_t)(latentDim * length);
+
+    if (mode == LatentMode::FourierOrbit)
+    {
+        int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
+        if (m_rffMatrix.size() != (size_t)(numHarmonics * 2) || m_cachedLatentDim != (int)latentDim)
+        {
+            std::mt19937 rng(42);
+            std::normal_distribution<float> dist(0.0f, 2.5f);
+            m_rffMatrix.resize((size_t)(numHarmonics * 2));
+            for (auto& val : m_rffMatrix)
+                val = dist(rng);
+            m_cachedLatentDim = (int)latentDim;
+        }
+
+        float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
+
+        for (int64_t h = 0; h < numHarmonics; ++h)
+        {
+            float proj = m_rffMatrix[(size_t)(h * 2)] * lx + m_rffMatrix[(size_t)(h * 2 + 1)] * ly;
+            float cosOffset = normDepth * std::cos(proj);
+            float sinOffset = normDepth * std::sin(proj);
+
+            if (h < latentDim)
+            {
+                float* chPtr = buf.data + (h * length);
+                for (int64_t t = 0; t < length; ++t)
+                    chPtr[t] += cosOffset;
+            }
+            if ((numHarmonics + h) < latentDim)
+            {
+                float* chPtr = buf.data + ((numHarmonics + h) * length);
+                for (int64_t t = 0; t < length; ++t)
+                    chPtr[t] += sinOffset;
+            }
+        }
+    }
+    else if (mode == LatentMode::LatentSlew)
+    {
+        float slew = m_latentSlew.load();
+        if (m_prevLatentBuffer.size() == totalElems)
+        {
+            for (size_t i = 0; i < totalElems; ++i)
+            {
+                buf.data[i] = (1.0f - slew) * buf.data[i] + slew * m_prevLatentBuffer[i];
+            }
+        }
+        else
+        {
+            m_prevLatentBuffer.resize(totalElems);
+        }
+        std::memcpy(m_prevLatentBuffer.data(), buf.data, totalElems * sizeof(float));
+    }
+    else if (mode == LatentMode::Quantize)
+    {
+        float qStep = std::max(0.01f, depth * 0.5f);
+        for (size_t i = 0; i < totalElems; ++i)
+        {
+            buf.data[i] = std::round(buf.data[i] / qStep) * qStep;
+        }
+    }
 }
 
 //==============================================================================

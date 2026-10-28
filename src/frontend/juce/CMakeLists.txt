@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(nn_bending VERSION 1.6.0)
+project(nn_bending VERSION ${CMAKE_PROJECT_VERSION})
 
 # Helper function to configure a JUCE target with shared settings
 function(configure_nn_bending_target target_name)

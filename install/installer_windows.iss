@@ -4,7 +4,7 @@
 ; ==============================================================================
 
 #ifndef MyAppVersion
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "0.1.0"
 #endif
 
 #define MyAppName "NetBender"

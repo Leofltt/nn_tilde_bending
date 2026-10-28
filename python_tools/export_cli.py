@@ -25,10 +25,13 @@ def main():
     sa_parser.add_argument("--repo-id", type=str, default="stabilityai/stable-audio-open-1.0", help="Hugging Face repo id (default: stabilityai/stable-audio-open-1.0)")
     sa_parser.add_argument("--filename", type=str, default=None, help="Checkpoint filename in HF repo (optional)")
     sa_parser.add_argument("--download-dir", type=str, default="models/checkpoints/stable_audio_1_vae", help="Directory to save downloaded checkpoint")
-    sa_parser.add_argument("-o", "--output", type=str, default=None, help="Output file (.ts or .onnx)")
-    sa_parser.add_argument("--format", type=str, choices=["ts", "onnx", "both"], default=None, help="Format to export: ts, onnx, or both")
+    sa_parser.add_argument("-o", "--output", type=str, default=None, help="Output file (.ts, .onnx, or .pte)")
+    sa_parser.add_argument("--format", type=str, choices=["ts", "onnx", "pte", "both", "all"], default=None, help="Format to export: ts, onnx, pte, both, or all")
     sa_parser.add_argument("--onnx", action="store_true", help="Export as ONNX instead of TorchScript")
-    sa_parser.add_argument("--no-bending", action="store_true", help="Don't promote parameters for ONNX bending")
+    sa_parser.add_argument("--pte", action="store_true", help="Export as ExecuTorch (.pte)")
+    sa_parser.add_argument("--delegate", type=str, choices=["portable", "xnnpack", "coreml", "mps"], default="coreml", help="ExecuTorch delegate (default: coreml)")
+    sa_parser.add_argument("--bend-mode", type=str, choices=["delegate", "full", "none"], default="delegate", help="ExecuTorch bend promotion mode (default: delegate)")
+    sa_parser.add_argument("--no-bending", action="store_true", help="Don't promote parameters for ONNX/PTE bending")
     sa_parser.add_argument("--methods", nargs="+", default=["all"], help="Companion methods for ONNX: all, forward, encode, decode. Default: all")
     sa_parser.add_argument("--buffer-size", type=int, default=8192, help="Buffer size (default: 8192)")
     sa_parser.add_argument("--channels", type=int, default=2, help="Channels (default: 2)")
@@ -89,6 +92,16 @@ def main():
         help="Methods to export for ONNX (e.g. all, forward, encode, decode). Default: all",
     )
     sa_to_onnx_parser.add_argument("--no-bending", action="store_true", help="Skip promoting initializers to graph inputs")
+
+    # TorchScript to ExecuTorch (.pte) Migration
+    migrate_pte_parser = subparsers.add_parser("migrate_pte", help="Migrate TorchScript (.ts) model to bendable ExecuTorch (.pte)")
+    migrate_pte_parser.add_argument("-i", "--input", required=True, help="Input TorchScript .ts model path")
+    migrate_pte_parser.add_argument("-o", "--output", default=None, help="Output .pte file path")
+    migrate_pte_parser.add_argument("--delegate", choices=["portable", "xnnpack", "coreml", "mps"], default="coreml", help="ExecuTorch delegate (default: coreml)")
+    migrate_pte_parser.add_argument("--bend-mode", choices=["delegate", "full", "none"], default="delegate", help="Bend promotion mode (default: delegate)")
+    migrate_pte_parser.add_argument("--buffer-size", type=int, default=None, help="Override buffer size")
+    migrate_pte_parser.add_argument("--channels", type=int, default=None, help="Override channel count")
+    migrate_pte_parser.add_argument("--filter", nargs="+", default=None, help="Optional layer filter substrings")
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -163,6 +176,18 @@ def main():
             channels=args.channels,
             promote_for_bending=not args.no_bending,
             methods=args.methods,
+        )
+    elif args.command == "migrate_pte":
+        from python_tools.migrate_ts_to_pte import migrate_ts_to_pte
+        migrate_ts_to_pte(
+            ts_model_path=args.input,
+            output_pte_path=args.output,
+            delegate=args.delegate,
+            bend_mode=args.bend_mode,
+            buffer_size=args.buffer_size,
+            channels=args.channels,
+            layer_filter=args.filter,
+            verbose=True,
         )
 
 

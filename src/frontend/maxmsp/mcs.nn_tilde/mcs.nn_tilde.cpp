@@ -71,12 +71,12 @@ long simplemc_inputchanged(c74::max::t_object *x, long index, long count);
 class mcs_nn: public nn_base<mcs_nn, mc_operator<>> {
 
 public:
-    MIN_DESCRIPTION{"Multi-channel interface for deep learning models"};
-    MIN_TAGS{"audio, deep learning, ai"};
-    MIN_AUTHOR{"Antoine Caillon & Axel Chemla--Romeu-Santos"};
-    MIN_RELATED{"nn.info, nn~, mc.nn~"};
+    MIN_DESCRIPTION{"Multi-channel interface for deep learning models and live circuit bending"};
+    MIN_TAGS{"audio, deep learning, ai, bending"};
+    MIN_AUTHOR{"NetBender / Antoine Caillon & Axel Chemla--Romeu-Santos"};
+    MIN_RELATED{"netBender.info, netBender~, mc.netBender~"};
 
-    static std::string get_external_name() { return "mcs.nn~";} 
+    static std::string get_external_name() { return "mcs.netBender~";} 
     mcs_nn(const atoms &args = {}) {
         init_external(args); 
     }
@@ -128,9 +128,8 @@ public:
     message<> maxclass_setup{
       this, "maxclass_setup",
       [this](const c74::min::atoms &args, const int inlet) -> c74::min::atoms {
-        cout << "mcs.nn~ " << VERSION << " - torch " << TORCH_VERSION
-             << " - 2024-2025 - Antoine Caillon & Axel Chemla--Romeu-Santos" << endl;
-        cout << "visit https://www.github.com/acids-ircam" << endl;
+        cout << "mcs.netBender~ " << VERSION << " (ExecuTorch / ONNX / Torch " << TORCH_VERSION
+             << ") - NetBender / ACIDS" << endl;
         c74::max::t_class *c = args[0];
         c74::max::class_addmethod(
             c, (c74::max::method)simplemc_multichanneloutputs,
