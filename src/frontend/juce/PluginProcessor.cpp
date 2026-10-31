@@ -462,6 +462,12 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
     if (!newBackend)
         return false;
 
+    if (file.getFileName().containsIgnoreCase("_coreml.pte") || file.getFileName().containsIgnoreCase("_mps.pte"))
+        m_useGpu.store(true);
+    else if (file.getFileName().containsIgnoreCase("_xnnpack.pte") || file.getFileName().containsIgnoreCase("_portable.pte"))
+        m_useGpu.store(false);
+
+    newBackend->use_gpu(m_useGpu.load());
     m_backend = std::move(newBackend);
 
     int err = m_backend->load(path, getSampleRate());
@@ -552,6 +558,46 @@ void NNBendingAudioProcessor::setBufferSize(int size)
     {
         m_bufferSize = size;
         initBuffers();
+    }
+}
+
+void NNBendingAudioProcessor::setUseGpu(bool enabled)
+{
+    if (m_useGpu.load() == enabled && m_modelLoaded.load())
+        return;
+
+    m_useGpu.store(enabled);
+    if (!m_modelLoaded.load() || m_modelPath.isEmpty())
+    {
+        if (m_backend)
+            m_backend->use_gpu(enabled);
+        return;
+    }
+
+    juce::String savedMethod = m_currentMethod;
+    juce::File targetFile(m_modelPath);
+
+    // For .pte models, automatically swap between sibling *_xnnpack.pte (CPU) and *_coreml.pte (GPU/ANE) if present
+    if (m_modelPath.endsWithIgnoreCase(".pte"))
+    {
+        juce::String candidatePath = m_modelPath;
+        if (enabled && candidatePath.containsIgnoreCase("_xnnpack.pte"))
+            candidatePath = candidatePath.replace("_xnnpack.pte", "_coreml.pte", true);
+        else if (!enabled && candidatePath.containsIgnoreCase("_coreml.pte"))
+            candidatePath = candidatePath.replace("_coreml.pte", "_xnnpack.pte", true);
+
+        juce::File candidateFile(candidatePath);
+        if (candidateFile.existsAsFile())
+            targetFile = candidateFile;
+    }
+
+    if (loadModel(targetFile))
+    {
+        if (savedMethod.isNotEmpty())
+            setCurrentMethod(savedMethod);
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        for (auto& pair : m_layerStates)
+            pair.second.isApplied = false;
     }
 }
 

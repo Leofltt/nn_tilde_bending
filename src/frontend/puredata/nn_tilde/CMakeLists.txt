@@ -16,17 +16,16 @@ if (MSVC)
 	target_compile_features(netBender PUBLIC "cxx_std_20")
 endif()
 
-# Get version from git for all platforms
-execute_process(
-    COMMAND git describe --tags
-    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-    OUTPUT_VARIABLE VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if(VERSION)
-    message(STATUS "Building version: ${VERSION}")
-    add_definitions(-DVERSION="${VERSION}")
+# Use unified project version (fallback to git describe / 0.1.0 if built standalone)
+if (NOT VERSION)
+    if (CMAKE_PROJECT_VERSION)
+        set(VERSION "v${CMAKE_PROJECT_VERSION}")
+    else()
+        set(VERSION "v0.1.0")
+    endif()
 endif()
+message(STATUS "Building PureData external version: ${VERSION}")
+add_definitions(-DVERSION="${VERSION}")
 
 # COPY HELP FILES
 add_custom_command(TARGET netBender POST_BUILD

@@ -75,6 +75,7 @@ private:
     
     juce::Label bufferLabel { {}, "Buffer:" };
     juce::Label bufferStatusLabel;
+    juce::TextButton gpuButton { "CPU" };
 
     juce::Label dryWetLabel { {}, "Dry/Wet:" };
     juce::Slider dryWetSlider;

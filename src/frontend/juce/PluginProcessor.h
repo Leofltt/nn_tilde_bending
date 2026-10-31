@@ -197,6 +197,8 @@ public:
     void setBufferSize(int size);
     double getModelSampleRate() const { return m_modelSampleRate.load(); }
     bool isResamplingActive() const { return m_resamplingActive.load(); }
+    bool isUsingGpu() const { return m_useGpu.load(); }
+    void setUseGpu(bool enabled);
 
     // Latent bending hook (applied during autoencode mode)
     void setLatentHook(IBackend::LatentHook hook) { m_latentHook = hook; }
@@ -485,6 +487,7 @@ private:
     std::unique_ptr<IBackend> m_backend;
     IBackend::LatentHook m_latentHook { nullptr };
     std::atomic<bool> m_modelLoaded { false };
+    std::atomic<bool> m_useGpu { false };
     juce::String m_modelPath;
     juce::String m_currentMethod;
     int m_bufferSize { 2048 };

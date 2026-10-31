@@ -20,13 +20,14 @@ endif()
 # MAX EXTERNAL
 #############################################################
 
-execute_process(
-		COMMAND git describe --tags
-		WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-		OUTPUT_VARIABLE VERSION
-		OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-message(${VERSION})
+if (NOT VERSION)
+	if (CMAKE_PROJECT_VERSION)
+		set(VERSION "v${CMAKE_PROJECT_VERSION}")
+	else()
+		set(VERSION "v0.1.0")
+	endif()
+endif()
+message(STATUS "Building mc.netBender~ version: ${VERSION}")
 add_definitions(-DVERSION="${VERSION}")
 
 

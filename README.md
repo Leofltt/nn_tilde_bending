@@ -21,6 +21,7 @@ Because TorchScript (`torch.jit`) is deprecated in PyTorch 2.x+, NetBender uses 
 ### The `NBND` Sidecar Format (`.bin` + `.json`)
 
 Compiled edge runtimes (ExecuTorch `.pte` and ONNX Runtime `.onnx`) achieve their speedups by freezing static weights inside hardware-compiled subgraphs. To preserve **zero-allocation, sample-accurate weight bending** without re-compiling sessions on the audio thread:
+
 1. Selected bendable parameters are promoted to explicit graph inputs during export (`pte_bend_prep.py` / `onnx_bend_prep.py`).
 2. Their baseline float32 weights and tensor shapes are written to a companion `<model>.bin` file (`NBND` binary header).
 3. At runtime, NetBender memory-maps the `NBND` sidecar into contiguous `float` buffers and binds them directly to the ExecuTorch or ONNX Runtime execution inputs with zero copies.
@@ -53,17 +54,6 @@ Always install Python conversion dependencies inside `.venv` (CMake also auto-di
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
-
-### Pre-Exported Models in `models/`
-
-All four reference architectures are already exported across all three backends (`.ts`, `.onnx`, and `.pte` for both CoreML GPU/ANE and XNNPACK CPU) in `models/`:
-
-| Architecture | TorchScript (`.ts`) | Bendable ONNX (`.onnx` + `.bin`) | ExecuTorch CoreML (`*_coreml.pte`) | ExecuTorch XNNPACK (`*_xnnpack.pte`) |
-| --- | --- | --- | --- | --- |
-| **RAVE Darbouka** (44.1/48 kHz, $r=2048, z=4$) | `models/darbouka.ts` | `models/darbouka_bendable.onnx` (+ `_encode.onnx`, `_decode.onnx`, `.bin`) | `models/darbouka_coreml.pte` (+ `.bin`, `.json`) | `models/darbouka_xnnpack.pte` (+ `.bin`, `.json`) |
-| **RAVE Speech** (44.1/48 kHz, $r=2048, z=8$) | `models/speech.ts` | `models/speech_bendable.onnx` (+ `_encode.onnx`, `_decode.onnx`, `.bin`) | `models/speech_coreml.pte` (+ `.bin`, `.json`) | `models/speech_xnnpack.pte` (+ `.bin`, `.json`) |
-| **Meta EnCodec Continuous** (24 kHz, $r=320, z=128$) | `models/encodec_bendable.ts` | `models/encodec_bendable.onnx` (+ `_encode.onnx`, `_decode.onnx`, `.bin`) | `models/encodec_coreml.pte` (+ `.bin`, `.json`) | `models/encodec_xnnpack.pte` (+ `.bin`, `.json`) |
-| **Stable Audio 1.0 Stereo VAE** (44.1 kHz, $2\text{ch}, r=2048, z=64$) | `models/stable_audio_1_vae.ts` | `models/stable_audio_1_vae_bendable.onnx` (+ `_encode.onnx`, `_decode.onnx`, `.bin`) | `models/stable_audio_1_vae_coreml.pte` (+ `.bin`, `.json`) | `models/stable_audio_1_vae_xnnpack.pte` (+ `.bin`, `.json`) |
 
 ### 1. Exporting to ExecuTorch (`.pte`) & Migrating `.ts` Models
 
@@ -205,6 +195,7 @@ netBender~ <model_path> [method] [buffer_size]
 - **`[buffer_size]`**: Internal circular buffer size in samples (must be $\ge$ model's `higher_ratio`; `0` disables the worker thread).
 
 **Examples:**
+
 - `[netBender~ vintage_bendable.onnx forward 2048]`
 - `[netBender~ stable_audio_1_vae.pte forward 8192 @gpu 1]`
 - `[mc.netBender~ rave_model.pte decode 2048]`
