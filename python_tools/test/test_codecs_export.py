@@ -91,9 +91,9 @@ def test_stable_audio_export():
         loaded.eval()
 
         # Check required nn~ metadata buffers
-        encode_params = loaded.attr("encode_params").tolist()
-        decode_params = loaded.attr("decode_params").tolist()
-        forward_params = loaded.attr("forward_params").tolist()
+        encode_params = getattr(loaded, "encode_params").tolist()
+        decode_params = getattr(loaded, "decode_params").tolist()
+        forward_params = getattr(loaded, "forward_params").tolist()
 
         print(f"  encode_params:  {encode_params}")
         print(f"  decode_params:  {decode_params}")
@@ -105,13 +105,13 @@ def test_stable_audio_export():
 
         # Test forward audio tensor inference (2048 audio samples)
         dummy_in = torch.randn(1, 2, 2048)
-        out = loaded.get_method("forward")(dummy_in)
+        out = loaded.forward(dummy_in)
         assert out.shape == (1, 2, 2048), f"Expected shape (1, 2, 2048), got {out.shape}"
 
         # Test encode -> decode
-        latents = loaded.get_method("encode")(dummy_in)
+        latents = loaded.encode(dummy_in)
         assert latents.shape == (1, 64, 1), f"Expected shape (1, 64, 1), got {latents.shape}"
-        recon = loaded.get_method("decode")(latents)
+        recon = loaded.decode(latents)
         assert recon.shape == (1, 2, 2048), f"Expected shape (1, 2, 2048), got {recon.shape}"
 
         # Inspect named parameters for Snake activation layers
@@ -152,8 +152,8 @@ def test_encodec_export():
         loaded = torch.jit.load(ts_path)
         loaded.eval()
 
-        encode_params = loaded.attr("encode_params").tolist()
-        decode_params = loaded.attr("decode_params").tolist()
+        encode_params = getattr(loaded, "encode_params").tolist()
+        decode_params = getattr(loaded, "decode_params").tolist()
 
         print(f"  encode_params:  {encode_params}")
         print(f"  decode_params:  {decode_params}")

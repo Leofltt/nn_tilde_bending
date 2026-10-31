@@ -14,23 +14,23 @@ public:
 
     BufferManager();
 
-    void init_buffer_list(Backend *backend, c74::min::object_base* object);
+    void init_buffer_list(IBackend *backend, c74::min::object_base* object);
     void link_attribute_to_buffer(std::string buffer_name, c74::min::symbol target_max_buffer);
-    void append_if_buffer_element(Backend *model, Backend::BufferMap &buffers, c74::min::symbol target_max_buffer, std::string attribute_name, int index);
+    void append_if_buffer_element(IBackend *model, IBackend::BufferMap &buffers, c74::min::symbol target_max_buffer, std::string attribute_name, int index);
     static int get_buffer_index(std::vector<std::string> buffer_attributes, std::string buffer_name);
 
     void set_buffer_tracking(bool buffer_tracking) { buffer_track = buffer_tracking; }
 
-    int bind_buffer_attribute(Backend* backend, std::string element, c74::min::object_base* object);
-    int unbind_buffer_attribute(Backend* backend, std::string element, c74::min::object_base* object);
-    int modify_buffer_attribute(Backend* backend, std::string element, c74::min::object_base* object);
+    int bind_buffer_attribute(IBackend* backend, std::string element, c74::min::object_base* object);
+    int unbind_buffer_attribute(IBackend* backend, std::string element, c74::min::object_base* object);
+    int modify_buffer_attribute(IBackend* backend, std::string element, c74::min::object_base* object);
 
     template <typename data_type>
     StaticBuffer<data_type> static_buffer_from_name(std::string buffer_name);
     template <typename data_type>
     static StaticBuffer<data_type> static_buffer_from_max_buffer(c74::min::buffer_reference* max_buffer);
 
-    c74::min::function get_notification_callback(std::string element, c74::min::object_base* object, Backend* backend);
+    c74::min::function get_notification_callback(std::string element, c74::min::object_base* object, IBackend* backend);
 
     using iterator = std::vector<std::unique_ptr<c74::min::buffer_reference>>::iterator;
     auto begin() { return m_max_buffers.begin(); }
@@ -69,7 +69,7 @@ void BufferManager::link_attribute_to_buffer(std::string buffer_name, c74::min::
   }
 }
 
-void BufferManager::append_if_buffer_element(Backend *model, Backend::BufferMap &buffers, c74::min::symbol target_max_buffer, std::string attribute_name, int index)
+void BufferManager::append_if_buffer_element(IBackend *model, IBackend::BufferMap &buffers, c74::min::symbol target_max_buffer, std::string attribute_name, int index)
 {
     if (model->is_buffer_element_of_attribute(attribute_name, index)) {
       auto buffer_name = model->get_buffer_name(attribute_name, index);
@@ -124,7 +124,7 @@ StaticBuffer<data_type> BufferManager::static_buffer_from_max_buffer(c74::min::b
 };
 
 
-int BufferManager::bind_buffer_attribute(Backend *backend, std::string element, c74::min::object_base* object) {
+int BufferManager::bind_buffer_attribute(IBackend *backend, std::string element, c74::min::object_base* object) {
 if (this->buffer_track) {
     std::string method = "print";
     // c74::min::atoms args = {string_id(), "cout", element + " modified"};
@@ -153,7 +153,7 @@ if (this->buffer_track) {
 }
 
 
-int BufferManager::unbind_buffer_attribute(Backend *backend, std::string element, c74::min::object_base* object) {
+int BufferManager::unbind_buffer_attribute(IBackend *backend, std::string element, c74::min::object_base* object) {
   if (this->buffer_track) {
     std::string method = "print";
     // c74::min::atoms args = {string_id(), "cout", element + " unbounded"};
@@ -177,7 +177,7 @@ int BufferManager::unbind_buffer_attribute(Backend *backend, std::string element
   return -1;
 }
 
-int BufferManager::modify_buffer_attribute(Backend *backend, std::string element, c74::min::object_base* object) {
+int BufferManager::modify_buffer_attribute(IBackend *backend, std::string element, c74::min::object_base* object) {
   if (this->buffer_track) {
     std::string method = "print";
     // c74::min::atoms args = {string_id(), "cout", element + " modified"};
@@ -205,7 +205,7 @@ int BufferManager::modify_buffer_attribute(Backend *backend, std::string element
   return -1;
 }
 
-c74::min::function BufferManager::get_notification_callback(std::string element, c74::min::object_base* object, Backend* backend) {
+c74::min::function BufferManager::get_notification_callback(std::string element, c74::min::object_base* object, IBackend* backend) {
   c74::min::function bufferCallback = 
         [this, object, element, backend](const c74::min::atoms& args, const int inlet) -> c74::min::atoms {
             int out;
@@ -228,7 +228,7 @@ c74::min::function BufferManager::get_notification_callback(std::string element,
     return bufferCallback;
 }
 
-void BufferManager::init_buffer_list(Backend *backend, c74::min::object_base* object) {
+void BufferManager::init_buffer_list(IBackend *backend, c74::min::object_base* object) {
     // clear previous buffers
     m_max_buffers.clear();
     buffer_attributes.clear();

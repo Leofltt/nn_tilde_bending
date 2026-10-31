@@ -11,7 +11,7 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     titleLabel.setColour (juce::Label::textColourId, juce::Colours::lightcyan);
     addAndMakeVisible (titleLabel);
 
-    loadButton.setButtonText ("Load Model (.ts)");
+    loadButton.setButtonText ("Load Model");
     loadButton.addListener (this);
     loadButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromString ("#ff581c87"));
     loadButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
@@ -35,6 +35,14 @@ NNBendingAudioProcessorEditor::NNBendingAudioProcessorEditor (NNBendingAudioProc
     bufferStatusLabel.setColour (juce::Label::outlineColourId, juce::Colour::fromString ("#ff3d3554"));
     bufferStatusLabel.setColour (juce::Label::textColourId, juce::Colours::cyan);
     addAndMakeVisible (bufferStatusLabel);
+
+    gpuButton.setButtonText (audioProcessor.isUsingGpu() ? "GPU" : "CPU");
+    gpuButton.setColour (juce::TextButton::buttonColourId,
+                         audioProcessor.isUsingGpu() ? juce::Colour::fromString ("#ff0e7490") : juce::Colour::fromString ("#ff1c1926"));
+    gpuButton.setColour (juce::TextButton::textColourOffId,
+                         audioProcessor.isUsingGpu() ? juce::Colours::lightcyan : juce::Colours::lightgrey);
+    gpuButton.addListener (this);
+    addAndMakeVisible (gpuButton);
 
     dryWetLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible (dryWetLabel);
@@ -494,7 +502,10 @@ void NNBendingAudioProcessorEditor::resized()
 
     bufferStatusLabel.setBounds (headerRow.removeFromRight (44));
     bufferLabel.setBounds (headerRow.removeFromRight (40));
-    headerRow.removeFromRight (10);
+    headerRow.removeFromRight (8);
+
+    gpuButton.setBounds (headerRow.removeFromRight (48));
+    headerRow.removeFromRight (8);
 
     loadButton.setBounds (headerRow.removeFromLeft (90));
     headerRow.removeFromLeft (8);
@@ -820,6 +831,12 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
         if (currentBendingLayer.isNotEmpty())
             selectLayer (currentBendingLayer);
     }
+    else if (button == &gpuButton)
+    {
+        bool nextGpu = !audioProcessor.isUsingGpu();
+        audioProcessor.setUseGpu (nextGpu);
+        updateModelInfo();
+    }
     else if (button == &shortCircuitButton)
     {
         // Toggle or pulse momentary short-circuit gate
@@ -864,9 +881,9 @@ void NNBendingAudioProcessorEditor::buttonClicked (juce::Button* button)
     else if (button == &loadButton)
     {
         fileChooser = std::make_unique<juce::FileChooser> (
-            "Select a PyTorch TorchScript model (.ts)...",
+            "Select a Neural Audio Model (.pte, .onnx, .ts)...",
             juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-            "*.ts"
+            "*.pte;*.onnx;*.ts"
         );
         
         auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
@@ -1191,6 +1208,13 @@ void NNBendingAudioProcessorEditor::timerCallback()
 
 void NNBendingAudioProcessorEditor::updateModelInfo()
 {
+    bool usingGpu = audioProcessor.isUsingGpu();
+    gpuButton.setButtonText (usingGpu ? "GPU" : "CPU");
+    gpuButton.setColour (juce::TextButton::buttonColourId,
+                         usingGpu ? juce::Colour::fromString ("#ff0e7490") : juce::Colour::fromString ("#ff1c1926"));
+    gpuButton.setColour (juce::TextButton::textColourOffId,
+                         usingGpu ? juce::Colours::lightcyan : juce::Colours::lightgrey);
+
     if (audioProcessor.isModelLoaded())
     {
         juce::File file (audioProcessor.getModelPath());
@@ -1199,7 +1223,8 @@ void NNBendingAudioProcessorEditor::updateModelInfo()
         if (audioProcessor.isResamplingActive())
             srStr += " [Resampled -> " + juce::String ((int)audioProcessor.getSampleRate()) + "Hz]";
 
-        statusLabel.setText ("Loaded: " + file.getFileName() + srStr, juce::dontSendNotification);
+        juce::String backendName (audioProcessor.getBackend().get_backend_name());
+        statusLabel.setText ("Loaded: " + file.getFileName() + " [" + backendName + "]" + srStr, juce::dontSendNotification);
         statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
 
         // Update Buffer readout badge
@@ -1619,10 +1644,15 @@ void NNBendingAudioProcessorEditor::saveModelToFile()
         return;
     }
 
+    bool isPte = audioProcessor.getModelPath().endsWithIgnoreCase (".pte");
+    bool isOnnx = audioProcessor.getModelPath().endsWithIgnoreCase (".onnx");
+    juce::String defaultName = isPte ? "bended_model.pte" : (isOnnx ? "bended_model.onnx" : "bended_model.ts");
+    juce::String filePattern = isPte ? "*.pte" : (isOnnx ? "*.onnx" : "*.ts");
+
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Save Bended TorchScript Model (.ts)...",
-        juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("bended_model.ts"),
-        "*.ts"
+        "Save Bended Model (" + filePattern + ")...",
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile (defaultName),
+        filePattern
     );
 
     auto flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting;

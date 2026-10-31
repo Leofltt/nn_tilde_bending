@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(nn_bending VERSION 1.6.0)
+project(nn_bending VERSION ${CMAKE_PROJECT_VERSION})
 
 # Helper function to configure a JUCE target with shared settings
 function(configure_nn_bending_target target_name)
@@ -37,6 +37,7 @@ function(configure_nn_bending_target target_name)
     target_link_libraries(${target_name} PRIVATE
         backend
         "${TORCH_LIBRARIES}"
+        onnxruntime
         nlohmann_json::nlohmann_json
         juce::juce_audio_utils
         juce::juce_audio_processors
@@ -55,7 +56,7 @@ function(configure_nn_bending_target target_name)
     if (APPLE)
         set_target_properties(${target_name} PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/nn_bending/lib;@loader_path/;@loader_path/../Frameworks"
+            INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${ort_extracted_dir}/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/NetBender/lib;@loader_path/;@loader_path/../Frameworks"
         )
 
         # Post-build library handling and local plugin installation
@@ -64,7 +65,7 @@ function(configure_nn_bending_target target_name)
             foreach(sub_target IN LISTS active_targets)
                 set_target_properties(${sub_target} PROPERTIES
                     BUILD_WITH_INSTALL_RPATH TRUE
-                    INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/nn_bending/lib;@loader_path/;@loader_path/../Frameworks"
+                    INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;${ort_extracted_dir}/lib;${CONDA_ENV_PATH}/lib;/Library/Application Support/NetBender/lib;@loader_path/;@loader_path/../Frameworks"
                 )
 
                 # Determine destination path for local installation
@@ -81,7 +82,7 @@ function(configure_nn_bending_target target_name)
                             TARGET ${sub_target} POST_BUILD
                             COMMAND ${PYTHON_EXECUTABLE} "${CMAKE_SOURCE_DIR}/../install/dylib_fix.py"
                                 -p "$<TARGET_FILE:${sub_target}>"
-                                -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
+                                -l "${torch_dir}/libtorch" "${CMAKE_SOURCE_DIR}/support" "${ort_extracted_dir}/lib" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
                                 --sign_id "${SIGN_ID}"
                                 --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/entitlements.plist"
                             COMMAND ${CMAKE_COMMAND} -E rm -rf "${COPY_DEST}"
@@ -105,7 +106,7 @@ function(configure_nn_bending_target target_name)
                             TARGET ${sub_target} POST_BUILD
                             COMMAND ${PYTHON_EXECUTABLE} "${CMAKE_SOURCE_DIR}/../install/dylib_fix.py"
                                 -p "$<TARGET_FILE:${sub_target}>"
-                                -l "${torch_dir}/libtorch" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
+                                -l "${torch_dir}/libtorch" "${CMAKE_SOURCE_DIR}/support" "${ort_extracted_dir}/lib" "${CMAKE_BINARY_DIR}/_deps" "${CMAKE_SOURCE_DIR}/../env" "${HOMEBREW_PREFIX}"
                                 --sign_id "${SIGN_ID}"
                                 --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/entitlements.plist"
                             COMMENT "Bundling libraries and codesigning ${sub_target}"
@@ -126,15 +127,19 @@ function(configure_nn_bending_target target_name)
         get_target_property(active_targets ${target_name} JUCE_ACTIVE_PLUGIN_TARGETS)
         if (active_targets)
             file(GLOB TORCH_DLLS "${TORCH_INSTALL_PREFIX}/lib/*.dll")
+            set(ALL_RUNTIME_DLLS ${TORCH_DLLS})
+            if (ONNXRUNTIME_DLL AND EXISTS "${ONNXRUNTIME_DLL}")
+                list(APPEND ALL_RUNTIME_DLLS "${ONNXRUNTIME_DLL}")
+            endif()
             foreach(sub_target IN LISTS active_targets)
-                # Copy LibTorch DLLs next to the target executable or plugin binary
-                if (TORCH_DLLS)
+                # Copy LibTorch and ONNX Runtime DLLs next to the target executable or plugin binary
+                if (ALL_RUNTIME_DLLS)
                     add_custom_command(
                         TARGET ${sub_target} POST_BUILD
                         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                            ${TORCH_DLLS}
+                            ${ALL_RUNTIME_DLLS}
                             "$<TARGET_FILE_DIR:${sub_target}>"
-                        COMMENT "Copying LibTorch DLLs to $<TARGET_FILE_DIR:${sub_target}>"
+                        COMMENT "Copying runtime DLLs to $<TARGET_FILE_DIR:${sub_target}>"
                     )
                 endif()
 

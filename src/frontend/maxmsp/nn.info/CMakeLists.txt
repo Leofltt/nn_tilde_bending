@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(C74_MIN_API_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../min-api)
 include(${C74_MIN_API_DIR}/script/min-pretarget.cmake)
+set("${PROJECT_NAME}_EXTERN_OUTPUT_NAME" "netBender.info" CACHE STRING "External output name" FORCE)
 
 if (APPLE)
 	set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
@@ -19,13 +20,14 @@ endif()
 # MAX EXTERNAL
 #############################################################
 
-execute_process(
-		COMMAND git describe --tags
-		WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-		OUTPUT_VARIABLE VERSION
-		OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-message("version : ${VERSION}")
+if (NOT VERSION)
+	if (CMAKE_PROJECT_VERSION)
+		set(VERSION "v${CMAKE_PROJECT_VERSION}")
+	else()
+		set(VERSION "v0.1.0")
+	endif()
+endif()
+message(STATUS "Building netBender.info version: ${VERSION}")
 add_definitions(-DVERSION="${VERSION}")
 
 
@@ -87,7 +89,7 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 if (APPLE)
 	set_target_properties(${PROJECT_NAME} PROPERTIES
 		BUILD_WITH_INSTALL_RPATH TRUE
-		INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/../../support;@loader_path/../../../support;${CONDA_ENV_PATH}/lib"
+		INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib;${torch_dir}/libtorch/lib;@loader_path/../../support;@loader_path/../../../support;/Library/Application Support/NetBender/lib;${CONDA_ENV_PATH}/lib"
 	)
 
 	if (BUNDLE_DEPENDENCIES)

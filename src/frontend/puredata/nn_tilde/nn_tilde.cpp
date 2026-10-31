@@ -35,6 +35,7 @@
 
 
 #include "../../../backend/backend.h"
+#include "../../../backend/BackendFactory.h"
 #include "../../../shared/circular_buffer.h"
 #include "../shared/pd_model_download.h"
 #include "../shared/pd_buffer_manager.h"
@@ -122,7 +123,7 @@ typedef struct _nn_tilde
 
   bool m_enabled;
   // BACKEND RELATED MEMBERS
-  std::unique_ptr<Backend> m_model;
+  std::unique_ptr<IBackend> m_model;
   std::unique_ptr<PdBufferManager<_nn_tilde>> m_buf_manager;
   std::vector<float *> m_in_model_ptrs;
   std::vector<float *> m_out_model_ptrs;
@@ -286,30 +287,42 @@ std::string resolve_file_path(t_nn_tilde *x, const char *filename)
   char *nameresult;
   int fd;
 
-  // Add .ts extension if not present
   std::string fname(filename);
-  if (fname.substr(fname.length() - 3) != ".ts")
-    fname += ".ts";
+  auto has_ext = [](const std::string &p) {
+    if (p.length() >= 4 && p.substr(p.length() - 4) == ".pte") return true;
+    if (p.length() >= 5 && p.substr(p.length() - 5) == ".onnx") return true;
+    if (p.length() >= 3 && p.substr(p.length() - 3) == ".ts") return true;
+    return false;
+  };
 
   const char *canvas_dir = canvas_getdir(x->m_canvas)->s_name;
-
-  // Try to open from canvas dir first, then search other paths
-  fd = open_via_path(canvas_dir, fname.c_str(), "", dirresult, &nameresult, MAXPDSTRING, 1);
-
-  if (fd >= 0)
+  std::vector<std::string> candidates;
+  if (has_ext(fname))
   {
-    sys_close(fd);
-    std::filesystem::path fullpath = dirresult;
-    fullpath /= nameresult;
-    // char fullpath[MAXPDSTRING];
-    // std::ostringstream str;
-    // str <<fullpath << std::to_string(MAXPDSTRING).c_str(), "%s/%s", dirresult, nameresult);
-    char normalized[MAXPDSTRING];
-    sys_unbashfilename(fullpath.string().c_str(), normalized);
-    return std::string(normalized);
+    candidates.push_back(fname);
+  }
+  else
+  {
+    candidates.push_back(fname + ".pte");
+    candidates.push_back(fname + ".onnx");
+    candidates.push_back(fname + ".ts");
   }
 
-  pd_error(x, "nn~: could not find file '%s'", fname.c_str());
+  for (const auto &cand : candidates)
+  {
+    fd = open_via_path(canvas_dir, cand.c_str(), "", dirresult, &nameresult, MAXPDSTRING, 1);
+    if (fd >= 0)
+    {
+      sys_close(fd);
+      std::filesystem::path fullpath = dirresult;
+      fullpath /= nameresult;
+      char normalized[MAXPDSTRING];
+      sys_unbashfilename(fullpath.string().c_str(), normalized);
+      return std::string(normalized);
+    }
+  }
+
+  pd_error(x, "netBender~: could not find file '%s'", fname.c_str());
   return "";
 }
 
@@ -414,7 +427,7 @@ bool nn_tilde_load_model(t_nn_tilde *x, const char *path)
     return false;
 
   // Create and load new backend instance
-  auto new_model = std::make_unique<Backend>();
+  auto new_model = BackendFactory::create_for_file(fullpath);
   if (new_model->load(fullpath.c_str(), (double)sys_getsr()))
   {
     pd_error(x, "error loading model %s", path);
@@ -426,15 +439,20 @@ bool nn_tilde_load_model(t_nn_tilde *x, const char *path)
   x->m_path = gensym(fullpath.c_str());
   x->settable_attributes = x->m_model->get_settable_attributes();
 
-  if (x->m_gpu && !(torch::hasCUDA() || torch::hasMPS()))
+#if defined(__APPLE__)
+  bool gpu_supported = true;
+#else
+  bool gpu_supported = (torch::hasCUDA() || torch::hasMPS());
+#endif
+  if (x->m_gpu && !gpu_supported)
   {
-    post("nn~: GPU mode not available");
+    post("netBender~: GPU mode not available");
     x->m_gpu = 0;
   }
   else if (x->m_gpu)
   {
-    const char *gputype = torch::hasCUDA() ? "CUDA" : "MPS";
-    post("nn~: %s found", gputype);
+    const char *gputype = torch::hasCUDA() ? "CUDA" : "MPS/CoreML";
+    post("netBender~: %s enabled", gputype);
   }
 
   if (x->m_gpu)
@@ -445,7 +463,7 @@ bool nn_tilde_load_model(t_nn_tilde *x, const char *path)
   }
   catch (std::string &e)
   {
-    pd_error(x, "nn~: %s", e.c_str());
+    pd_error(x, "netBender~: %s", e.c_str());
   }
 
   // Update parameters using current method (or fallback to forward)
@@ -530,7 +548,7 @@ void *nn_tilde_new(t_symbol *s, int argc, t_atom *argv)
 {
   t_nn_tilde *x = (t_nn_tilde *)pd_new(nn_tilde_class);
 
-  x->m_model = std::make_unique<Backend>();
+  x->m_model = BackendFactory::create_default();
   x->m_buf_manager = std::make_unique<PdBufferManager<_nn_tilde>>(x->m_model.get(), x);
   x->m_head = 0;
   x->m_compute_thread = nullptr;
@@ -700,13 +718,18 @@ void nn_tilde_gpu(t_nn_tilde *x, t_floatarg arg)
 
   if (!x->m_model->is_loaded())
   {
-    pd_error(x, "nn~: no model loaded");
+    pd_error(x, "netBender~: no model loaded");
     return;
   }
 
-  if (want_gpu && !(torch::hasCUDA() || torch::hasMPS()))
+#if defined(__APPLE__)
+  bool gpu_supported = true;
+#else
+  bool gpu_supported = (torch::hasCUDA() || torch::hasMPS());
+#endif
+  if (want_gpu && !gpu_supported)
   {
-    post("nn~: GPU mode not available");
+    post("netBender~: GPU mode not available");
     x->m_gpu = false;
     return;
   }
@@ -722,7 +745,7 @@ void nn_tilde_set(t_nn_tilde *x, t_symbol *s, int argc, t_atom *argv)
 {
   if (argc < 2)
   {
-    pd_error(x, "nn~: set needs at least 2 arguments [set argname argval1 ...(");
+    pd_error(x, "netBender~: set needs at least 2 arguments [set argname argval1 ...(");
     return;
   }
   std::vector<std::string> attribute_args;
@@ -733,10 +756,10 @@ void nn_tilde_set(t_nn_tilde *x, t_symbol *s, int argc, t_atom *argv)
   if (!std::count(x->settable_attributes.begin(), x->settable_attributes.end(),
                   argname_str))
   {
-    pd_error(x, "nn~: argument name not settable in current model");
+    pd_error(x, "netBender~: argument name not settable in current model");
     return;
   }
-  auto buffers = Backend::BufferMap();
+  auto buffers = IBackend::BufferMap();
 
   for (int i(1); i < argc; i++)
   {
@@ -745,7 +768,7 @@ void nn_tilde_set(t_nn_tilde *x, t_symbol *s, int argc, t_atom *argv)
       attribute_args.push_back(argv[i].a_w.w_symbol->s_name);
       try
       {
-        x->m_buf_manager->append_if_buffer_element<Backend>(buffers, argv[i].a_w.w_symbol->s_name, argname, i - 1);
+        x->m_buf_manager->append_if_buffer_element<IBackend>(buffers, argv[i].a_w.w_symbol->s_name, argname, i - 1);
       }
       catch (std::string &e)
       {
@@ -753,7 +776,7 @@ void nn_tilde_set(t_nn_tilde *x, t_symbol *s, int argc, t_atom *argv)
       }
       catch (const std::exception &e)
       {
-        pd_error(x, "nn~: %s", e.what());
+        pd_error(x, "netBender~: %s", e.what());
       }
     }
     else if (argv[i].a_type == A_FLOAT)
@@ -944,18 +967,51 @@ void nn_tilde_set_weights(t_nn_tilde *x, t_symbol *s, int argc, t_atom *argv)
   }
   catch (const std::exception &e)
   {
-    pd_error(x, "nn~: %s", e.what());
+    pd_error(x, "netBender~: %s", e.what());
+  }
+}
+
+void nn_tilde_reset_weights(t_nn_tilde *x, t_symbol *s)
+{
+  if (!x->m_model->is_loaded())
+  {
+    pd_error(x, "netBender~: no model loaded");
+    return;
+  }
+  try
+  {
+    x->m_model->reset_layer_weights(s->s_name);
+  }
+  catch (const std::exception &e)
+  {
+    pd_error(x, "netBender~: %s", e.what());
+  }
+}
+
+void nn_tilde_reset_all_weights(t_nn_tilde *x)
+{
+  if (!x->m_model->is_loaded())
+  {
+    pd_error(x, "netBender~: no model loaded");
+    return;
+  }
+  try
+  {
+    x->m_model->reset_all_layer_weights();
+  }
+  catch (const std::exception &e)
+  {
+    pd_error(x, "netBender~: %s", e.what());
   }
 }
 
 void startup_message()
 {
-  std::string startmessage = "nn~ - ";
+  std::string startmessage = "netBender~ - ";
   startmessage += VERSION;
-  startmessage += " - ";
-  startmessage += "torch ";
+  startmessage += " (ExecuTorch / ONNX / Torch ";
   startmessage += TORCH_VERSION;
-  startmessage += " - 2025 - Antoine Caillon, Axel Chemla--Romeu-Santos, Benjamin Wesch";
+  startmessage += ") - NetBender / ACIDS";
   post(startmessage.c_str());
 }
 
@@ -967,16 +1023,18 @@ void startup_message()
 #define EXPORT extern "C"
 #endif
 
-EXPORT void nn_tilde_setup(void)
+static void register_netBender_tilde(void)
 {
+  static bool initialized = false;
+  if (initialized)
+    return;
+  initialized = true;
 
   // multichannel handling copied from
   // https://github.com/Spacechild1/vstplugin/blob/v0.6.0/pd/src/vstplugin~.cpp#L4120
 #ifdef PD_HAVE_MULTICHANNEL
 // runtime check for multichannel support:
 #ifdef _WIN32
-  // get a handle to the module containing the Pd API functions.
-  // NB: GetModuleHandle("pd.dll") does not cover all cases.
   HMODULE module;
   if (GetModuleHandleEx(
           GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -986,29 +1044,28 @@ EXPORT void nn_tilde_setup(void)
         module, "signal_setmultiout");
   }
 #else
-  // search recursively, starting from the main program
   g_signal_setmultiout = (t_signal_setmultiout)dlsym(
       dlopen(nullptr, RTLD_NOW), "signal_setmultiout");
 #endif
 #endif // PD_HAVE_MULTICHANNEL
 
-// Handle path for dynamically loaded cudnn_graph64_9.dll
-// FIXME: is this really the way to do this??
 #ifdef _WIN32
-  // Get the directory of the current DLL
-  HMODULE hModule = GetModuleHandle("nn~.dll");
+  HMODULE hModule = GetModuleHandle("netBender~.dll");
+  if (!hModule)
+    hModule = GetModuleHandle("nn~.dll");
   if (hModule)
   {
     char path[MAX_PATH];
     GetModuleFileName(hModule, path, sizeof(path));
-    PathRemoveFileSpec(path); // Remove filename, leaving the path
-    SetDllDirectory(path);    // Add to DLL search path
+    PathRemoveFileSpec(path);
+    SetDllDirectory(path);
   }
 #endif
 
   startup_message();
-  nn_tilde_class = class_new(gensym("nn~"), (t_newmethod)nn_tilde_new, 0,
+  nn_tilde_class = class_new(gensym("netBender~"), (t_newmethod)nn_tilde_new, 0,
                              sizeof(t_nn_tilde), CLASS_MULTICHANNEL, A_GIMME, 0);
+  class_addcreator((t_newmethod)nn_tilde_new, gensym("nn~"), A_GIMME, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_dsp, gensym("dsp"), A_CANT, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_enable, gensym("enable"), A_FLOAT, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_load, gensym("load"), A_SYMBOL, 0);
@@ -1018,6 +1075,8 @@ EXPORT void nn_tilde_setup(void)
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_layers, gensym("layers"), A_NULL);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_get_weights, gensym("get_weights"), A_SYMBOL, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_set_weights, gensym("set_weights"), A_GIMME, 0);
+  class_addmethod(nn_tilde_class, (t_method)nn_tilde_reset_weights, gensym("reset_weights"), A_SYMBOL, 0);
+  class_addmethod(nn_tilde_class, (t_method)nn_tilde_reset_all_weights, gensym("reset_all_weights"), A_NULL);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_bufsize, gensym("bufsize"), A_FLOAT, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_gpu, gensym("gpu"), A_FLOAT, 0);
   class_addmethod(nn_tilde_class, (t_method)nn_tilde_method, gensym("method"), A_SYMBOL, 0);
@@ -1027,3 +1086,7 @@ EXPORT void nn_tilde_setup(void)
   class_addbang(nn_tilde_class, (t_method)nn_tilde_bang);
   CLASS_MAINSIGNALIN(nn_tilde_class, t_nn_tilde, f);
 }
+
+EXPORT void setup_netBender0x7e(void) { register_netBender_tilde(); }
+EXPORT void netBender_tilde_setup(void) { register_netBender_tilde(); }
+EXPORT void nn_tilde_setup(void) { register_netBender_tilde(); }

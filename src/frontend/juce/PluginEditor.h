@@ -67,7 +67,7 @@ private:
     NNBendingAudioProcessor& audioProcessor;
 
     juce::Label titleLabel;
-    juce::TextButton loadButton { "Load Model (.ts)" };
+    juce::TextButton loadButton { "Load Model" };
     juce::Label statusLabel;
     
     juce::Label methodLabel { {}, "Mode:" };
@@ -75,11 +75,12 @@ private:
     
     juce::Label bufferLabel { {}, "Buffer:" };
     juce::Label bufferStatusLabel;
+    juce::TextButton gpuButton { "CPU" };
 
     juce::Label dryWetLabel { {}, "Dry/Wet:" };
     juce::Slider dryWetSlider;
 
-    juce::TextButton saveModelButton { "Save Model (.ts)" };
+    juce::TextButton saveModelButton { "Save Model" };
     ViewMode currentViewMode { ViewMode::Weights };
     juce::TextButton viewWeightsButton { "weights" };
     juce::TextButton viewLatentButton { "latent" };

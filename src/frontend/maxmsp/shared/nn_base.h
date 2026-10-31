@@ -15,6 +15,7 @@
 #include "buffer_tools.h"
 #include "dict_utils.h"
 #include "../../../backend/backend.h"
+#include "../../../backend/BackendFactory.h"
 #include "../../../shared/circular_buffer.h"
 #include "../../../shared/static_buffer.h"
 
@@ -96,7 +97,7 @@ public:
   virtual bool init_buffers_at_init() { return true; }
 
   // BACKEND RELATED MEMBERS
-  std::unique_ptr<Backend> m_model;
+  std::unique_ptr<IBackend> m_model;
   bool m_is_backend_init = false;
   bool m_ready = false;
   std::string m_method;
@@ -255,6 +256,41 @@ public:
           m_model->set_layer_weights(layer_name, weights);
         } catch (const std::exception &e) {
           cerr << "Error setting weights: " << e.what() << endl;
+        }
+        return {};
+      }};
+
+  message<> reset_weights{
+      this, "reset_weights", "Reset weights for a specific layer to original values",
+      [this](const c74::min::atoms &args, const int inlet) -> c74::min::atoms {
+        if (!m_is_backend_init || !m_model) {
+          cerr << "Model not initialized" << endl;
+          return {};
+        }
+        if (args.size() < 1) {
+          cerr << "Layer name required" << endl;
+          return {};
+        }
+        std::string layer_name = args[0];
+        try {
+          m_model->reset_layer_weights(layer_name);
+        } catch (const std::exception &e) {
+          cerr << "Error resetting weights: " << e.what() << endl;
+        }
+        return {};
+      }};
+
+  message<> reset_all_weights{
+      this, "reset_all_weights", "Reset all bendable layer weights to original values",
+      [this](const c74::min::atoms &args, const int inlet) -> c74::min::atoms {
+        if (!m_is_backend_init || !m_model) {
+          cerr << "Model not initialized" << endl;
+          return {};
+        }
+        try {
+          m_model->reset_all_layer_weights();
+        } catch (const std::exception &e) {
+          cerr << "Error resetting all weights: " << e.what() << endl;
         }
         return {};
       }};
@@ -479,7 +515,7 @@ bool nn_base<nn_name, op_type>::is_valid_print_key(std::string id_string) {
 
 template <typename nn_name, typename op_type>
 void nn_base<nn_name, op_type>::init_model() {
-  m_model = std::make_unique<Backend>();
+  m_model = BackendFactory::create_default();
   m_is_backend_init = true;
 }
 
@@ -561,11 +597,7 @@ void nn_base<nn_name, op_type>::init_inlets_and_outlets() {
   for (int i(0); i < n_inlets; i++) {
     std::string input_label = "";
     try {
-      input_label = m_model->get_model()
-                        .attr(m_method + "_input_labels")
-                        .toList()
-                        .get(i)
-                        .toStringRef();
+      input_label = m_model->get_input_label(m_method, i);
     } catch (...) {
       input_label = "(signal) model input " + std::to_string(i);
     }
@@ -575,11 +607,7 @@ void nn_base<nn_name, op_type>::init_inlets_and_outlets() {
   for (int i(0); i < n_outlets; i++) {
     std::string output_label = "";
     try {
-      output_label = m_model->get_model()
-                         .attr(m_method + "_output_labels")
-                         .toList()
-                         .get(i)
-                         .toStringRef();
+      output_label = m_model->get_output_label(m_method, i);
     } catch (...) {
       output_label = "(signal) model output " + std::to_string(i);
     }
@@ -626,8 +654,33 @@ nn_base<nn_name, op_type>::~nn_base() {
 template <typename nn_name, typename op_type>
 path nn_base<nn_name, op_type>::to_model_path(std::string model_path) {
   try {
-    if (model_path.substr(model_path.length() - 3) != ".ts")
-      model_path = model_path + ".ts";
+    auto has_ext = [](const std::string& p) {
+      if (p.length() >= 4 && (p.substr(p.length() - 4) == ".pte" || p.substr(p.length() - 4) == ".PTM")) return true;
+      if (p.length() >= 5 && p.substr(p.length() - 5) == ".onnx") return true;
+      if (p.length() >= 3 && p.substr(p.length() - 3) == ".ts") return true;
+      return false;
+    };
+    if (!has_ext(model_path)) {
+      const std::vector<std::string> exts = {".pte", ".onnx", ".ts"};
+      bool resolved = false;
+      for (const auto& ext : exts) {
+        std::string cand = model_path + ext;
+        if (m_downloader) {
+          auto dl_path = m_downloader->get_download_path() / cand;
+          if (std::filesystem::exists(dl_path)) {
+            return path(dl_path.string());
+          }
+        }
+        if (std::filesystem::exists(cand)) {
+          model_path = cand;
+          resolved = true;
+          break;
+        }
+      }
+      if (!resolved) {
+        model_path = model_path + ".ts";
+      }
+    }
     // first look in "models" subfolder
     if (m_downloader) {
       auto download_path = m_downloader->get_download_path() / model_path; 
@@ -745,7 +798,10 @@ void nn_base<nn_name, op_type>::load_model(const std::string& model_path) {
 
   try {
     auto path = to_model_path(model_path);
-    m_model.get()->load(path, get_sample_rate()); 
+    std::string resolved_path = std::string(path);
+    m_model = BackendFactory::create_for_file(resolved_path);
+    m_is_backend_init = true;
+    m_model.get()->load(resolved_path, get_sample_rate()); 
     DEBUG_PRINT("model loaded"); 
     m_model->use_gpu(gpu);
     m_higher_ratio = m_model->get_higher_ratio();
@@ -761,6 +817,9 @@ void nn_base<nn_name, op_type>::load_model(const std::string& model_path) {
   } catch (std::string &e) {
     cerr << e << endl;
     return; 
+  } catch (const std::exception &e) {
+    cerr << e.what() << endl;
+    return;
   }
 }
 
@@ -870,6 +929,9 @@ void nn_base<nn_name, op_type>::operator()(audio_bundle input, audio_bundle outp
 template <typename nn_name, typename op_type>
 void nn_base<nn_name, op_type>::dump_object() {
   cout << "model_path: " << std::string(m_path) << endl;
+  if (m_model) {
+    cout << "backend: " << m_model->get_backend_name() << endl;
+  }
   cout << "input dimension: " << std::to_string(m_inlets.size()) << endl;
   cout << "output dimension: " << std::to_string(m_outlets.size()) << endl;
   cout << "input ratio: " << std::to_string(m_in_ratio) << endl; 

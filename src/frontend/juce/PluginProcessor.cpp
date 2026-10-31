@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <random>
+#include <cmath>
 
 //==============================================================================
 ModelThread::ModelThread(NNBendingAudioProcessor& processor)
@@ -100,6 +102,8 @@ NNBendingAudioProcessor::NNBendingAudioProcessor()
         juce::ParameterID ("latent_depth", 1), "Latent Depth",
         juce::NormalisableRange<float> (0.0f, 2.0f, 0.01f), 0.5f
     ));
+
+    m_backend = BackendFactory::createDefault();
 }
 
 NNBendingAudioProcessor::~NNBendingAudioProcessor()
@@ -112,10 +116,11 @@ void NNBendingAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 {
     juce::ignoreUnused(samplesPerBlock);
     m_hostSampleRate.store(sampleRate);
-    m_backend.set_sample_rate(sampleRate);
-    if (m_modelLoaded.load())
+    if (m_backend)
+        m_backend->set_sample_rate(sampleRate);
+    if (m_modelLoaded.load() && m_backend)
     {
-        double modelSr = m_backend.get_sample_rate();
+        double modelSr = m_backend->get_sample_rate();
         m_modelSampleRate.store(modelSr);
         m_resamplingActive.store(std::abs(sampleRate - modelSr) > 1.0);
     }
@@ -151,6 +156,13 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    const juce::ScopedTryLock sl (getCallbackLock());
+    if (!sl.isLocked())
+    {
+        buffer.clear();
+        return;
+    }
 
     // Process incoming MIDI triggers (Note On kicks momentary glitch; Note Off releases)
     for (const auto metadata : midiMessages)
@@ -249,14 +261,14 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     {
                         int targetSamples = std::min(numModelSamples, (int)m_resampled_in_scratch[c].size());
 
-                        int actualWritten = m_input_resamplers[c].process(
+                        m_input_resamplers[c].process(
                             inRatio,
                             inPtr,
                             m_resampled_in_scratch[c].data(),
                             targetSamples
                         );
 
-                        m_in_buffers[c].put(m_resampled_in_scratch[c].data(), actualWritten);
+                        m_in_buffers[c].put(m_resampled_in_scratch[c].data(), targetSamples);
                     }
                 }
             }
@@ -304,26 +316,36 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     if (resampling && hostSr > 0.0 && modelSr > 0.0)
     {
         double outRatio = modelSr / hostSr;
-        int numModelToRead = (int)std::ceil(numSamples * outRatio) + 4;
+        int masterConsumed = 0;
 
         for (int c = 0; c < n_outs; ++c)
         {
             if (c < (int)m_output_resamplers.size() && c < (int)m_resampled_out_scratch.size())
             {
-                int samplesToRead = std::min(numModelToRead, (int)m_resampled_out_scratch[c].size());
+                int maxScratch = (int)m_resampled_out_scratch[c].size();
+                m_out_buffers[c].peek(m_resampled_out_scratch[c].data(), maxScratch);
 
-                m_out_buffers[c].get(m_resampled_out_scratch[c].data(), samplesToRead);
-
-                m_output_resamplers[c].process(
+                int consumed = m_output_resamplers[c].process(
                     outRatio,
                     m_resampled_out_scratch[c].data(),
                     buffer.getWritePointer(c),
                     numSamples
                 );
+
+                if (c == 0) masterConsumed = consumed;
             }
             else
             {
                 buffer.clear(c, 0, numSamples);
+            }
+        }
+
+        // Lock sample consumption across all channels to maintain strict stereo phase alignment
+        for (int c = 0; c < n_outs; ++c)
+        {
+            if (c < (int)m_output_resamplers.size() && c < (int)m_resampled_out_scratch.size())
+            {
+                m_out_buffers[c].drop(masterConsumed);
             }
         }
     }
@@ -372,9 +394,22 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             {
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    float sample = outPtr[i] * wetGain + dryBlock[i] * dryGain;
+                    float rawWet = outPtr[i];
 
-                    // NaN Sentry & Safety Check (+3 dBFS is approx 1.414f; cutoff at 2.0f)
+                    // NaN & Inf Sentry Check
+                    if (std::isnan(rawWet) || std::isinf(rawWet))
+                    {
+                        m_blownFuse.store(true);
+                        outPtr[i] = 0.0f;
+                        continue;
+                    }
+
+                    // Transparent soft headroom saturation on wet model output:
+                    // Linear unity gain for |x| <= 0.6, smoothly compressing transient peaks to <= 1.3f
+                    float satWet = (std::abs(rawWet) < 0.6f) ? rawWet : (std::tanh(rawWet * 0.77f) * 1.3f);
+                    float sample = satWet * wetGain + dryBlock[i] * dryGain;
+
+                    // Hard cutoff safety check for runaway signals
                     if (std::isnan(sample) || std::isinf(sample) || std::abs(sample) > 2.0f)
                     {
                         m_blownFuse.store(true);
@@ -407,12 +442,12 @@ void NNBendingAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 std::vector<juce::String> NNBendingAudioProcessor::getAvailableModes() const
 {
     std::vector<juce::String> modes;
-    if (!m_modelLoaded.load())
+    if (!m_modelLoaded.load() || !m_backend)
         return modes;
 
-    auto backendModes = const_cast<Backend&>(m_backend).get_plugin_modes();
+    auto backendModes = m_backend->get_plugin_modes();
     for (const auto& m : backendModes)
-        modes.push_back(juce::String(m));
+        modes.emplace_back(juce::String(m));
     return modes;
 }
 
@@ -423,13 +458,25 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
     
     std::string path = file.getFullPathName().toStdString();
     
-    int err = m_backend.load(path, getSampleRate());
+    auto newBackend = BackendFactory::createForFile(path);
+    if (!newBackend)
+        return false;
+
+    if (file.getFileName().containsIgnoreCase("_coreml.pte") || file.getFileName().containsIgnoreCase("_mps.pte"))
+        m_useGpu.store(true);
+    else if (file.getFileName().containsIgnoreCase("_xnnpack.pte") || file.getFileName().containsIgnoreCase("_portable.pte"))
+        m_useGpu.store(false);
+
+    newBackend->use_gpu(m_useGpu.load());
+    m_backend = std::move(newBackend);
+
+    int err = m_backend->load(path, getSampleRate());
     if (err == 0)
     {
         m_modelPath = file.getFullPathName();
         
         // Find default mode: prefer "forward", else "prior", else first available
-        auto modes = m_backend.get_plugin_modes();
+        auto modes = m_backend->get_plugin_modes();
         if (!modes.empty())
         {
             std::string defaultMode = modes[0];
@@ -443,7 +490,7 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
             }
             m_currentMethod = defaultMode;
             
-            auto params = m_backend.get_mode_params(defaultMode);
+            auto params = m_backend->get_mode_params(defaultMode);
             if (params.size() >= 4)
             {
                 m_model_in = params[0];
@@ -455,7 +502,7 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
         // For deep convolutional autoencoders (such as Stable Audio / Oobleck / DAC / RAVE 2048),
         // each chunk needs multiple latent frames (at least 2 frames, >= 4096 samples)
         // to satisfy convolutional receptive field and streaming padding.
-        int higher_ratio = m_backend.get_higher_ratio();
+        int higher_ratio = m_backend->get_higher_ratio();
         int reqSize = 1;
         while (reqSize < higher_ratio)
             reqSize <<= 1;
@@ -463,14 +510,14 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
         m_bufferSize = std::max(minBufferForRatio, reqSize * 2);
         
         // Reset latent terrain cached matrices on new model load
-        m_rffMatrix = at::Tensor();
-        m_prevLatentTensor = at::Tensor();
+        m_rffMatrix.clear();
+        m_prevLatentBuffer.clear();
         m_cachedLatentDim = 0;
 
         // Query model sample rate vs host sample rate
         double hostSr = getSampleRate();
         m_hostSampleRate.store(hostSr > 0.0 ? hostSr : 44100.0);
-        double modelSr = m_backend.get_sample_rate();
+        double modelSr = m_backend->get_sample_rate();
         m_modelSampleRate.store(modelSr);
         m_resamplingActive.store(std::abs(m_hostSampleRate.load() - modelSr) > 1.0);
 
@@ -484,21 +531,24 @@ bool NNBendingAudioProcessor::loadModel(const juce::File& file)
 
 void NNBendingAudioProcessor::setCurrentMethod(const juce::String& method)
 {
+    if (!m_backend) return;
     std::string methodStr = method.toStdString();
-    auto modes = m_backend.get_plugin_modes();
+    auto modes = m_backend->get_plugin_modes();
     bool isValidMode = (std::find(modes.begin(), modes.end(), methodStr) != modes.end())
-                    || m_backend.has_method(methodStr);
+                    || m_backend->has_method(methodStr);
 
     if (isValidMode)
     {
+        m_model_thread.stop();
+
         m_currentMethod = method;
-        auto params = m_backend.get_mode_params(methodStr);
+        auto params = m_backend->get_mode_params(methodStr);
         if (params.size() >= 4)
         {
             m_model_in = params[0];
             m_model_out = params[2];
-            initBuffers();
         }
+        initBuffers();
     }
 }
 
@@ -511,10 +561,51 @@ void NNBendingAudioProcessor::setBufferSize(int size)
     }
 }
 
+void NNBendingAudioProcessor::setUseGpu(bool enabled)
+{
+    if (m_useGpu.load() == enabled && m_modelLoaded.load())
+        return;
+
+    m_useGpu.store(enabled);
+    if (!m_modelLoaded.load() || m_modelPath.isEmpty())
+    {
+        if (m_backend)
+            m_backend->use_gpu(enabled);
+        return;
+    }
+
+    juce::String savedMethod = m_currentMethod;
+    juce::File targetFile(m_modelPath);
+
+    // For .pte models, automatically swap between sibling *_xnnpack.pte (CPU) and *_coreml.pte (GPU/ANE) if present
+    if (m_modelPath.endsWithIgnoreCase(".pte"))
+    {
+        juce::String candidatePath = m_modelPath;
+        if (enabled && candidatePath.containsIgnoreCase("_xnnpack.pte"))
+            candidatePath = candidatePath.replace("_xnnpack.pte", "_coreml.pte", true);
+        else if (!enabled && candidatePath.containsIgnoreCase("_coreml.pte"))
+            candidatePath = candidatePath.replace("_coreml.pte", "_xnnpack.pte", true);
+
+        juce::File candidateFile(candidatePath);
+        if (candidateFile.existsAsFile())
+            targetFile = candidateFile;
+    }
+
+    if (loadModel(targetFile))
+    {
+        if (savedMethod.isNotEmpty())
+            setCurrentMethod(savedMethod);
+        std::lock_guard<std::mutex> lock(m_layerStateMutex);
+        for (auto& pair : m_layerStates)
+            pair.second.isApplied = false;
+    }
+}
+
 void NNBendingAudioProcessor::initBuffers()
 {
     m_model_thread.stop();
     
+    const juce::ScopedLock sl (getCallbackLock());
     std::lock_guard<std::mutex> lock(m_staging_mutex);
     
     int n_in = std::max(1, m_model_in);
@@ -582,9 +673,20 @@ void NNBendingAudioProcessor::initBuffers()
         m_out_buffers[i].init(m_bufferSize);
         m_staging_out[i].assign(m_bufferSize, 0.0f);
         m_worker_out[i].assign(m_bufferSize, 0.0f);
+        // Pre-fill output buffer with 1 buffer of latency cushion in forward mode
+        // to prevent starvation during background model inference and align with dry delay buffer
+        if (m_model_in > 0)
+        {
+            m_out_buffers[i].put(nullptr, m_bufferSize);
+        }
     }
     
     m_output_ready.store(false);
+    
+    if (m_backend)
+    {
+        m_backend->clear_decode_gen_fifo();
+    }
     
     if (m_modelLoaded.load())
     {
@@ -597,7 +699,6 @@ void NNBendingAudioProcessor::runInference()
     if (!m_modelLoaded.load() || m_model_out <= 0)
         return;
 
-    // 1. Sync active DAW parameter values into the active layer state
     {
         std::lock_guard<std::mutex> lock(m_layerStateMutex);
         std::string activeLayer = m_activeLayerName.toStdString();
@@ -654,23 +755,19 @@ void NNBendingAudioProcessor::runInference()
 
         m_momentaryEnvelope.store(currentEnv);
 
-        // 2. For each configured layer, apply Scale, Offset, and Stochastic Drift (Noise / OU / Random Walk)
         for (auto& pair : m_layerStates)
         {
             const std::string& layerName = pair.first;
             LayerBendingState& state = pair.second;
-
-            // Ensure baseline originalWeights is populated from model
             if (state.originalWeights.empty())
             {
-                state.originalWeights = m_backend.get_original_layer_weights(layerName);
+                state.originalWeights = m_backend->get_original_layer_weights(layerName);
             }
             if (state.originalWeights.empty())
                 continue;
 
             size_t numWeights = state.originalWeights.size();
 
-            // Ensure drawnWeights is initialized to original baseline if not drawn yet
             if (state.drawnWeights.size() != numWeights)
             {
                 state.drawnWeights = state.originalWeights;
@@ -688,7 +785,7 @@ void NNBendingAudioProcessor::runInference()
 
             if (state.bridgeDepth > 0.001f && !state.bridgeSourceLayer.empty() && state.bridgeSourceLayer != layerName)
             {
-                auto sourceWeights = m_backend.get_original_layer_weights(state.bridgeSourceLayer);
+                auto sourceWeights = m_backend->get_original_layer_weights(state.bridgeSourceLayer);
                 if (!sourceWeights.empty())
                 {
                     float alpha = juce::jlimit(0.0f, 1.0f, state.bridgeDepth);
@@ -742,7 +839,7 @@ void NNBendingAudioProcessor::runInference()
                         state.scratchFinal[i] = state.originalWeights[i] + currentEnv * (bentWeight - state.originalWeights[i]);
                     }
                 }
-                m_backend.set_layer_weights(layerName, state.scratchFinal);
+                m_backend->set_layer_weights(layerName, state.scratchFinal);
                 state.isApplied = true;
                 state.lastAppliedEnv = currentEnv;
             }
@@ -760,7 +857,7 @@ void NNBendingAudioProcessor::runInference()
                     juce::FloatVectorOperations::multiply(state.scratchFinal.data(), currentEnv, (int)numWeights);
                     juce::FloatVectorOperations::addWithMultiply(state.scratchFinal.data(), state.originalWeights.data(), 1.0f - currentEnv, (int)numWeights);
 
-                    m_backend.set_layer_weights(layerName, state.scratchFinal);
+                    m_backend->set_layer_weights(layerName, state.scratchFinal);
                     state.isApplied = true;
                     state.lastAppliedEnv = currentEnv;
                 }
@@ -775,7 +872,7 @@ void NNBendingAudioProcessor::runInference()
                     juce::FloatVectorOperations::multiply(state.scratchFinal.data(), state.scale, (int)numWeights);
                     juce::FloatVectorOperations::add(state.scratchFinal.data(), state.offset, (int)numWeights);
 
-                    m_backend.set_layer_weights(layerName, state.scratchFinal);
+                    m_backend->set_layer_weights(layerName, state.scratchFinal);
                     state.isApplied = true;
                 }
             }
@@ -784,7 +881,7 @@ void NNBendingAudioProcessor::runInference()
                 // Momentary gate inactive: restore unbent baseline weights once
                 if (state.isApplied)
                 {
-                    m_backend.set_layer_weights(layerName, state.originalWeights);
+                    m_backend->set_layer_weights(layerName, state.originalWeights);
                     state.isApplied = false;
                     state.lastAppliedEnv = 0.0f;
                 }
@@ -803,183 +900,55 @@ void NNBendingAudioProcessor::runInference()
             }
         }
     }
-
-    // 4. Run PyTorch model inference completely WITHOUT holding m_staging_mutex!
-    // This ensures processBlock is never blocked or starved during heavy model execution.
     std::vector<float*> in_ptrs;
     std::vector<float*> out_ptrs;
     
-    for (int c = 0; c < m_model_in; ++c)
-        in_ptrs.push_back(m_worker_in[c].data());
+    int numIn = std::min(m_model_in, (int)m_worker_in.size());
+    for (int c = 0; c < numIn; ++c)
+        in_ptrs.emplace_back(m_worker_in[c].data());
         
-    for (int c = 0; c < m_model_out; ++c)
-        out_ptrs.push_back(m_worker_out[c].data());
+    int numOut = std::min(m_model_out, (int)m_worker_out.size());
+    for (int c = 0; c < numOut; ++c)
+        out_ptrs.emplace_back(m_worker_out[c].data());
         
     std::string modeStr = m_currentMethod.toStdString();
     if (modeStr == "forward")
     {
         // Compose latent hook: if user hook is set, use it; otherwise if latent terrain is enabled, execute it!
-        Backend::LatentHook activeHook = m_latentHook;
+        IBackend::LatentHook activeHook = m_latentHook;
         if (!activeHook && m_latentEnabled.load())
         {
-            activeHook = [this](at::Tensor z) -> at::Tensor {
-                if (!z.defined()) return z;
-
-                // Sync automatable parameters
-                float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
-                float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
-                float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
-                auto mode = m_latentMode.load();
-
-                // Latent dimension (channel dimension is typically dimension 1)
-                int64_t latentDim = (z.dim() >= 2) ? z.size(1) : z.size(0);
-
-                if (mode == LatentMode::FourierOrbit)
-                {
-                    // Generate or reuse deterministic Random Fourier Feature projection matrix B: [latentDim / 2, 2]
-                    int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
-                    if (!m_rffMatrix.defined() || m_cachedLatentDim != (int)latentDim)
-                    {
-                        // Deterministic seed for reproducible timbral coordinates
-                        torch::manual_seed(42);
-                        m_rffMatrix = torch::randn({numHarmonics, 2}, z.options()) * 2.5f; // Spatial frequency scaling
-                        m_cachedLatentDim = (int)latentDim;
-                    }
-
-                    if (!m_coordsTensor.defined() || m_coordsTensor.device() != z.device() || m_coordsTensor.dtype() != z.dtype())
-                    {
-                        m_coordsTensor = torch::empty({2, 1}, z.options());
-                    }
-                    float* coordsPtr = m_coordsTensor.data_ptr<float>();
-                    coordsPtr[0] = lx;
-                    coordsPtr[1] = ly;
-
-                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), m_coordsTensor); // [numHarmonics, 1]
-
-                    // Compute sin and cos components for smooth, infinite-resolution harmonic orbits
-                    auto cosFeat = torch::cos(proj);
-                    auto sinFeat = torch::sin(proj);
-                    auto rffVec = torch::cat({cosFeat, sinFeat}, 0).reshape({1, -1, 1}); // [1, latentDim, 1]
-
-                    // If latentDim is odd, pad 0
-                    if (rffVec.size(1) < latentDim)
-                    {
-                        auto pad = torch::zeros({1, latentDim - rffVec.size(1), 1}, z.options());
-                        rffVec = torch::cat({rffVec, pad}, 1);
-                    }
-                    else if (rffVec.size(1) > latentDim)
-                    {
-                        rffVec = rffVec.slice(1, 0, latentDim);
-                    }
-
-                    // Additive injection of Fourier timbral orbit, normalized by sqrt(latentDim)
-                    // so high-dimensional codecs (D=64..128) maintain consistent perceptual sensitivity
-                    float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
-                    z = z + normDepth * rffVec;
-                }
-                else if (mode == LatentMode::LatentSlew)
-                {
-                    float slew = m_latentSlew.load();
-                    if (m_prevLatentTensor.defined() && m_prevLatentTensor.sizes() == z.sizes())
-                    {
-                        z = (1.0f - slew) * z + slew * m_prevLatentTensor;
-                    }
-                    m_prevLatentTensor = z.clone();
-                }
-                else if (mode == LatentMode::Quantize)
-                {
-                    // Latent bitcrush / quantization step
-                    float qStep = std::max(0.01f, depth * 0.5f);
-                    z = torch::round(z / qStep) * qStep;
-                }
-
-                return z;
+            activeHook = [this](IBackend::LatentBuffer& buf) {
+                applyLatentTerrainHook(buf);
             };
         }
 
-        m_backend.perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+        if (m_backend)
+            m_backend->perform_forward(in_ptrs, out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
     }
     else if (modeStr == "decode gen")
     {
         // Autonomous neural synthesis: generate latent trajectory with Pad/Drift/Harmonics and decode
-        Backend::LatentHook activeHook = m_latentHook;
+        IBackend::LatentHook activeHook = m_latentHook;
         if (!activeHook)
         {
-            activeHook = [this](at::Tensor z) -> at::Tensor {
-                if (!z.defined()) return z;
-
-                float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
-                float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
-                float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
-                auto mode = m_latentMode.load();
-
-                int64_t latentDim = (z.dim() >= 2) ? z.size(1) : z.size(0);
-
-                if (mode == LatentMode::FourierOrbit)
-                {
-                    int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
-                    if (!m_rffMatrix.defined() || m_cachedLatentDim != (int)latentDim)
-                    {
-                        torch::manual_seed(42);
-                        m_rffMatrix = torch::randn({numHarmonics, 2}, z.options()) * 2.5f;
-                        m_cachedLatentDim = (int)latentDim;
-                    }
-
-                    if (!m_coordsTensor.defined() || m_coordsTensor.device() != z.device() || m_coordsTensor.dtype() != z.dtype())
-                    {
-                        m_coordsTensor = torch::empty({2, 1}, z.options());
-                    }
-                    float* coordsPtr = m_coordsTensor.data_ptr<float>();
-                    coordsPtr[0] = lx;
-                    coordsPtr[1] = ly;
-
-                    auto proj = torch::matmul(m_rffMatrix.to(z.device()), m_coordsTensor);
-
-                    auto cosFeat = torch::cos(proj);
-                    auto sinFeat = torch::sin(proj);
-                    auto rffVec = torch::cat({cosFeat, sinFeat}, 0).reshape({1, -1, 1});
-
-                    if (rffVec.size(1) < latentDim)
-                    {
-                        auto pad = torch::zeros({1, latentDim - rffVec.size(1), 1}, z.options());
-                        rffVec = torch::cat({rffVec, pad}, 1);
-                    }
-                    else if (rffVec.size(1) > latentDim)
-                    {
-                        rffVec = rffVec.slice(1, 0, latentDim);
-                    }
-
-                    float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
-                    z = z + normDepth * rffVec;
-                }
-                else if (mode == LatentMode::LatentSlew)
-                {
-                    float slew = m_latentSlew.load();
-                    if (m_prevLatentTensor.defined() && m_prevLatentTensor.sizes() == z.sizes())
-                    {
-                        z = (1.0f - slew) * z + slew * m_prevLatentTensor;
-                    }
-                    m_prevLatentTensor = z.clone();
-                }
-                else if (mode == LatentMode::Quantize)
-                {
-                    float qStep = std::max(0.01f, depth * 0.5f);
-                    z = torch::round(z / qStep) * qStep;
-                }
-
-                return z;
+            activeHook = [this](IBackend::LatentBuffer& buf) {
+                applyLatentTerrainHook(buf);
             };
         }
 
-        m_backend.perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
+        if (m_backend)
+            m_backend->perform_decode_gen(out_ptrs, 1, m_model_out, m_bufferSize, activeHook);
     }
     else if (modeStr == "prior" || modeStr == "generate")
     {
-        m_backend.perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
+        if (m_backend)
+            m_backend->perform_prior_decode(out_ptrs, 1, m_model_out, m_bufferSize);
     }
     else
     {
-        m_backend.perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
+        if (m_backend)
+            m_backend->perform(in_ptrs, out_ptrs, modeStr, 1, m_model_out, m_bufferSize);
     }
 
     // 5. Transfer computed output back to staging_out under a brief lock
@@ -997,6 +966,81 @@ void NNBendingAudioProcessor::runInference()
     m_output_ready.store(true);
 }
 
+void NNBendingAudioProcessor::applyLatentTerrainHook(IBackend::LatentBuffer& buf)
+{
+    if (buf.data == nullptr || buf.channels <= 0 || buf.length <= 0)
+        return;
+
+    float lx = m_latentXParam ? m_latentXParam->get() : m_latentX.load();
+    float ly = m_latentYParam ? m_latentYParam->get() : m_latentY.load();
+    float depth = m_latentDepthParam ? m_latentDepthParam->get() : m_latentDepth.load();
+    auto mode = m_latentMode.load();
+
+    int64_t latentDim = buf.channels;
+    int64_t length = buf.length;
+    size_t totalElems = (size_t)(latentDim * length);
+
+    if (mode == LatentMode::FourierOrbit)
+    {
+        int64_t numHarmonics = std::max((int64_t)1, latentDim / 2);
+        if (m_rffMatrix.size() != (size_t)(numHarmonics * 2) || m_cachedLatentDim != (int)latentDim)
+        {
+            std::mt19937 rng(42);
+            std::normal_distribution<float> dist(0.0f, 2.5f);
+            m_rffMatrix.resize((size_t)(numHarmonics * 2));
+            for (auto& val : m_rffMatrix)
+                val = dist(rng);
+            m_cachedLatentDim = (int)latentDim;
+        }
+
+        float normDepth = depth * (std::sqrt(16.0f) / std::sqrt((float)std::max((int64_t)1, latentDim)));
+
+        for (int64_t h = 0; h < numHarmonics; ++h)
+        {
+            float proj = m_rffMatrix[(size_t)(h * 2)] * lx + m_rffMatrix[(size_t)(h * 2 + 1)] * ly;
+            float cosOffset = normDepth * std::cos(proj);
+            float sinOffset = normDepth * std::sin(proj);
+
+            if (h < latentDim)
+            {
+                float* chPtr = buf.data + (h * length);
+                for (int64_t t = 0; t < length; ++t)
+                    chPtr[t] += cosOffset;
+            }
+            if ((numHarmonics + h) < latentDim)
+            {
+                float* chPtr = buf.data + ((numHarmonics + h) * length);
+                for (int64_t t = 0; t < length; ++t)
+                    chPtr[t] += sinOffset;
+            }
+        }
+    }
+    else if (mode == LatentMode::LatentSlew)
+    {
+        float slew = m_latentSlew.load();
+        if (m_prevLatentBuffer.size() == totalElems)
+        {
+            for (size_t i = 0; i < totalElems; ++i)
+            {
+                buf.data[i] = (1.0f - slew) * buf.data[i] + slew * m_prevLatentBuffer[i];
+            }
+        }
+        else
+        {
+            m_prevLatentBuffer.resize(totalElems);
+        }
+        std::memcpy(m_prevLatentBuffer.data(), buf.data, totalElems * sizeof(float));
+    }
+    else if (mode == LatentMode::Quantize)
+    {
+        float qStep = std::max(0.01f, depth * 0.5f);
+        for (size_t i = 0; i < totalElems; ++i)
+        {
+            buf.data[i] = std::round(buf.data[i] / qStep) * qStep;
+        }
+    }
+}
+
 //==============================================================================
 void NNBendingAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -1011,7 +1055,6 @@ void NNBendingAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xmlState.setAttribute ("envRelease", (double)m_envRelease.load());
     xmlState.setAttribute ("transientThresh", (double)m_transientThreshold.load());
 
-    // Save per-layer bending states
     std::lock_guard<std::mutex> lock(m_layerStateMutex);
     auto* layersElement = xmlState.createNewChildElement ("Layers");
     for (const auto& pair : m_layerStates)

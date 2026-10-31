@@ -1,343 +1,286 @@
-# nn_tilde_bending — Creative Neural Circuit-Bending Engine
+# NetBender — Multi-Backend Neural Audio Circuit-Bending Engine
 
 > [!TIP]
 > **Pre-built Installers & Nightly Binaries**:
 > Looking to quickly install the VST3, AU, or Standalone plugins without building from source? Download pre-built installers and packages from the latest completed run of the [Release Plugins GitHub Action Workflow](https://github.com/Leofltt/nn_tilde_bending/actions/workflows/release_plugins.yaml) (under the **Artifacts** section).
 
-`nn_tilde_bending` is a creative, performative neural circuit-bending fork of [IRCAM's `nn~`](https://github.com/acids-ircam/nn_tilde). It transforms deep learning audio models (such as [RAVE](https://github.com/acids-ircam/RAVE) and other 1D/2D neural audio architectures) into expressive, tactile instruments by enabling real-time weight mutation, layer-selective trace isolation, momentary short-circuiting, thermal drift, resonant cross-talk, and safety circuit breakers.
+**NetBender** (`nn_tilde_bending`) is a performative neural audio synthesis and live circuit-bending engine evolved from [IRCAM's `nn~`](https://github.com/acids-ircam/nn_tilde) and inspired by modern edge runtimes ([`neural_tilde`](https://github.com/jasper-zheng/neural_tilde)). It transforms deep learning audio models—such as [RAVE](https://github.com/acids-ircam/RAVE), [Stable Audio Open VAE](https://huggingface.co/stabilityai/stable-audio-open-1.0), and [Meta EnCodec](https://github.com/facebookresearch/encodec)—into expressive, tactile instruments via real-time weight mutation, layer-selective trace isolation, momentary short-circuiting, thermal drift, resonant cross-talk, latent space terrain navigation, and safety circuit breakers.
+
+---
+
+## Multi-Backend Runtime Architecture
+
+Because TorchScript (`torch.jit`) is deprecated in PyTorch 2.x+, NetBender uses a unified, runtime-agnostic `IBackend` architecture (`BackendFactory`) across all frontends (JUCE VST3/AU/Standalone, Max/MSP, and PureData). Simply load any `.pte`, `.onnx`, or `.ts` model file and NetBender automatically dispatches to the appropriate engine:
+
+| Extension | Backend Class | Hardware Acceleration / Delegates | Weight-Bending Mechanism |
+| --- | --- | --- | --- |
+| **`.pte`** | `ExecuTorchBackend` | **CoreML** (Apple Neural Engine / GPU), **MPS** (Metal), **XNNPACK** (ARM NEON / x86 AVX), **Portable** | Input-Promoted Parameters (`torch.func.functional_call`) + `NBND` `.bin` sidecar & `.json` metadata |
+| **`.onnx`** | `OnnxBackend` | **CoreML Execution Provider** (macOS `@gpu 1` / GPU toggle), **CPU** multi-threaded | Promoted Graph Initializers (`onnx_bend_prep.py`) + zero-copy `Ort::Value` bindings & `NBND` `.bin` sidecar |
+| **`.ts`** | `TorchBackend` | **MPS** (macOS), **CUDA** (Linux/Windows), **CPU** (LibTorch fallback) | Direct in-place `at::Tensor` parameter mutation + shadow baseline cloning |
+
+### The `NBND` Sidecar Format (`.bin` + `.json`)
+
+Compiled edge runtimes (ExecuTorch `.pte` and ONNX Runtime `.onnx`) achieve their speedups by freezing static weights inside hardware-compiled subgraphs. To preserve **zero-allocation, sample-accurate weight bending** without re-compiling sessions on the audio thread:
+
+1. Selected bendable parameters are promoted to explicit graph inputs during export (`pte_bend_prep.py` / `onnx_bend_prep.py`).
+2. Their baseline float32 weights and tensor shapes are written to a companion `<model>.bin` file (`NBND` binary header).
+3. At runtime, NetBender memory-maps the `NBND` sidecar into contiguous `float` buffers and binds them directly to the ExecuTorch or ONNX Runtime execution inputs with zero copies.
 
 ---
 
 ## Frontends & Build Targets
 
-The project provides multiple frontends tailored for modern music production workflows, live performance, and modular patch environments:
+NetBender provides native frontends for DAWs, standalone desktop performance, and modular patching environments:
 
 | Target | Description | Output / Installation |
 | --- | --- | --- |
-| `plugin` | **JUCE VST3 & AudioUnit (AU)** plugins (`nn_bending_plugin`) | Bundled dylibs, signed with `SIGN_ID` & entitlements, copied to `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/Components` (macOS). |
-| `standalone` | **JUCE Standalone Application** (`nn_bending_standalone`) | Standalone desktop executable with direct audio/MIDI I/O, embedded interactive UI, and LibTorch backend. |
-| `maxmsp` | **Max/MSP Externals** (`nn~`, `mc.nn~`, `mcs.nn~`, `nn.info`) | Bundles externals into `src/frontend/maxmsp` for Max 8+. |
-| `puredata` | **PureData External** (`nn~`) | Built to `build/frontend/puredata/Release`. |
-| `all` (default) | Builds all enabled frontend targets | Builds everything configured. |
+| `plugin` | **JUCE VST3 & AudioUnit (AU)** (`NetBender`) | Bundled dylibs, signed with `SIGN_ID`, installed to `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/Components` (macOS). |
+| `standalone` | **JUCE Standalone Application** (`NetBender`) | Desktop app with direct audio/MIDI I/O and full interactive circuit-bending UI. |
+| `maxmsp` | **Max/MSP Externals** (`netBender~`, `mc.netBender~`, `mcs.netBender~`, `netBender.info`) | Built as `.mxo` / `.mxe64` bundles for Max 8+. |
+| `puredata` | **PureData External** (`netBender~`, with legacy `nn~` alias) | Built as `netBender~.pd_darwin` / `netBender~.pd_linux` / `netBender~.dll`. |
+| `all` (default) | Builds all enabled frontend targets | Builds all configured targets. |
 
 ---
 
-## Key Neural Circuit-Bending Plugin Features
+## Exporting & Migrating Models (`python_tools/`)
 
-1. **Interactive Weight Canvas & Visualizer (JUCE Plugin & Standalone)**:
-   - Direct 2D interactive canvas allowing you to draw, invert, scramble, and sculpt weights in real time.
-   - Live spectrum, gain staging, and layer parameter inspector.
-2. **Layer-Selective "Trace Isolation" & Categorization**:
-   - Categorizes model layers into functional trace types: **Normalization / Dynamics ($\gamma, \beta$)**, **Early Transient Layers**, **Internal Latent Residuals / Temporal Kernels**, and **Output Projection Heads**.
-   - Target specific network structures instead of corrupting random parameter blocks.
-3. **Momentary Short-Circuits & Dynamic Envelopes**:
-   - Performative "SHORT [!]" momentary trigger with variable Attack/Hold/Release (AHR) smoothing.
-   - Audio transient follower (sidechain trigger) that bursts glitches on transients and relaxes on tails.
-4. **Stochastic Thermal Drift**:
-   - Simulates physical circuit warm-up, component aging, and battery brownout via bounded Brownian / Ornstein-Uhlenbeck drift.
-5. **Safety Fuse & DC Breaker**:
-   - Automatic protection circuitry (hard limiter, soft clipper, and DC blocker) preventing ear/speaker damage from runaway weight blowouts.
-6. **Triple-Display Visual Architecture (1D / 2D / Latents)**:
-   - **1D Multi-Trace Oscilloscope**: Real-time multi-curve rendering of original baseline, bridged layers, pink targets, harmonic ghosts, and live model weights.
-   - **2D Filter Matrix Heatmap**: Perceptually mapped grid visualizing convolution filters and dense projection tensors with channel coordinates and trace bridge rails.
-   - **Latent Topographic Vector Pad**: 2D tactile radar pad driving Random Fourier Feature bottleneck projections in audio autoencoders (e.g. RAVE).
+NetBender includes a unified Python CLI (`python_tools/export_cli.py`) and standalone utilities (`python_tools/migrate_ts_to_pte.py`, `python_tools/rave_ts_to_onnx.py`, `python_tools/stable_audio_ts_to_onnx.py`) to export models from checkpoints or migrate existing `.ts` models to `.pte` (ExecuTorch) and `.onnx` (ONNX Runtime).
+
+### Python Virtual Environment Setup (`.venv`)
+
+Always install Python conversion dependencies inside `.venv` (CMake also auto-discovers ExecuTorch's C++ headers and delegate libraries directly from `.venv`):
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+### 1. Exporting to ExecuTorch (`.pte`) & Migrating `.ts` Models
+
+ExecuTorch exports support two bend promotion modes (`--bend-mode`) and four hardware delegates (`--delegate {coreml,mps,xnnpack,portable}`):
+
+- **`--bend-mode delegate` (Default, Recommended for CoreML / XNNPACK)**:
+  Promotes 1D/channelwise normalization (`norm`, `weight_g`, $\gamma$, $\beta$), biases, and activation parameters (`snake` $\alpha/\beta$, channel scales) to dynamic inputs while keeping heavy convolution kernels static inside the delegated CoreML/XNNPACK subgraph. This gives you full Apple Neural Engine / GPU acceleration **and** expressive, stable real-time circuit bending.
+- **`--bend-mode full` (Recommended for `xnnpack` / `portable` when bending every kernel)**:
+  Promotes **all** floating-point weights (including 1D/2D convolution matrices) to dynamic graph inputs.
+- **`--bend-mode none`**:
+  Exports a pure static `.pte` graph with no promoted weight inputs (maximum raw inference speed).
+
+```bash
+# Convert all 4 reference models to CoreML-accelerated .pte files (GPU / Apple Neural Engine):
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/darbouka.ts \
+    -o models/darbouka_coreml.pte --delegate coreml --bend-mode delegate
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/speech.ts \
+    -o models/speech_coreml.pte --delegate coreml --bend-mode delegate
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/encodec_bendable.ts \
+    -o models/encodec_coreml.pte --delegate coreml --bend-mode delegate
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/stable_audio_1_vae.ts \
+    -o models/stable_audio_1_vae_coreml.pte --delegate coreml --bend-mode delegate
+
+# Convert all 4 reference models to XNNPACK-accelerated .pte files (CPU SIMD):
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/darbouka.ts \
+    -o models/darbouka_xnnpack.pte --delegate xnnpack --bend-mode delegate
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/speech.ts \
+    -o models/speech_xnnpack.pte --delegate xnnpack --bend-mode delegate
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/encodec_bendable.ts \
+    -o models/encodec_xnnpack.pte --delegate xnnpack --bend-mode delegate
+.venv/bin/python -m python_tools.migrate_ts_to_pte models/stable_audio_1_vae.ts \
+    -o models/stable_audio_1_vae_xnnpack.pte --delegate xnnpack --bend-mode delegate
+
+# Or use the unified export_cli wrapper / custom layer filters:
+.venv/bin/python -m python_tools.export_cli migrate_pte \
+    -i models/stable_audio_1_vae.ts \
+    -o models/stable_audio_1_vae_coreml.pte \
+    --delegate coreml \
+    --bend-mode delegate \
+    --filter snake norm bias
+```
+
+> [!NOTE]
+> **How `.ts` $\rightarrow$ `.pte` Lowering Works**:
+> `migrate_ts_to_pte.py` first translates the TorchScript `inlined_graph` IR directly into an eager PyTorch `nn.Module` (`TorchScriptGraphEagerModule`) and exports it via `torch.export.export()` without touching ONNX (used by `encodec_bendable.ts` and `stable_audio_1_vae.ts`). If a model contains non-exportable complex/FFT ops (such as RAVE's filtered-noise synthesizer in `darbouka.ts` and `speech.ts`), it automatically falls back to NetBender's RAVE graph sanitizer to prune the non-exportable branch while preserving the tonal waveform and stateful streaming history window (`history_samples`).
+
+### 2. Exporting & Converting Models to Bendable ONNX (`.onnx`)
+
+```bash
+# Convert RAVE TorchScript (.ts) models to bendable ONNX (exports forward, encode, decode + .bin sidecar):
+.venv/bin/python -m python_tools.export_cli rave_to_onnx \
+    -i models/darbouka.ts \
+    -o models/darbouka_bendable.onnx \
+    --buffer-size 2048
+
+.venv/bin/python -m python_tools.export_cli rave_to_onnx \
+    -i models/speech.ts \
+    -o models/speech_bendable.onnx \
+    --buffer-size 2048
+
+# Convert Stable Audio Open / 1.0 VAE (.ts) or EnCodec (.ts) to bendable ONNX:
+.venv/bin/python -m python_tools.export_cli stable_audio_to_onnx \
+    -i models/stable_audio_1_vae.ts \
+    -o models/stable_audio_1_vae_bendable.onnx \
+    --buffer-size 8192
+
+.venv/bin/python -m python_tools.export_cli stable_audio_to_onnx \
+    -i models/encodec_bendable.ts \
+    -o models/encodec_bendable.onnx \
+    --buffer-size 2048 --channels 1
+
+# Export directly from Hugging Face or local checkpoints (Stable Audio, EnCodec, RAVE):
+.venv/bin/python -m python_tools.export_cli stable_audio --onnx -o models/sa_vae.onnx
+.venv/bin/python -m python_tools.export_cli encodec --onnx --output models/encodec_24k.onnx
+.venv/bin/python -m python_tools.export_cli rave -i path/to/rave.ckpt -o models/my_rave.onnx --onnx
+```
+
+### 3. Promoting Arbitrary `.onnx` or PyTorch Models (`onnx_bend_prep.py` & `pte_bend_prep.py`)
+
+If you already have a standard `.onnx` model, you can promote its weights and generate its `NBND` `.bin` sidecar with `onnx_bend_prep.py`:
+
+```bash
+# Inspect an ONNX model's inputs, outputs, and initializers:
+python python_tools/onnx_bend_prep.py -i model.onnx --inspect
+
+# Promote all float initializers (or filter specific layers) and generate <model>_bendable.onnx + .bin:
+python python_tools/onnx_bend_prep.py -i model.onnx -o model_bendable.onnx --filter norm bias snake
+```
+
+In Python scripts, you can export any custom `torch.nn.Module` to a bendable `.pte` bundle using `export_bendable_pte` from `python_tools/pte_bend_prep.py`:
+
+```python
+import torch
+from python_tools.pte_bend_prep import export_bendable_pte
+
+sample_audio = torch.zeros(1, 1, 2048)
+export_bendable_pte(
+    module=my_audio_model,
+    sample_audio_input=sample_audio,
+    output_pte_path="models/custom_effect.pte",
+    delegate="coreml",       # "coreml", "mps", "xnnpack", or "portable"
+    bend_mode="delegate",    # "delegate", "full", or "none"
+    extra_metadata={"sr": 48000, "in_dim": 1, "out_dim": 1, "higher_ratio": 2048},
+)
+```
 
 ---
 
-## Quickstart & Build Instructions
+## Using the JUCE Plugin & Standalone (`NetBender`)
+
+1. **Loading Models**:
+   - Click **LOAD MODEL** in the top bar and select any **`.pte`**, **`.onnx`**, or **`.ts`** file.
+   - The status bar displays the active model name, active backend badge (`[ExecuTorch (coreml)]`, `[ONNX Runtime]`, or `[TorchScript]`), and latency/ratio info.
+2. **Interactive Weight Canvas & Triple-Display Architecture (`1D` / `2D` / `Latents`)**:
+   - **1D Multi-Trace Oscilloscope**: Draw, invert, quantize, or scramble weights directly on the selected layer's parameter curve.
+   - **2D Filter Matrix Heatmap**: Inspect and bend 2D convolution kernels and projection matrices with cross-channel trace bridges.
+   - **Latent Topographic Vector Pad**: Navigate the autoencoder bottleneck (`encode` $\rightarrow$ Latent Terrain Hook $\rightarrow$ `decode`) using Random Fourier Feature orbits (`FourierOrbit`), latent slew limiting (`LatentSlew`), and step quantization (`Quantize`). Works identically across `.pte`, `.onnx`, and `.ts` models without any runtime dependency on LibTorch.
+3. **Trace Isolation & Macro Controls**:
+   - Isolate specific architectural groups (**Norm / Gain ($\gamma, \beta$)**, **Early Transients**, **Internal Latents**, **Output Heads**) to bend dynamics, pitch/formants, or texture independently.
+   - Trigger momentary **SHORT [!]** bursts with Attack/Hold/Release envelopes or audio sidechain transient detection.
+   - Enable **Thermal Drift** for continuous, bounded Ornstein-Uhlenbeck parameter evolution.
+4. **Saving Bent Models**:
+   - Click **SAVE MODEL** to snapshot your current bent weights into a new `.pte` / `.onnx` (with updated `NBND` `.bin` sidecar) or `.ts` file.
+
+---
+
+## Using `netBender~` in Max/MSP & PureData
+
+All Max/MSP (`netBender~`, `mc.netBender~`, `mcs.netBender~`, `netBender.info`) and PureData (`netBender~`, also aliased to `nn~` for backward compatibility) externals share the same multi-backend engine as the JUCE plugin.
+
+### Instantiation
+
+```text
+netBender~ <model_path> [method] [buffer_size]
+```
+
+- **`<model_path>`**: Path or filename of a `.pte`, `.onnx`, or `.ts` model (if you omit the extension, `netBender~` automatically searches for `<name>.pte`, `<name>.onnx`, and `<name>.ts` in order).
+- **`[method]`**: Synthesis method to run (`forward` by default; `encode`, `decode`, or `prior` when companion graphs/methods are available).
+- **`[buffer_size]`**: Internal circular buffer size in samples (must be $\ge$ model's `higher_ratio`; `0` disables the worker thread).
+
+**Examples:**
+
+- `[netBender~ vintage_bendable.onnx forward 2048]`
+- `[netBender~ stable_audio_1_vae.pte forward 8192 @gpu 1]`
+- `[mc.netBender~ rave_model.pte decode 2048]`
+
+### Live Weight-Bending Messages
+
+Connect a message box to the left inlet of `netBender~` and route the rightmost info outlet to inspect and mutate network layers in real time:
+
+| Message | Arguments | Description |
+| --- | --- | --- |
+| `layers` | *(none)* | Outputs `layers <layer_0> <layer_1> ...` from the info outlet listing all bendable parameter tensors. |
+| `get_weights` | `<layer_name>` | Outputs `layer <w_0> <w_1> ...` containing the current float weights of `<layer_name>`. |
+| `set_weights` | `<layer_name> <f1> <f2> ...` | Replaces the weights of `<layer_name>` in real time (zero-allocation in `.pte` / `.onnx`). |
+| `reset_weights` | `<layer_name>` | Restores `<layer_name>` to its original baseline weights from the `NBND` sidecar / snapshot. |
+| `reset_all_weights` | *(none)* | Restores all bendable layers in the model to their original baseline weights. |
+| `reload` | *(none)* | Reloads the model and resets all state buffers and weights from disk. |
+| `load` | `<model_path>` | Dynamically loads a new `.pte`, `.onnx`, or `.ts` model. |
+| `method` | `<method_name>` | Switches active synthesis method (`forward`, `encode`, `decode`, `prior`). |
+| `dump` | *(none)* | Prints model path, active backend (`ExecuTorch`, `ONNX Runtime`, `TorchScript`), dimensions, ratios, methods, and attributes to the console. |
+| `enable` | `0` or `1` | Enables or bypasses audio processing. |
+| `gpu` / `@gpu` | `0` or `1` | Enables hardware acceleration (CoreML Execution Provider for `.onnx`,MPS/CUDA for `.ts`, or built-in delegate for `.pte`). |
+
+---
+
+## Building from Source
 
 > [!IMPORTANT]
-> **Source Directory Note**: The primary CMake configuration file (`CMakeLists.txt`) is located in the **`src/`** directory, not at the root of the repository. When configuring CMake, always point the source directory to `src` (e.g., `-S src -B build`).
+> **Source Directory Note**: The root CMake configuration file (`CMakeLists.txt`) is located in **`src/`**, not at the repository root. Always pass `-S src -B build` when configuring CMake.
 
 ### Prerequisites
 
-- **CMake** (v3.15 or newer recommended)
-- **LibTorch** (C++ PyTorch library, CPU version matching your OS/architecture). Download it from [pytorch.org](https://pytorch.org/get-started/locally/) and extract it into the repository root as `libtorch/`, or pass `-DCMAKE_PREFIX_PATH` pointing to your LibTorch folder.
-- Modern C++ compiler (Clang on macOS with Xcode Command Line Tools, GCC 9+ on Linux, or Visual Studio 2022 on Windows).
+- **CMake** (v3.15+) and a C++20 compiler (Xcode Command Line Tools on macOS, GCC 10+ on Linux, Visual Studio 2022 on Windows).
+- **ONNX Runtime** (`src/cmake/add_onnxruntime.cmake` automatically downloads the matching ONNX Runtime release if `ort_dir` is not specified).
+- **ExecuTorch**: Automatically discovered from the project's Python virtual environment (`.venv`) once `pip install -r requirements.txt` (`executorch>=1.0.0`) has been installed, or via `-DEXECUTORCH_ROOT=/path/to/executorch`.
+- **LibTorch**: Download from [pytorch.org](https://pytorch.org/get-started/locally/) into `./libtorch` or pass `-DCMAKE_PREFIX_PATH=/path/to/libtorch`.
 
 ### 1. Configure CMake
 
-From the repository root:
-
 ```bash
-# Recommended modern CMake style:
-cmake -S src -B build -DCMAKE_PREFIX_PATH="$(pwd)/libtorch" -DCMAKE_BUILD_TYPE=Release
+cmake -S src -B build \
+    -DCMAKE_PREFIX_PATH="$(pwd)/libtorch" \
+    -DCMAKE_BUILD_TYPE=Release
 ```
 
-*Or traditional out-of-source directory approach:*
-
-```bash
-mkdir -p build && cd build
-cmake ../src -DCMAKE_PREFIX_PATH=../libtorch -DCMAKE_BUILD_TYPE=Release
-```
-
-### 2. Build Specific Targets
-
-You can build specific targets using `cmake --build`:
+### 2. Build Targets
 
 ```bash
 # Build the JUCE VST3 and AU plugins:
 cmake --build build --target plugin
 
-# Build the standalone desktop app:
+# Build the JUCE Standalone desktop app:
 cmake --build build --target standalone
 
-# Build the Max/MSP externals:
+# Build the Max/MSP externals (netBender~, mc.netBender~, mcs.netBender~, netBender.info):
 cmake --build build --target maxmsp
 
-# Build the PureData externals:
+# Build the PureData external (netBender~):
 cmake --build build --target puredata
 
 # Build all enabled targets:
 cmake --build build --target all
 ```
 
-*(If you are already inside the `build/` directory, replace `build` with `.` : `cmake --build . --target <target>`)*
+### CMake Options Reference
 
-### CMake Configuration Options
+| Option | Default | Description |
+| --- | --- | --- |
+| `-DBUILD_JUCE_PLUGIN=ON\|OFF` | `ON` | Build JUCE VST3, AU, and Standalone plugin targets. |
+| `-DBUILD_MAXMSP=ON\|OFF` | `ON` | Build Max/MSP externals (`netBender~`, `mc.netBender~`, `mcs.netBender~`, `netBender.info`). |
+| `-DBUILD_PUREDATA=ON\|OFF` | `ON` | Build PureData external (`netBender~`). |
+| `-DENABLE_EXECUTORCH_BACKEND=ON\|OFF` | `ON` | Enable ExecuTorch `.pte` backend discovery and linking (`EXECUTORCH_ROOT`). |
+| `-DBUNDLE_DEPENDENCIES=ON\|OFF` | `OFF` | Bundle and relocate shared libraries into `support/` for redistributable packages. |
+| `-DSIGN_ID="..."` | `"-"` | macOS codesigning identity (can also be placed in `.env` at the repo root). |
 
-The build system can be customized with the following flags during configuration (`-D<OPTION>=<VALUE>`):
+### 3. Multi-Backend Verification & Sentry Suite (`test_backends`)
 
-- `-DBUILD_JUCE_PLUGIN=ON|OFF` (default: `ON`): Enable/disable JUCE VST3/AU plugins and standalone targets.
-- `-DBUILD_MAXMSP=ON|OFF` (default: `ON`): Enable/disable Max/MSP externals.
-- `-DBUILD_PUREDATA=ON|OFF` (default: `ON`): Enable/disable PureData externals.
-- `-DBUNDLE_DEPENDENCIES=ON|OFF` (default: `OFF`): When `ON`, copies shared libraries (~1.5 GB) into `support/` for standalone distribution. Leave `OFF` for fast native `@rpath` development.
-- `-DSIGN_ID="..."` (default: `-`): Codesigning identity for macOS binaries, frameworks, and bundles.
-- `-DCMAKE_POLICY_VERSION_MINIMUM=3.15`: Ensures compatibility with modern CMake policies.
-
-#### Environment Variables & `.env`
-
-You can create a `.env` file at the root of the repository to set build variables automatically (e.g., `SIGN_ID`):
+The C++ test harness (`build/tests/test_backends`) verifies loading, streaming `forward` passes, `decode gen`, `prior` synthesis, NaN/Inf/fuse sentry protection, and real-time weight bending across `.ts`, `.onnx`, and `.pte` models, writing a summary report to `test_report.md`:
 
 ```bash
-SIGN_ID="Developer ID Application: Your Name (TEAM_ID)"
+# Run the full CPU test suite (.ts CPU, .onnx CPU, and *_xnnpack.pte):
+./build/tests/test_backends
+
+# Run the full GPU / Apple Neural Engine test suite (.ts MPS, .onnx CoreML EP, and *_coreml.pte):
+./build/tests/test_backends --gpu
+
+# Or test specific model files directly:
+./build/tests/test_backends --gpu models/stable_audio_1_vae_coreml.pte models/encodec_coreml.pte
 ```
-
----
-
-## Original `nn~` Documentation & Architecture Reference (IRCAM)
-
-Below is the upstream documentation from [acids-ircam/nn~](https://github.com/acids-ircam/nn_tilde) detailing model loading, Max/MSP and PureData integration, pretrained models, and scripting.
-
-### Installation (Pre-built Binaries)
-
-Grab the [latest release of nn~](https://github.com/acids-ircam/nn_tilde/releases/latest)! Be sure to download the correct version for your installation.
-
-#### MaxMSP
-
-Uncompress the `.tar.gz` file in the Package folder of your Max installation, i.e. in `Documents/Max [your version]/Packages/`. You can then instantiate an `nn~` object! Alt-click the `nn~` object to open the help patch, or access the nn~ Overview patch in the Extras menu.
-
-##### Mac alert : codesigned with IRCAM identity and not trigger MacOS quarantine ; if it does so, please launch in the terminal
-
-```bash
-cd "~/Max X/Packages/nn_tilde"
-sudo codesign --deep --force --sign - support/*.dylib
-sudo codesign --deep --force --sign - externals/*/Contents/MacOS/*
-xattr -r -d com.apple.quarantine externals/*/Contents/MacOS/*  
-```
-
-Alt+click on the `nn~` object to open the help patch, and follow the tabs to learn more about this project.
-
-#### PureData
-
-Uncompress the `.tar.gz` file in the Package folder of your Pd installation, i.e. in `Documents/Pd/externals/`. You can then add a new path in the `Pd/File/Preferences/Path` menu pointing to the `nn_tilde` folder.
-
-Similarly, the external should not be blocked on recent MacOS systems. If it still is, `cd` to the `nn_tilde` folder and fix with:
-
-```bash
-xattr -r -d com.apple.quarantine Documents/Pd/externals/nn_tilde
-sudo codesign --deep --force --sign - Documents/Pd/externals/nn_tilde/*.dylib
-sudo codesign --deep --force --sign - Documents/Pd/externals/nn_tilde/nn\~.pd_darwin
-```
-
----
-
-### Usage
-
-#### Pretrained Models
-
-At its core, `nn~` is a translation layer between Max/MSP or PureData and the [libtorch C++ interface for deep learning](https://pytorch.org/). Alone, `nn~` is like an empty shell, and **requires pretrained models** to operate. Since v1.6.0, you can download them directly through the Forum IRCAM API. Alternatively, you can find a few [RAVE](https://github.com/acids-ircam/RAVE) models [here](https://acids-ircam.github.io/rave_models_download) or [here](https://huggingface.co/Intelligent-Instruments-Lab/rave-models). A few [vschaos2](https://github.com/acids-ircam/vschaos2) models are also available [here](https://www.dropbox.com/sh/avdeiza7c6bn2of/AAAGZsnRo9ZVMa0iFhouCBL-a?dl=0).
-
-Pretrained models for `nn~` are **TorchScript files**, with a `.ts` extension. You can add these files to `nn_tilde/models` folders, or any place accessible through the Max / Pd filesystem (Max: `Options/File Preferences`, PureData: `File/Preferences/Path`).
-
-Once this is done, you can load a model with `nn~` by providing its name as first argument (for example, `isis.ts` located inside `nn_tilde/models` for Max, or among the PureData patch):
-
-<table>
-  <tr>
-    <th width="50%">Max / MSP</th>
-    <th width="50%">PureData</th>
-  </tr>
-  <tr>
-    <td><img width="100%" src="assets/max_instance.png" /></td>
-    <td><img width="100%" src="assets/pd_instance.png" /></td>
-  </tr>
-</table>
-
-#### Model Information Fetching
-
-The `nn.info` object allows model inspection and fetching available models for download on the IRCAM-API. With this object, you can get available methods and attributes for a given model. For example, you can see below that a RAVE model has three different methods: `encode`, `decode`, and `forward`.
-
-<center>
-<img src="assets/max_nninfo.png"/>
-</center>
-
-##### Methods
-
-Models can have several *methods* that correspond to several processing pipelines the model can achieve. Hence, each method can have a different number of inlets / outlets. The method is given as the third argument (for example, `decode` above), and equals `forward` by default.
-
-##### Attributes
-
-It is possible to inspect and change the internal state of the module through *attributes*, which are **model-dependent** and defined at exportation. Model attributes can be set using *messages*, with the following syntax:
-
-```bash
-set ATTRIBUTE_NAME ATTRIBUTE_VAL_1 ATTRIBUTE_VAL_2
-```
-
-Using Max/MSP and PureData graphical objects, this provides an intuitive way to modify model behavior, such as generation temperature and generation mode, and the special `enable` attribute.
-
-<table>
-  <tr>
-    <th width="50%">Max / MSP</th>
-    <th width="50%">PureData</th>
-  </tr>
-  <tr>
-    <td><img width="100%" src="assets/max_attr.png" /></td>
-    <td><img width="100%" src="assets/pd_attr.png" /></td>
-  </tr>
-</table>
-
-**Since v1.6.0:**
-
-- Buffers (Max) / Array (Pd) attribute setting allows the `.ts` model to access internal buffers / arrays.
-- `torch.Tensor` attributes can be set through Max/MSP `[array]`, allowing attributes of unlimited size.
-
-#### Buffer Configuration
-
-Internally, `nn~` has a circular buffer mechanism that helps maintain a reasonable computational load, if the given buffer size is greater than 0. You can modify its size through the use of an additional integer after the method declaration.
-
-**Important for Windows users**: The circular buffer is automatically disabled on Windows due to an upstream TorchScript threading issue.
-
-<table>
-  <tr>
-    <th width="50%">Max / MSP</th>
-    <th width="50%">PureData</th>
-  </tr>
-  <tr>
-    <td><img width="100%" src="assets/max_buffer.png" /></td>
-    <td><img width="100%" src="assets/pd_buffer.png" /></td>
-  </tr>
-</table>
-
-#### Multichannel (Max/MSP)
-
-The Max/MSP release of `nn~` includes additional externals, namely `mc.nn~` and `mcs.nn~`, allowing the use of the multichannel abilities of Max 8+ to simplify patching and decrease computational load:
-
-- `mc.nn~`: Builds multichannel signals **over different batches**.
-- `mcs.nn~`: Builds multichannel signals **over different dimensions** (e.g., 16 latent dimensions of a RAVE model).
-
-<table>
-  <tr>
-    <th>Regular</th>
-    <th>mc.nn~</th>
-    <th>mcs.nn~</th>
-  </tr>
-  <tr>
-    <td><img src="assets/max_regular.png" /></td>
-    <td><img src="assets/max_mc.png" /></td>
-    <td><img src="assets/max_mcs.png" /></td>
-  </tr>
-</table>
-
-#### Lazy Mode (Max/MSP)
-
-`nn~` includes a `void` mode that allows initializing with a fixed number of inlets / outlets, attaching a model afterwards:
-
-<center>
-<img src="assets/max_void.png" width="30%"/>
-</center>
-
-#### Special Messages
-
-- `enable [0 / 1]`: Enable / disable computation to save CPU without deleting the model (bypass).
-- `reload`: Dynamically reload the model.
-- `dump`: Print methods and attributes of the loaded model.
-- `print_available_models`: Print models downloadable through the API.
-- `download`: Download a model from the API.
-- `delete`: Delete a downloaded model.
-- `load`: Dynamically change the active model.
-- `method`: Dynamically change the active method.
-
----
-
-### Scripting any PyTorch Model in `nn~`
-
-In the [`scripting`](https://github.com/acids-ircam/nn_tilde/tree/master/scripting) subfolder, you can find a series of examples demonstrating how to export PyTorch models into TorchScript for `nn~`:
-
-- `effects.py`: Apply simple effects to the input (identical input and output shapes).
-- `features.py`: Compute spectral descriptors from the PyTorch audio library.
-- `unmix.py`: Apply the unmix deep source separation model.
-
----
-
-### Platform-Specific Legacy Build Recipes
-
-<details>
-<summary><b>macOS (with Conda environment)</b></summary>
-
-```bash
-git clone https://github.com/acids-ircam/nn_tilde --recurse-submodules
-cd nn_tilde
-curl -L https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh > miniconda.sh
-chmod +x ./miniconda.sh
-bash ./miniconda.sh -b -u -p ./env
-source ./env/bin/activate
-pip install -r requirements.txt
-conda install -c conda-forge curl
-mkdir build && cd build
-mkdir puredata_include
-curl -L https://raw.githubusercontent.com/pure-data/pure-data/master/src/m_pd.h -o puredata_include/m_pd.h
-export CC=$(brew --prefix llvm)/bin/clang
-export CXX=$(brew --prefix llvm)/bin/clang++
-cmake ../src -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_PREFIX_PATH=../env/lib/python3.12/site-packages/torch -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../puredata_include -DCMAKE_OSX_ARCHITECTURES=arm64
-cmake --build . --config Release
-```
-
-</details>
-
-<details>
-<summary><b>Windows (Visual Studio 2022)</b></summary>
-
-```bash
-git clone https://github.com/acids-ircam/nn_tilde --recurse-submodules
-cd nn_tilde
-curl -L https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-2.6.0%2Bcpu.zip > "libtorch.zip"
-unzip libtorch.zip
-mkdir pd && cd pd
-curl -L https://msp.ucsd.edu/Software/pd-0.55-2.msw.zip -o pd.zip
-unzip pd.zip
-mv pd*/src .
-mv pd*/bin .
-cd ..
-git clone https://github.com/microsoft/vcpkg.git
-cd vcpkg 
-./bootstrap-vcpkg.bat
-./vcpkg.exe integrate install
-./vcpkg.exe install curl
-cd ..
-mkdir build && cd build
-mkdir puredata_include
-curl -L https://raw.githubusercontent.com/pure-data/pure-data/master/src/m_pd.h -o puredata_include/m_pd.h
-cmake ../src -G "Visual Studio 17 2022" -DTorch_DIR=../libtorch/share/cmake/Torch -DCMAKE_POLICY_VERSION_MINIMUM=3.15 -DPUREDATA_INCLUDE_DIR=../pd/src -DPUREDATA_BIN_DIR=../pd/bin -A x64
-cmake --build . --config Release
-```
-
-</details>
-
-<details>
-<summary><b>Raspberry Pi (64-bit)</b></summary>
-
-```bash
-curl -s https://raw.githubusercontent.com/acids-ircam/nn_tilde/master/install/raspberrypi.sh | bash
-```
-
-</details>

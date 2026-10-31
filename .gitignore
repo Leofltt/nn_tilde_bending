@@ -1,7 +1,5 @@
 *build
 src/externals
-src/frontend/tests
-src/tests
 .vscode
 *libtorch
 *DS_Store*
@@ -15,4 +13,6 @@ src/support/
 .env
 .env.*
 src/frontend/maxmsp/min-api/
-python_tools/__pycache__/
+**__pycache__*
+*.py[cod]
+*$py.class

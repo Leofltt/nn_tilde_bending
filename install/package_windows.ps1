@@ -31,7 +31,7 @@ if (-not $Version) {
         # Git failed, fallback
     }
     if (-not $Version) {
-        $Version = "1.6.0"
+        $Version = "0.1.0"
     }
 }
 
@@ -40,7 +40,9 @@ $JuceBuildDir = "$BuildDir\frontend\juce"
 # Auto-detect Config (Release vs Debug) for local testing, but strictly enforce on CI
 $Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\$Config\VST3\NetBender.vst3"
 if (-not (Test-Path $Vst3Src)) {
-    if (-not $env:CI -and $Config -eq "Release" -and (Test-Path "$JuceBuildDir\nn_bending_plugin_artefacts\Debug\VST3\NetBender.vst3")) {
+    if (Test-Path "$JuceBuildDir\nn_bending_plugin_artefacts\VST3\NetBender.vst3") {
+        $Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\VST3\NetBender.vst3"
+    } elseif (-not $env:CI -and $Config -eq "Release" -and (Test-Path "$JuceBuildDir\nn_bending_plugin_artefacts\Debug\VST3\NetBender.vst3")) {
         $Config = "Debug"
         Write-Warning "Release build not found; falling back to Debug configuration for local packaging."
         $Vst3Src = "$JuceBuildDir\nn_bending_plugin_artefacts\$Config\VST3\NetBender.vst3"
@@ -48,10 +50,14 @@ if (-not (Test-Path $Vst3Src)) {
 }
 
 $StandaloneSrc  = "$JuceBuildDir\nn_bending_standalone_artefacts\$Config\Standalone\NetBender.exe"
+if (-not (Test-Path $StandaloneSrc) -and (Test-Path "$JuceBuildDir\nn_bending_standalone_artefacts\Standalone\NetBender.exe")) {
+    $StandaloneSrc = "$JuceBuildDir\nn_bending_standalone_artefacts\Standalone\NetBender.exe"
+}
 $TorchLibDir    = "$RepoRoot\libtorch\lib"
+$OrtLibDir      = "$RepoRoot\onnxruntime\onnxruntime-win-x64-1.18.0\lib"
 
 Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host " Packaging nn~ Bending Windows Release" -ForegroundColor Cyan
+Write-Host " Packaging NetBender Windows Release" -ForegroundColor Cyan
 Write-Host " Version:       $Version"
 Write-Host " Configuration: $Config"
 Write-Host " Build Dir:     $BuildDir"
@@ -63,7 +69,7 @@ if (-not (Test-Path $Vst3Src)) {
     throw "Error: Missing VST3 build artifact: $Vst3Src`nRun 'cmake --build build --config Release --target plugin' first."
 }
 
-$StageDir = "$BuildDir\installer_stage_win\nn_bending_Windows_x64_$Version"
+$StageDir = "$BuildDir\installer_stage_win\NetBender_Windows_x64_$Version"
 
 if (Test-Path $StageDir) {
     Remove-Item -Recurse -Force $StageDir
@@ -75,10 +81,15 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 Write-Host "==> Staging VST3 plugin..." -ForegroundColor Yellow
 Copy-Item -Recurse -Force $Vst3Src "$StageDir\VST3\NetBender.vst3"
 
-# Ensure all LibTorch DLLs are inside the VST3 bundle (Contents\x86_64-win)
+# Ensure all LibTorch and ONNX Runtime DLLs are inside the VST3 bundle (Contents\x86_64-win)
 $Vst3DllDir = "$StageDir\VST3\NetBender.vst3\Contents\x86_64-win"
 if (Test-Path $TorchLibDir) {
     Get-ChildItem -Path $TorchLibDir -Filter "*.dll" | ForEach-Object {
+        Copy-Item -Force $_.FullName $Vst3DllDir
+    }
+}
+if (Test-Path $OrtLibDir) {
+    Get-ChildItem -Path $OrtLibDir -Filter "*.dll" | ForEach-Object {
         Copy-Item -Force $_.FullName $Vst3DllDir
     }
 }
@@ -90,9 +101,14 @@ if ($hasStandalone) {
     Write-Host "==> Staging Standalone application..." -ForegroundColor Yellow
     Copy-Item -Force $StandaloneSrc "$StageDir\Standalone\NetBender.exe"
     
-    # Copy LibTorch DLLs next to Standalone executable
+    # Copy LibTorch and ONNX Runtime DLLs next to Standalone executable
     if (Test-Path $TorchLibDir) {
         Get-ChildItem -Path $TorchLibDir -Filter "*.dll" | ForEach-Object {
+            Copy-Item -Force $_.FullName "$StageDir\Standalone"
+        }
+    }
+    if (Test-Path $OrtLibDir) {
+        Get-ChildItem -Path $OrtLibDir -Filter "*.dll" | ForEach-Object {
             Copy-Item -Force $_.FullName "$StageDir\Standalone"
         }
     }
@@ -129,7 +145,7 @@ $InstallDoc += "`n`nEnjoy!`n"
 Set-Content -Path "$StageDir\README.txt" -Value $InstallDoc -Encoding UTF8
 
 # 4. Create ZIP Archive
-$ZipFileName = "nn_bending_Windows_x64_$Version.zip"
+$ZipFileName = "NetBender_Windows_x64_$Version.zip"
 $ZipPath     = "$OutputDir\$ZipFileName"
 
 if (Test-Path $ZipPath) {
@@ -174,7 +190,7 @@ if ($isccPath -and (Test-Path $IssScript)) {
     $hasStandaloneInt = if ($hasStandalone) { 1 } else { 0 }
     Write-Host "==> Compiling Windows installer (.exe) with Inno Setup..." -ForegroundColor Yellow
     & $isccPath "/DMyAppVersion=$Version" "/DHasStandalone=$hasStandaloneInt" $IssScript
-    $InstallerExe = "$OutputDir\nn_bending_Windows_x64_${Version}_setup.exe"
+    $InstallerExe = "$OutputDir\NetBender_Windows_x64_${Version}_setup.exe"
     if (Test-Path $InstallerExe) {
         Write-Host "==> Built Installer: $InstallerExe" -ForegroundColor Green
     }

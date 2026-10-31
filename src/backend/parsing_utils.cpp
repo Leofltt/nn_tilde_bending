@@ -1,6 +1,6 @@
 #include "parsing_utils.h"
 
-bool to_bool(std::string str) {
+auto to_bool(std::string str) -> bool {
   if ((str == "0") || (str == "false")) {
     return false;
   } else {
@@ -8,6 +8,6 @@ bool to_bool(std::string str) {
   }
 }
 
-int to_int(std::string str) { return stoi(str); }
+auto to_int(std::string str) -> int { return stoi(str); }
 
-float to_float(std::string str) { return stof(str); }
+auto to_float(std::string str) -> float { return stof(str); }

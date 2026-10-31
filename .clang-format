@@ -1,0 +1,56 @@
+---
+# Clang-Format Configuration for nn_tilde / NetBender
+# Standard: C++20
+Language: Cpp
+BasedOnStyle: Google
+
+# Language Standard
+Standard: c++20
+
+# Indentation & Spacing
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+NamespaceIndentation: None
+ContinuationIndentWidth: 4
+
+# Line Length
+ColumnLimit: 100
+
+# Includes - CRITICAL: Must be Never. Include ordering is order-sensitive in Max SDK / LibTorch.
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# Braces & Control Statements
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: Never
+AllowShortBlocksOnASingleLine: Never
+
+# Pointer & Reference Alignment (Modern C++: type* var)
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpaceAfterCStyleCast: false
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeAssignmentOperators: true
+
+# Alignment
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignEscapedNewlines: Right
+AlignOperands: Align
+AlignTrailingComments: true
+
+# Trailing Return Types
+PenaltyReturnTypeOnItsOwnLine: 200
+
+# Templates & Lambdas
+AlwaysBreakTemplateDeclarations: Yes
+...

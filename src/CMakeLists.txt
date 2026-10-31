@@ -1,5 +1,27 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
-project(nn_tilde)
+
+# Derive unified version from the latest git tag (e.g. v0.1.0 -> 0.1.0), fallback to 0.1.0
+execute_process(
+  COMMAND git describe --tags
+  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+  OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+if ("${GIT_DESCRIBE_VERSION}" STREQUAL "")
+  set(GIT_DESCRIBE_VERSION "v0.1.0")
+endif()
+string(REGEX MATCH "[0-9]+\\.[0-9]+(\\.[0-9]+)?" NETBENDER_SEMVER "${GIT_DESCRIBE_VERSION}")
+if ("${NETBENDER_SEMVER}" STREQUAL "")
+  set(NETBENDER_SEMVER "0.1.0")
+endif()
+if (NOT NETBENDER_SEMVER MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  set(NETBENDER_SEMVER "${NETBENDER_SEMVER}.0")
+endif()
+
+project(nn_tilde VERSION ${NETBENDER_SEMVER})
+set(VERSION "${GIT_DESCRIBE_VERSION}")
+add_compile_definitions(NETBENDER_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -33,23 +55,28 @@ configure_file(
     COPYONLY
 )
 
-configure_file(
-  "${CMAKE_SOURCE_DIR}/../install/patch_with_vst.sh" "${CMAKE_SOURCE_DIR}/extras"
-  COPYONLY
-)
 
 
 include(${CMAKE_SOURCE_DIR}/cmake/add_torch.cmake)
 list(PREPEND CMAKE_PREFIX_PATH "${torch_dir}/libtorch")
 find_package(Torch REQUIRED PATHS ${torch_dir}/libtorch/lib)
 
+include(${CMAKE_SOURCE_DIR}/cmake/add_onnxruntime.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/add_executorch.cmake)
+
 if (APPLE)
-  # Automatically strip quarantine and ad-hoc sign torch dylibs to prevent Gatekeeper popups
+  # Automatically strip quarantine and ad-hoc sign torch, onnx, and support dylibs to prevent Gatekeeper popups
   if (EXISTS "${TORCH_INSTALL_PREFIX}/lib")
     execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${TORCH_INSTALL_PREFIX}/lib'/*.dylib 2>/dev/null; find '${TORCH_INSTALL_PREFIX}/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
   endif()
   if (EXISTS "${torch_dir}/libtorch/lib")
     execute_process(COMMAND sh -c "xattr -d com.apple.quarantine '${torch_dir}/libtorch/lib'/*.dylib 2>/dev/null; find '${torch_dir}/libtorch/lib' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+  if (EXISTS "${ort_dir}")
+    execute_process(COMMAND sh -c "find '${ort_dir}' -name '*.dylib' -exec xattr -d com.apple.quarantine {} + 2>/dev/null; find '${ort_dir}' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
+  endif()
+  if (EXISTS "${CMAKE_SOURCE_DIR}/support")
+    execute_process(COMMAND sh -c "find '${CMAKE_SOURCE_DIR}/support' -name '*.dylib' -exec xattr -d com.apple.quarantine {} + 2>/dev/null; find '${CMAKE_SOURCE_DIR}/support' -name '*.dylib' -exec codesign --force --sign - {} + 2>/dev/null" ERROR_QUIET)
   endif()
 endif()
 
@@ -129,13 +156,6 @@ endif()
 
 add_subdirectory(backend) # DEEP LEARNING BACKEND
 
-execute_process(
-		COMMAND git describe --tags
-		WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-		OUTPUT_VARIABLE VERSION
-		OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
 option(BUILD_MAXMSP "Build MaxMSP targets" ON)
 option(BUILD_PUREDATA "Build PureData targets" ON)
 option(BUILD_JUCE_PLUGIN "Build JUCE VST3/AU audio plugin" ON)
@@ -177,7 +197,7 @@ endif()
 
 if (BUILD_PUREDATA AND NO_PUREDATA EQUAL 0)
     add_custom_target(puredata)
-    add_dependencies(puredata nn)
+    add_dependencies(puredata netBender)
 endif()
 
 if (BUILD_JUCE_PLUGIN)
@@ -208,4 +228,17 @@ if (BUILD_JUCE_PLUGIN)
     else()
         add_dependencies(standalone nn_bending_standalone)
     endif()
+endif()
+
+# Unit tests
+add_subdirectory(tests)
+
+# Code Formatting Target
+find_program(CLANG_FORMAT_BIN clang-format)
+if (CLANG_FORMAT_BIN)
+    add_custom_target(format
+        COMMAND "${CMAKE_SOURCE_DIR}/../scripts/format.sh"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
+        COMMENT "Running clang-format on project source files..."
+    )
 endif()

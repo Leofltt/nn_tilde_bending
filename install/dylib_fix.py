@@ -525,6 +525,7 @@ if __name__ == "__main__":
     
     def sign_single_target(m):
         try:
+            subprocess.run(['chmod', 'u+w', m], capture_output=True)
             subprocess.run(['chmod', '+x', m], capture_output=True)
             cmd = ['codesign', '--deep', '--force', '--options=runtime', '--sign', args.sign_id]
             if args.entitlements and os.path.exists(args.entitlements):

@@ -11,7 +11,7 @@
 template <typename pd_class>
 class PdBufferManager {
 
-    Backend *m_backend; 
+    IBackend *m_backend; 
     pd_class *m_obj;
     t_clock *m_clock; 
     std::vector<std::string> m_buffer_attributes;
@@ -21,11 +21,11 @@ class PdBufferManager {
     public:
     bool m_monitor_arrays; 
 
-    PdBufferManager(Backend *backend, pd_class* nn_obj): 
+    PdBufferManager(IBackend *backend, pd_class* nn_obj): 
         m_backend(backend), m_obj(nn_obj)
     { }
 
-    void init_buffer_list(Backend *backend = nullptr) {
+    void init_buffer_list(IBackend *backend = nullptr) {
         if (backend != nullptr) {
             m_backend = backend; 
         }
@@ -45,7 +45,7 @@ class PdBufferManager {
         for (auto & element : model_buffers) {
             // std::cout << "adding buffer " << element << " to buffer manager.";
             m_buffer_attributes.push_back(element);
-            post("nn~: %s", element.c_str());
+            post("netBender~: %s", element.c_str());
         }
     } 
 
@@ -75,7 +75,7 @@ class PdBufferManager {
     }
 
     template <typename backend_type>
-    void append_if_buffer_element(Backend::BufferMap &buffers, std::string target_pd_buffer, std::string attribute_name, int index) {
+    void append_if_buffer_element(IBackend::BufferMap &buffers, std::string target_pd_buffer, std::string attribute_name, int index) {
         if (m_backend->is_buffer_element_of_attribute(attribute_name, index)) {
             auto buffer_name = m_backend->get_buffer_name(attribute_name, index);
             buffers[buffer_name] = static_buffer_from_name<backend_type>(target_pd_buffer);

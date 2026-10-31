@@ -105,39 +105,45 @@ def export_torchscript(
         except (ValueError, AttributeError):
             pass
 
-    # If submodules (encoder/decoder) have complex architectures that resist direct scripting,
-    # trace them individually first so AudioCodecWrapper only sees compiled TorchScript modules.
-    if hasattr(model, "encoder_module") and hasattr(model, "decoder_module"):
-        dummy_audio = torch.zeros(1, model.in_channels, test_buffer_size)
-        dummy_latent = torch.zeros(1, model.latent_dim, test_buffer_size // model.ratio)
-        try:
-            logging.info("Pre-tracing encoder and decoder submodules...")
-            model.encoder_module = torch.jit.trace(model.encoder_module, dummy_audio, check_trace=False)
-            model.decoder_module = torch.jit.trace(model.decoder_module, dummy_latent, check_trace=False)
-            logging.info("Successfully pre-traced encoder and decoder.")
-        except Exception as trace_err:
-            logging.warning(f"Could not pre-trace submodules directly: {trace_err}")
-
+    # Try direct TorchScript scripting first to preserve dynamic buffer shapes
     logging.info(f"Exporting model to TorchScript: {output_path}...")
     try:
         scripted = torch.jit.script(model)
-    except Exception as e:
-        logging.warning(f"torch.jit.script failed ({e}). Falling back to torch.jit.trace...")
-        dummy_audio = torch.zeros(1, model.in_channels, test_buffer_size)
-        dummy_latent = torch.zeros(1, model.latent_dim, test_buffer_size // model.ratio)
+        logging.info("Successfully scripted model via torch.jit.script.")
+    except Exception as script_err:
+        logging.warning(f"torch.jit.script failed ({script_err}). Falling back to tracing...")
+        # If submodules (encoder/decoder) have complex architectures that resist direct scripting,
+        # trace them individually so AudioCodecWrapper only sees compiled TorchScript modules.
+        if hasattr(model, "encoder_module") and hasattr(model, "decoder_module"):
+            dummy_audio = torch.zeros(1, model.in_channels, test_buffer_size)
+            dummy_latent = torch.zeros(1, model.latent_dim, test_buffer_size // model.ratio)
+            try:
+                logging.info("Pre-tracing encoder and decoder submodules...")
+                model.encoder_module = torch.jit.trace(model.encoder_module, dummy_audio, check_trace=False)
+                model.decoder_module = torch.jit.trace(model.decoder_module, dummy_latent, check_trace=False)
+                logging.info("Successfully pre-traced encoder and decoder.")
+            except Exception as trace_err:
+                logging.warning(f"Could not pre-trace submodules directly: {trace_err}")
 
         try:
-            scripted = torch.jit.trace_module(
-                model,
-                {
-                    "forward": dummy_audio,
-                    "encode": dummy_audio,
-                    "decode": dummy_latent,
-                },
-                check_trace=False,
-            )
-        except Exception:
-            scripted = torch.jit.trace(model, dummy_audio, check_trace=False)
+            scripted = torch.jit.script(model)
+        except Exception as e:
+            logging.warning(f"Secondary torch.jit.script failed ({e}). Falling back to torch.jit.trace...")
+            dummy_audio = torch.zeros(1, model.in_channels, test_buffer_size)
+            dummy_latent = torch.zeros(1, model.latent_dim, test_buffer_size // model.ratio)
+
+            try:
+                scripted = torch.jit.trace_module(
+                    model,
+                    {
+                        "forward": dummy_audio,
+                        "encode": dummy_audio,
+                        "decode": dummy_latent,
+                    },
+                    check_trace=False,
+                )
+            except Exception:
+                scripted = torch.jit.trace(model, dummy_audio, check_trace=False)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     scripted.save(output_path)
